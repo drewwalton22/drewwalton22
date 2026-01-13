@@ -1,7 +1,7 @@
 # Hi there 👋
 My name is Drew Walton and I am a 2nd year studen at Wright State pursing a degree in Information Technology and Cybersecurity.
 
-##Projects:
+## Projects:
 1. I am currently working on my final project for my 2350 class
 2. Working on a program to send me text updates when certian stocks get new updates.
 <!--
