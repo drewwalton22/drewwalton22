@@ -56,7 +56,7 @@ RemoteDefs.List = {
 		Name = "SubmitSwing",
 		Kind = "Event",
 		Direction = "ClientToServer",
-		Doc = "(power: number 0-100, accuracyOffset: number -1..1) Click-2 locked power and the Click-3 timing offset from the green zone's center. The server recomputes the whole shot from these two numbers.",
+		Doc = "(power: number 0-100, accuracyOffset: number -1..1) Click-2 locked power and the Click-3 timing offset from the green zone centre (negative = early = slice, positive = late = hook). The server recomputes the whole shot from these two numbers and rejects submissions faster than a human could click.",
 		Limit = SWING,
 	},
 	{

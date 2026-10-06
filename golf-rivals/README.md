@@ -14,7 +14,7 @@ Competitive 3-click-swing golf with ranked leagues, loot cases, a daily shop and
 
 - [x] 1. Project scaffold + global item / case / club databases + boot-time validator
 - [x] 2. Network remotes (declarative RemoteDefs, rate limiting, input validation)
-- [ ] 3. Swing physics (3-click, wind, slope, lie)
+- [x] 3. Swing physics (3-click state machine, flight/bounce/roll sim, wind, slope, lie, anti-cheat timing)
 - [ ] 4. DataStore + inventory
 - [ ] 5. Economy (shop rotation, cases, trade-up, upgrades)
 - [ ] 6. Matchmaking, AI bots

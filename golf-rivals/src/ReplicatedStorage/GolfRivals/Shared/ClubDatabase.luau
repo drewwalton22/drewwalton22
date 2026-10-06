@@ -40,6 +40,12 @@ export type BagSlot = {
 	DisplayName: string,
 	Class: Types.ClubClass,
 	LoftDeg: number,
+	-- Ball launch angle (degrees above horizontal). "Dynamic launch" is lower
+	-- than loft on long clubs and about half of loft on wedges.
+	LaunchDeg: number,
+	-- Backspin at launch (rpm) for a full-power fairway shot. Drives lift and,
+	-- on landing, how hard the ball checks up. Putter is 0.
+	BackspinRpm: number,
 	-- Full-power (100%) carry in yards with base stats on a flat fairway lie,
 	-- zero wind. Distance stat / lie / wind modify this in the physics step.
 	-- Putter is 0: putting uses a separate roll-speed model, not a carry.
@@ -68,20 +74,20 @@ local ClubDatabase = {}
 -- Bag slots (fixed, in the order the bag UI lists them)
 -- ---------------------------------------------------------------------------
 local BAG_SLOTS: { BagSlot } = {
-	{ Label = "D", DisplayName = "Driver", Class = "Driver", LoftDeg = 10.5, BaseCarryYds = 250 },
-	{ Label = "3W", DisplayName = "3 Wood", Class = "Wood", LoftDeg = 15, BaseCarryYds = 230 },
-	{ Label = "5W", DisplayName = "5 Wood", Class = "Wood", LoftDeg = 18, BaseCarryYds = 215 },
-	{ Label = "4i", DisplayName = "4 Iron", Class = "Iron", LoftDeg = 24, BaseCarryYds = 190 },
-	{ Label = "5i", DisplayName = "5 Iron", Class = "Iron", LoftDeg = 27, BaseCarryYds = 180 },
-	{ Label = "6i", DisplayName = "6 Iron", Class = "Iron", LoftDeg = 30, BaseCarryYds = 170 },
-	{ Label = "7i", DisplayName = "7 Iron", Class = "Iron", LoftDeg = 34, BaseCarryYds = 160 },
-	{ Label = "8i", DisplayName = "8 Iron", Class = "Iron", LoftDeg = 38, BaseCarryYds = 150 },
-	{ Label = "9i", DisplayName = "9 Iron", Class = "Iron", LoftDeg = 42, BaseCarryYds = 140 },
-	{ Label = "PW", DisplayName = "Pitching Wedge", Class = "Wedge", LoftDeg = 46, BaseCarryYds = 125 },
-	{ Label = "GW", DisplayName = "Gap Wedge", Class = "Wedge", LoftDeg = 50, BaseCarryYds = 110 },
-	{ Label = "SW", DisplayName = "Sand Wedge", Class = "Wedge", LoftDeg = 56, BaseCarryYds = 95 },
-	{ Label = "LW", DisplayName = "Lob Wedge", Class = "Wedge", LoftDeg = 60, BaseCarryYds = 80 },
-	{ Label = "PT", DisplayName = "Putter", Class = "Putter", LoftDeg = 3, BaseCarryYds = 0 },
+	{ Label = "D", DisplayName = "Driver", Class = "Driver", LoftDeg = 10.5, LaunchDeg = 11.5, BackspinRpm = 2450, BaseCarryYds = 250 },
+	{ Label = "3W", DisplayName = "3 Wood", Class = "Wood", LoftDeg = 15, LaunchDeg = 11.0, BackspinRpm = 3500, BaseCarryYds = 230 },
+	{ Label = "5W", DisplayName = "5 Wood", Class = "Wood", LoftDeg = 18, LaunchDeg = 12.5, BackspinRpm = 4300, BaseCarryYds = 215 },
+	{ Label = "4i", DisplayName = "4 Iron", Class = "Iron", LoftDeg = 24, LaunchDeg = 12.5, BackspinRpm = 4800, BaseCarryYds = 190 },
+	{ Label = "5i", DisplayName = "5 Iron", Class = "Iron", LoftDeg = 27, LaunchDeg = 14, BackspinRpm = 5300, BaseCarryYds = 180 },
+	{ Label = "6i", DisplayName = "6 Iron", Class = "Iron", LoftDeg = 30, LaunchDeg = 15, BackspinRpm = 6000, BaseCarryYds = 170 },
+	{ Label = "7i", DisplayName = "7 Iron", Class = "Iron", LoftDeg = 34, LaunchDeg = 16.5, BackspinRpm = 6700, BaseCarryYds = 160 },
+	{ Label = "8i", DisplayName = "8 Iron", Class = "Iron", LoftDeg = 38, LaunchDeg = 18.5, BackspinRpm = 7400, BaseCarryYds = 150 },
+	{ Label = "9i", DisplayName = "9 Iron", Class = "Iron", LoftDeg = 42, LaunchDeg = 21, BackspinRpm = 8200, BaseCarryYds = 140 },
+	{ Label = "PW", DisplayName = "Pitching Wedge", Class = "Wedge", LoftDeg = 46, LaunchDeg = 24, BackspinRpm = 9000, BaseCarryYds = 125 },
+	{ Label = "GW", DisplayName = "Gap Wedge", Class = "Wedge", LoftDeg = 50, LaunchDeg = 27, BackspinRpm = 9500, BaseCarryYds = 110 },
+	{ Label = "SW", DisplayName = "Sand Wedge", Class = "Wedge", LoftDeg = 56, LaunchDeg = 30, BackspinRpm = 10000, BaseCarryYds = 95 },
+	{ Label = "LW", DisplayName = "Lob Wedge", Class = "Wedge", LoftDeg = 60, LaunchDeg = 33, BackspinRpm = 10500, BaseCarryYds = 80 },
+	{ Label = "PT", DisplayName = "Putter", Class = "Putter", LoftDeg = 3, LaunchDeg = 0, BackspinRpm = 0, BaseCarryYds = 0 },
 }
 
 local slotByLabel: { [string]: BagSlot } = {}

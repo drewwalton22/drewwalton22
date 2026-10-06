@@ -1,0 +1,223 @@
+--!strict
+--[[
+	SwingMath.luau  (ReplicatedStorage.GolfRivals.Shared)
+
+	Turns the player's two swing numbers (power 0-100, accuracy offset -1..1)
+	plus club, stats, lie and wind into launch conditions, then into a full
+	shot via ShotPhysics. Also holds the anti-cheat plausibility check.
+
+	PIPELINE
+	  1. fullSpeed  = calibrated ball speed whose flat, no-wind carry equals the
+	                  slot's BaseCarryYds (bisection over ShotPhysics; cached).
+	  2. ballSpeed  = fullSpeed * (power/100)^PowerToSpeedExponent
+	                  * (1 + DistanceSpeedPerPoint * (Distance - Baseline))
+	                  * LieSpeedMult
+	  3. green zone = GreenHalfWidth + GreenWidthPerAccuracy * Accuracy/100,
+	                  shrunk by the lie penalty:  g = g0 * (1 - penalty)
+	     penalty   = LieAccuracyPenalty * (1 - LieForgivenessReduction * Forgiveness/100)
+	  4. inside the green zone -> no curve ("Perfect").  Outside:
+	       t        = (|offset| - g) / (1 - g)                      (0..1)
+	       severity = t ^ SidespinExponent * (1 - AccuracyMitigation * Accuracy/100)
+	                  * (1 + penalty)
+	       sidespin = -sign(offset) * severity * MaxSidespinRpm
+	     (offset < 0 = early = slice = negative sidespin = curves right)
+	  5. backspin   = slot.BackspinRpm * LieSpinMult * (0.5 + 0.5 * power/100)
+	  6. launch angle = slot.LaunchDeg
+
+	Putter: speed is calibrated so a 100% putt rolls PuttFullPowerYards on a
+	flat green (v = sqrt(2 * mu * g * d)); with the 0.5 exponent, distance is
+	then linear in power. A timing miss becomes an aim error instead of curve.
+]]
+
+local Types = require(script.Parent.Types)
+local Config = require(script.Parent.Config)
+local ClubDatabase = require(script.Parent.ClubDatabase)
+local ShotPhysics = require(script.Parent.ShotPhysics)
+local Validate = require(script.Parent.Validate)
+
+local S = Config.Swing
+local P = Config.Physics
+
+export type Quality = "Perfect" | "Good" | "Poor"
+
+export type ShotInput = {
+	Slot: ClubDatabase.BagSlot,
+	Stats: ClubDatabase.Stats, -- upgrade-adjusted (ClubDatabase.statAtLevel)
+	Power: number, -- 0..100
+	AccuracyOffset: number, -- -1..1
+	Lie: Types.LieId, -- lie the ball is hit FROM
+	Wind: ShotPhysics.Wind?, -- local frame, m/s
+}
+
+export type ResolvedShot = {
+	Launch: ShotPhysics.Launch,
+	Quality: Quality,
+	GreenHalfWidth: number, -- effective green zone (UI can draw it)
+	Result: ShotPhysics.ShotResult,
+}
+
+local SwingMath = {}
+
+-- ---------------------------------------------------------------------------
+-- Calibration cache: slot label -> full-power ball speed (m/s)
+-- ---------------------------------------------------------------------------
+local fullSpeedCache: { [string]: number } = {}
+
+function SwingMath.fullSpeed(slot: ClubDatabase.BagSlot): number
+	local cached = fullSpeedCache[slot.Label]
+	if cached then
+		return cached
+	end
+	local speed: number
+	if slot.Class == "Putter" then
+		-- A rolling ball with friction mu decelerates at mu*g: d = v^2 / (2 mu g).
+		local mu = Config.Lies.Green.RollFriction
+		speed = math.sqrt(2 * mu * P.Gravity * S.PuttFullPowerYards * P.YardsToMeters)
+	else
+		speed = ShotPhysics.calibrateBallSpeed(slot.LaunchDeg, slot.BackspinRpm, slot.BaseCarryYds)
+	end
+	fullSpeedCache[slot.Label] = speed
+	return speed
+end
+
+-- ---------------------------------------------------------------------------
+-- Accuracy
+-- ---------------------------------------------------------------------------
+
+-- Lie penalty after Forgiveness: 0 (none) .. ~0.45 (sand, no Forgiveness).
+function SwingMath.effectivePenalty(lie: Types.LieId, forgiveness: number): number
+	local base = Config.Lies[lie].AccuracyPenalty
+	return base * (1 - S.LieForgivenessReduction * math.clamp(forgiveness, 0, 100) / 100)
+end
+
+-- Effective green-zone half-width in offset units.
+function SwingMath.greenHalfWidth(accuracy: number, penalty: number): number
+	local base = S.GreenHalfWidth + S.GreenWidthPerAccuracy * math.clamp(accuracy, 0, 100) / 100
+	return base * (1 - penalty)
+end
+
+-- Curve severity 0..(1+penalty) for a given offset.
+function SwingMath.severity(offset: number, accuracy: number, penalty: number): number
+	local green = SwingMath.greenHalfWidth(accuracy, penalty)
+	local miss = math.abs(offset)
+	if miss <= green then
+		return 0
+	end
+	local t = math.clamp((miss - green) / (1 - green), 0, 1)
+	local mitigation = 1 - S.AccuracyMitigation * math.clamp(accuracy, 0, 100) / 100
+	return t ^ S.SidespinExponent * mitigation * (1 + penalty)
+end
+
+function SwingMath.quality(offset: number, greenHalfWidth: number): Quality
+	local miss = math.abs(offset)
+	if miss <= greenHalfWidth then
+		return "Perfect"
+	elseif miss <= S.GoodHalfWidth then
+		return "Good"
+	end
+	return "Poor"
+end
+
+-- ---------------------------------------------------------------------------
+-- Launch + full shot
+-- ---------------------------------------------------------------------------
+
+function SwingMath.computeLaunch(input: ShotInput): (ShotPhysics.Launch, Quality, number)
+	local slot, stats = input.Slot, input.Stats
+	local power = math.clamp(input.Power, 0, 100)
+	local offset = math.clamp(input.AccuracyOffset, -1, 1)
+	local lie = Config.Lies[input.Lie]
+
+	local penalty = SwingMath.effectivePenalty(input.Lie, stats.Forgiveness)
+	local green = SwingMath.greenHalfWidth(stats.Accuracy, penalty)
+	local severity = SwingMath.severity(offset, stats.Accuracy, penalty)
+	-- negative offset (early) -> slice (right); positive (late) -> hook (left)
+	local signedSeverity = if offset < 0 then -severity else severity
+
+	local distanceFactor = 1 + S.DistanceSpeedPerPoint * (stats.Distance - S.DistanceStatBaseline)
+	local powerFactor = (power / 100) ^ S.PowerToSpeedExponent
+	local isPutt = slot.Class == "Putter"
+	-- Lie speed penalty doesn't apply to putts (they're hit on the green).
+	local lieSpeed = if isPutt then 1 else lie.SpeedMult
+	local ballSpeed = SwingMath.fullSpeed(slot) * powerFactor * distanceFactor * lieSpeed
+
+	local launch: ShotPhysics.Launch = {
+		BallSpeed = ballSpeed,
+		LaunchAngleRad = math.rad(slot.LaunchDeg),
+		BackspinRpm = slot.BackspinRpm * lie.SpinMult * (0.5 + 0.5 * power / 100),
+		SidespinRpm = signedSeverity * S.MaxSidespinRpm, -- early (<0) = negative = slice
+		AimOffsetRad = if isPutt then -signedSeverity * math.rad(S.MaxPuttAngleDeg) else 0,
+		IsPutt = isPutt,
+	}
+	if isPutt then
+		launch.SidespinRpm = 0
+	end
+	return launch, SwingMath.quality(offset, green), green
+end
+
+function SwingMath.resolveShot(input: ShotInput, terrain: ShotPhysics.Terrain, cup: ShotPhysics.Cup?): ResolvedShot
+	local launch, quality, green = SwingMath.computeLaunch(input)
+	-- Putts ignore wind (ball stays on the ground).
+	local wind = if launch.IsPutt then nil else input.Wind
+	return {
+		Launch = launch,
+		Quality = quality,
+		GreenHalfWidth = green,
+		Result = ShotPhysics.simulate(launch, terrain, wind, cup),
+	}
+end
+
+-- ---------------------------------------------------------------------------
+-- Wind helper
+-- ---------------------------------------------------------------------------
+
+-- Convert a world wind (speed in mph, direction the air moves TOWARD, degrees
+-- clockwise on the map) into the shot-local frame, given the aim heading in the
+-- same convention.  rel = windDir - aimDir:
+--    rel = 0   -> wind blows the way you aim  (tailwind, +X)
+--    rel = 90  -> wind blows to your right    (+Z)
+--    rel = 180 -> headwind                    (-X)
+function SwingMath.windToLocal(speedMph: number, windDirDeg: number, aimDirDeg: number): ShotPhysics.Wind
+	local rel = math.rad(windDirDeg - aimDirDeg)
+	local mps = speedMph * P.MphToMetersPerSec
+	return { X = mps * math.cos(rel), Z = mps * math.sin(rel) }
+end
+
+-- ---------------------------------------------------------------------------
+-- Anti-cheat
+-- ---------------------------------------------------------------------------
+
+-- Fastest a human could have produced (power, offset) from the moment the
+-- gauge became available:
+--   rise  = power/100 * RiseSeconds                  (click 1 -> click 2)
+--   fall  = power/100 * FallSeconds + offset * Window (click 2 -> click 3)
+-- Click 3 can't land before the marker has fallen that far.
+-- offset == -1 is a CLAMP ("this early or earlier"), so it can be produced by
+-- clicking immediately after click 2: no minimum fall time in that case.
+function SwingMath.minSwingSeconds(power: number, offset: number): number
+	local p = math.clamp(power, 0, 100) / 100
+	local rise = p * S.RiseSeconds
+	local fall = if offset <= -1 then 0 else p * S.FallSeconds + offset * S.AccuracyWindowSeconds
+	return rise + math.max(0, fall)
+end
+
+-- Full server-side check of a SubmitSwing payload. `elapsedSeconds` is how long
+-- the server has had the swing UI open for this player (measured on the SERVER).
+-- Returns (true) or (false, reason).
+function SwingMath.validateSubmission(power: any, offset: any, elapsedSeconds: number): (boolean, string?)
+	if not Validate.numberInRange(power, 0, 100) then
+		return false, "bad_power"
+	end
+	if not Validate.numberInRange(offset, -1, 1) then
+		return false, "bad_offset"
+	end
+	if (power :: number) < S.MinPower then
+		return false, "power_too_low"
+	end
+	if elapsedSeconds + S.TimingToleranceSeconds < SwingMath.minSwingSeconds(power :: number, offset :: number) then
+		return false, "too_fast"
+	end
+	return true, nil
+end
+
+return SwingMath

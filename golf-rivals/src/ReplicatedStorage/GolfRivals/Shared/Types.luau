@@ -29,6 +29,9 @@ export type ItemSlot =
 	| "Swing" | "Stance" | "Emote" -- Animation slots
 	| "BallModel" | "BallTrail" | "HoleEffect" -- BallCosmetic slots
 
+-- Surface the ball sits on / lands on. Drives lie penalties, bounce and roll.
+export type LieId = "Tee" | "Fairway" | "Rough" | "Sand" | "Green" | "Water"
+
 -- The three upgradeable club stats.
 export type StatId = "Distance" | "Accuracy" | "Forgiveness"
 
