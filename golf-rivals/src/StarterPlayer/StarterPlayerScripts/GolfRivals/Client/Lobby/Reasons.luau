@@ -10,6 +10,9 @@ local Reasons = {}
 
 local TEXT: { [string]: string } = {
 	insufficient_funds = "Not enough coins or gems.",
+	no_spins = "No spins left - come back tomorrow or buy one!",
+	max_spins = "You already have the maximum number of stored spins.",
+	already_spinning = "The wheel is still spinning.",
 	already_purchased = "You already bought that today.",
 	not_in_shop = "That offer is no longer in the shop.",
 	unknown_item = "That item doesn't exist.",

@@ -8,12 +8,17 @@ because scripts find each other by name (`require(Shared.ClubStats)` and so on).
 
 ## Option A: Rojo (recommended)
 
-1. Install Rojo (`aftman add rojo-rbx/rojo`, or download it from github.com/rojo-rbx/rojo) and
-   the **Rojo** Studio plugin.
-2. In this folder, run `rojo serve`.
-3. In Studio, open the Rojo plugin, click **Connect**, and accept the sync.
-4. Rojo builds the whole tree shown in Option B from `default.project.json`. Skip to
-   [Game settings](#game-settings).
+1. Install Rojo on your computer (`aftman add rojo-rbx/rojo`, `rokit add rojo-rbx/rojo`, or download
+   it from github.com/rojo-rbx/rojo/releases) and install the **Rojo** plugin in Studio
+   (Plugins > Manage Plugins, or the Creator Store).
+2. In the `golf-rivals/` folder, run `rojo serve`.
+3. In Studio, open a new **Baseplate** place, open the Rojo plugin, click **Connect**, and accept.
+4. Rojo builds the whole tree in Option B from `default.project.json`, including the empty asset
+   folders (`ServerStorage.GolfRivalsAssets`, `ReplicatedStorage.GolfRivalsAssets`,
+   `Workspace.GolfCourses`) and `Workspace.StreamingEnabled = false`. Anything you drop into those
+   folders in Studio is left alone by Rojo. Skip to [Game settings](#game-settings).
+
+Alternative: `rojo build -o GolfRivals.rbxlx` makes a place file you can open directly in Studio.
 
 ---
 
@@ -28,61 +33,73 @@ matching file's contents into it. There are three script types:
 | `.client.luau` | **LocalScript**, named without the suffix: `Main.client.luau` becomes a LocalScript called `Main` |
 | anything else (`.luau`) | **ModuleScript** with the file name minus `.luau` |
 
+Modules marked **NEW** arrived with the terrain / timing / aerial-aim / wheel / cosmetics update.
+
 ### Step 1: ReplicatedStorage (shared by server and client)
 
 ```
 ReplicatedStorage
-└── GolfRivals                (Folder)
-    └── Shared                (Folder)
-        ├── AimGuide          (ModuleScript)  aim arc / putting line physics
-        ├── Assets            (ModuleScript)  asset-id registry (blank = graceful fallbacks)
-        ├── CameraMath        (ModuleScript)
-        ├── CaseDatabase      (ModuleScript)
-        ├── CasesView         (ModuleScript)
-        ├── ClubAdvisor       (ModuleScript)
-        ├── ClubDatabase      (ModuleScript)  products (club lines) for the six categories
-        ├── ClubStats         (ModuleScript)  THE six categories + Power / Accuracy / Spin
-        ├── Config            (ModuleScript)  every tuning knob
-        ├── CourseDatabase    (ModuleScript)
-        ├── CourseLayout      (ModuleScript)
-        ├── CourseTerrain     (ModuleScript)
-        ├── DatabaseValidator (ModuleScript)
-        ├── Format            (ModuleScript)
-        ├── GaugeView         (ModuleScript)
-        ├── ItemDatabase      (ModuleScript)
-        ├── LoadoutView       (ModuleScript)
-        ├── LobbyLayout       (ModuleScript)  plaza, driving range, AFK lounge
-        ├── Logger            (ModuleScript)
-        ├── MatchView         (ModuleScript)
-        ├── MiniMap           (ModuleScript)
-        ├── ModeView          (ModuleScript)
-        ├── PartFactory       (ModuleScript)
-        ├── PodiumView        (ModuleScript)  who stands where on the podium
-        ├── Prng              (ModuleScript)
-        ├── ProfileOps        (ModuleScript)
-        ├── ProfileTemplate   (ModuleScript)  save format + v1 -> v2 migration
-        ├── QuestDatabase     (ModuleScript)
-        ├── QuestEngine       (ModuleScript)
-        ├── RangeRules        (ModuleScript)  driving-range bays, targets, payouts
-        ├── Rarity            (ModuleScript)
-        ├── RateLimiter       (ModuleScript)
-        ├── RemoteDefs        (ModuleScript)
-        ├── Remotes           (ModuleScript)
-        ├── ShopRotation      (ModuleScript)
-        ├── ShopView          (ModuleScript)
-        ├── ShotPhysics       (ModuleScript)
-        ├── Signal            (ModuleScript)
-        ├── SwingMath         (ModuleScript)
-        ├── SwingPose         (ModuleScript)  procedural swing / victory / defeat poses
-        ├── SwingStateMachine (ModuleScript)
-        ├── TableUtil         (ModuleScript)
-        ├── TelemetryView     (ModuleScript)
-        ├── TradeUpView       (ModuleScript)
-        ├── Types             (ModuleScript)
-        ├── Validate          (ModuleScript)
-        └── ZoneRewards       (ModuleScript)  range / AFK daily caps and AFK timer
+├── GolfRivals                (Folder)
+│   └── Shared                (Folder)
+│       ├── AimGuide          (ModuleScript)  aim arc / putting line physics
+│       ├── AimMath           (ModuleScript)  NEW aerial reticle: distance + angle clamps, target power
+│       ├── Assets            (ModuleScript)  asset-id registry (blank = graceful fallbacks)
+│       ├── CameraMath        (ModuleScript)
+│       ├── CaseDatabase      (ModuleScript)
+│       ├── CasesView         (ModuleScript)
+│       ├── ClubAdvisor       (ModuleScript)
+│       ├── ClubDatabase      (ModuleScript)  products (club lines) for the six categories
+│       ├── ClubStats         (ModuleScript)  THE six categories, Power / Accuracy / Spin, MaxDistance
+│       ├── Config            (ModuleScript)  every tuning knob (swing speeds, cup, wheel, decor, courses)
+│       ├── CosmeticsData     (ModuleScript)  NEW how every cosmetic looks: ball skins, trails, club meshes, animations, hole FX
+│       ├── CourseDatabase    (ModuleScript)
+│       ├── CourseLayout      (ModuleScript)
+│       ├── CourseTerrain     (ModuleScript)
+│       ├── DatabaseValidator (ModuleScript)
+│       ├── DecorPlanner      (ModuleScript)  NEW where foliage / rocks go around a hole (seeded)
+│       ├── Format            (ModuleScript)
+│       ├── GaugeView         (ModuleScript)  2-stage timing bar layout
+│       ├── ItemDatabase      (ModuleScript)
+│       ├── LoadoutView       (ModuleScript)
+│       ├── LobbyLayout       (ModuleScript)  plaza, driving range, AFK lounge, daily wheel stand
+│       ├── Logger            (ModuleScript)
+│       ├── MatchView         (ModuleScript)
+│       ├── MiniMap           (ModuleScript)
+│       ├── ModeView          (ModuleScript)
+│       ├── PartFactory       (ModuleScript)
+│       ├── PodiumView        (ModuleScript)
+│       ├── Prng              (ModuleScript)
+│       ├── ProfileOps        (ModuleScript)
+│       ├── ProfileTemplate   (ModuleScript)  save format (+ Wheel: last free spin, bought spins, receipts)
+│       ├── QuestDatabase     (ModuleScript)
+│       ├── QuestEngine       (ModuleScript)
+│       ├── RangeRules        (ModuleScript)
+│       ├── Rarity            (ModuleScript)
+│       ├── RateLimiter       (ModuleScript)
+│       ├── RemoteDefs        (ModuleScript)  (+ GetWheel, SpinWheel, BuyWheelSpin)
+│       ├── Remotes           (ModuleScript)
+│       ├── ShopRotation      (ModuleScript)
+│       ├── ShopView          (ModuleScript)
+│       ├── ShotPhysics       (ModuleScript)  flight / bounce / roll, material physics, cup magnet
+│       ├── Signal            (ModuleScript)
+│       ├── SurfaceMaterials  (ModuleScript)  NEW terrain material -> Fairway / Rough / Sand / Water + physics
+│       ├── SwingMath         (ModuleScript)
+│       ├── SwingPose         (ModuleScript)
+│       ├── SwingStateMachine (ModuleScript)  2-stage timing (power, then accuracy)
+│       ├── TableUtil         (ModuleScript)
+│       ├── TelemetryView     (ModuleScript)
+│       ├── TerrainPlan       (ModuleScript)  NEW which Smooth Terrain fills build a hole
+│       ├── TerrainSurface    (ModuleScript)  NEW raycast surface: height, lie, slope, physics
+│       ├── TradeUpView       (ModuleScript)
+│       ├── Types             (ModuleScript)
+│       ├── Validate          (ModuleScript)
+│       ├── WheelArt          (ModuleScript)  NEW draws the wheel face (screen + 3D wheel)
+│       ├── WheelRules        (ModuleScript)  NEW cooldown, weighted roll, rewards, purchases
+│       └── ZoneRewards       (ModuleScript)
+└── GolfRivalsAssets          (Folder)  NEW, optional art the CLIENT needs
+    └── Clubs                 (Folder)  custom 3D club models (see "Cosmetics art" below)
 ```
-The source files are in `src/ReplicatedStorage/GolfRivals/Shared/`.
+Source: `src/ReplicatedStorage/GolfRivals/Shared/`.
 
 ### Step 2: ServerScriptService (server only, never visible to players)
 
@@ -93,23 +110,45 @@ ServerScriptService
         ├── Main              (Script)        boots everything, in order
         ├── BotBrain          (ModuleScript)
         ├── CaseRoller        (ModuleScript)
+        ├── CourseRegistry    (ModuleScript)  NEW reads hand-built holes from Workspace.GolfCourses
         ├── Economy           (ModuleScript)
         ├── EconomyService    (ModuleScript)
         ├── LeaderboardService(ModuleScript)
-        ├── LobbyBuilder      (ModuleScript)  builds the lobby, range and AFK lounge
+        ├── LightingDirector  (ModuleScript)  NEW Atmosphere, Bloom, SunRays, colour grade, soft shadows, sky, water
+        ├── LobbyBuilder      (ModuleScript)  builds the lobby, range, AFK lounge and the 3D daily wheel
+        ├── MapDecorator      (ModuleScript)  NEW spawns foliage / rocks / grass patches around each hole
         ├── MatchEngine       (ModuleScript)
-        ├── MatchService      (ModuleScript)
+        ├── MatchService      (ModuleScript)  builds each match's hole (terrain / mapped / parts)
         ├── MatchSettlement   (ModuleScript)
         ├── Matchmaker        (ModuleScript)
         ├── MemoryBackend     (ModuleScript)
         ├── ProfileService    (ModuleScript)
         ├── ProfileStore      (ModuleScript)
         ├── QuestService      (ModuleScript)
-        └── ZoneService       (ModuleScript)  driving-range payouts + AFK lounge
+        ├── ReceiptService    (ModuleScript)  NEW the one ProcessReceipt (Developer Products)
+        ├── TerrainCourse     (ModuleScript)  NEW writes a hole into Smooth Terrain and clears it after
+        ├── WheelService      (ModuleScript)  NEW daily wheel remotes, rolls, 24 h cooldown, purchases
+        └── ZoneService       (ModuleScript)
 ```
-The source files are in `src/ServerScriptService/GolfRivals/Server/` (`Main.server.luau` is the Script).
+Source: `src/ServerScriptService/GolfRivals/Server/` (`Main.server.luau` is the Script).
 
-### Step 3: StarterPlayer > StarterPlayerScripts (runs on each player's device)
+### Step 3: ServerStorage (server-only assets)
+
+```
+ServerStorage
+└── GolfRivalsAssets          (Folder)
+    └── Decor                 (Folder)
+        ├── Tree              (Folder)  drop tree MeshParts / Models here
+        ├── Bush              (Folder)
+        ├── Rock              (Folder)
+        └── GrassPatch        (Folder)
+```
+`MapDecorator` clones a random template from the matching folder for every decoration it places.
+Empty folders are fine: it then loads the MeshPart asset ids in `Config.Decor.MeshIds` (via
+`AssetService:CreateMeshPartAsync`), and if those are blank too it builds simple procedural
+stand-ins. Templates are scaled, rotated and anchored automatically; give Models a PrimaryPart.
+
+### Step 4: StarterPlayer > StarterPlayerScripts (runs on each player's device)
 
 ```
 StarterPlayer
@@ -119,83 +158,137 @@ StarterPlayer
             ├── Main              (LocalScript)   client entry point
             ├── Bus               (ModuleScript)
             ├── ClientState       (ModuleScript)
-            ├── SwingController   (ModuleScript)
+            ├── SwingController   (ModuleScript)  2-stage clicks (power, accuracy)
             ├── Golf              (Folder)
-            │   ├── AimVisual     (ModuleScript)  draws the aim arc / putting line
-            │   ├── ClubLook      (ModuleScript)
-            │   └── GolferRig     (ModuleScript)  swing, impact frame, celebrations
+            │   ├── AerialAim       (ModuleScript)  NEW overhead camera + draggable landing reticle
+            │   ├── AimVisual       (ModuleScript)  aim arc / putting line
+            │   ├── CosmeticBuilder (ModuleScript)  NEW ball skins, trails (Trail/Beam/emitters), club models, hole FX
+            │   └── GolferRig       (ModuleScript)  swing, impact frame, attaches the club mesh to the hand
             ├── Lobby             (Folder)
-            │   ├── CasesScreen, LeaderboardScreen, LoadoutScreen, LobbyController,
-            │   ├── LobbyHud, ModalHost, ModeScreen, QuestsScreen, Reasons,
-            │   └── ShopScreen, TradeUpScreen            (all ModuleScripts)
+            │   ├── CasesScreen, InventoryScreen (NEW), LeaderboardScreen, LoadoutScreen,
+            │   ├── LobbyAmbience (NEW), LobbyController, LobbyHud, ModalHost, ModeScreen,
+            │   ├── QuestsScreen, Reasons, ShopScreen, TradeUpScreen,
+            │   └── WheelController (NEW), WheelScreen (NEW)        (all ModuleScripts)
             ├── Match             (Folder)
-            │   ├── BallAnimator, CameraController, CourseBuilder,
-            │   └── MatchController, MatchHud, PodiumStage   (all ModuleScripts)
+            │   ├── BallAnimator, CameraController, CourseBuilder, CourseView (NEW),
+            │   └── MatchController, MatchHud, PodiumStage           (all ModuleScripts)
             ├── UI                (Folder)
             │   ├── AssetLoader, Icons, ItemCard, Kit,
-            │   └── PowerMeter, Theme, Toast                 (all ModuleScripts)
+            │   └── Theme, TimingBar (NEW), Toast                    (all ModuleScripts)
             └── Zones             (Folder)
                 └── RangeController (ModuleScript)
 ```
-The source files are in `src/StarterPlayer/StarterPlayerScripts/GolfRivals/Client/`.
+Source: `src/StarterPlayer/StarterPlayerScripts/GolfRivals/Client/`.
+(`UI/PowerMeter` and `Golf/ClubLook` were removed: delete them if you placed them by hand earlier.)
 
-> Do **not** put anything in `Workspace` or `StarterGui`: the server builds the lobby, and every
-> screen is created in code. Delete the default Baseplate. The lobby has its own ground, and a
-> leftover baseplate overlaps the plaza.
+### Step 5: Workspace
+
+```
+Workspace
+└── GolfCourses               (Folder)  OPTIONAL hand-built, high-detail holes
+```
+Leave everything else out: the server builds the lobby and the match holes, and every screen is
+created in code. **Delete the default Baseplate** (it overlaps the plaza).
 
 ---
 
 ## Game settings
 
 1. **Game Settings > Security > Enable Studio Access to API Services**: on. Without it, progress
-   runs on an in-memory store (fine for testing; nothing saves) and a warning is logged.
-2. **Game Settings > Avatar**: R15 or R6 both work. GolferRig drives either rig.
-3. Publish the place before testing DataStores (an unpublished place can't use them).
+   (including the daily wheel's 24 h timer) runs on an in-memory store and nothing saves.
+2. **Workspace > StreamingEnabled**: **off** (Rojo sets it). Matches play in far-away arenas; with
+   streaming on, clients may not have the course loaded when the hole starts.
+3. **Lighting > Technology**: **Future** (real-time shadows from every lamp and neon accent).
+   Scripts can't set this, so set it by hand.
+4. **Terrain > Decoration**: **on** (animated grass blades on Grass). Also Studio-only.
+5. **Game Settings > Avatar**: R15 or R6 both work.
+6. Publish the place before testing DataStores or purchases.
 
-## Optional art: uploads with automatic fallbacks
+### Robux spins for the daily wheel (optional)
 
-Every image and animation slot lives in `Shared/Assets`. All of them ship **blank**, and the game
-is complete without them:
+1. Creator Dashboard > your experience > **Monetization > Developer Products > Create**
+   ("Extra Wheel Spin").
+2. Paste its id into `Config.Wheel.RobuxProductId` (0 hides the Robux button).
+   `ReceiptService` grants it idempotently and saves before confirming the purchase.
 
-- **Images** (`CoinIcon`, `GemIcon`, `ShopTile`, ...). Blank or broken IDs show the drawn
-  fallback (a gold coin made of frames, gradient tiles). If an uploaded ID fails to load,
-  `UI/AssetLoader` swaps the fallback in.
-- **Animations** (`Swing`, `Putt`, `Victory`, `Defeat`, `Address`). Blank means the
-  procedural `SwingPose` animation. To use your own swing:
-  1. Animate it in the Animation Editor on an R15 rig.
-  2. On the frame where the club meets the ball, add an **Animation Event** named exactly
-     `Impact`. The ball launches on that marker. If the marker is missing, the ball
-     launches at `Config.Match.SwingLeadSeconds`.
-  3. Publish it and paste `rbxassetid://<id>` into `Assets.Animations.Swing`.
+---
 
-Paste IDs as `"rbxassetid://123456"`.
+## What each feature uses, and where to tune it
+
+| Feature | Where it lives | Tune it in |
+|---|---|---|
+| Smooth Terrain holes | `TerrainPlan` (what) + `TerrainCourse` (writes it) | `Config.Course.Mode` (`"Terrain"` or the old `"Parts"`) |
+| Surface detection | `TerrainSurface` raycasts; `SurfaceMaterials` maps Grass = Fairway, LeafyGrass = Rough, Sand = Bunker, Water = Water | `SurfaceMaterials.TerrainLies` / `PhysicsOverrides` |
+| Material friction / bounce | `ShotPhysics` asks the surface for per-material physics | `Config.Lies` + `SurfaceMaterials.PhysicsOverrides` |
+| Foliage / rocks | `MapDecorator` + `DecorPlanner` | `Config.Decor` (density, kinds, `MeshIds`) and `ServerStorage.GolfRivalsAssets.Decor` |
+| 2-stage timing bar | `SwingStateMachine`, `UI/TimingBar` | `Config.Swing.PowerSweepSeconds`, `AccuracySweepSeconds` (higher = slower) |
+| Putting meter | same, putt speeds | `Config.Swing.PuttPowerSweepSeconds`, `PuttAccuracySweepSeconds` |
+| Cup capture + magnet | `ShotPhysics` | `Config.Physics.CupCaptureRadius`, `CupCaptureSpeed`, `MagnetRadius`, `MagnetAccel` |
+| Aerial aim | `Golf/AerialAim`, `AimMath`, `CameraController.aerial` | max distance = `ClubStats.maxDistanceYds` |
+| Daily wheel | `WheelRules`, `WheelService`, `WheelScreen`, `WheelController` | `Config.Wheel` (segments, weights, cooldown, gem price) |
+| Cosmetics | `CosmeticsData` (looks) -> `CosmeticBuilder` (instances) | `CosmeticsData.ClubMeshes`, `BallMeshes`, `TrailTextures`, `AnimationIds` |
+| Lobby visuals | `LightingDirector` (server), `LobbyAmbience` (client) | the values at the top of each module |
+
+---
+
+## Hand-built holes (Workspace.GolfCourses)
+
+Build a hole anywhere in the world with Smooth Terrain and MeshParts, then:
+
+```
+Workspace
+└── GolfCourses
+    └── Hole1                  (Model or Folder; attributes: Par = 4, HoleName = "Lakeside")
+        ├── Tee      (Part)    the ball is teed on its top surface
+        ├── Pin      (Part)    the cup is at its centre
+        ├── Bounds   (Part)    optional invisible box; outside it = out of bounds
+        └── ...                greens / tee boxes / paths as MeshParts with a string
+                               attribute GolfLie = "Green" | "Tee" | "Fairway" | "Rough" | "Sand" | "Water"
+```
+Paint the ground with the Terrain Editor: **Grass** = fairway, **LeafyGrass** = rough,
+**Sand** = bunkers, **Water** = hazards (rock, mud and ground count as rough with their own bounce).
+Holes are played in name order; when any exist they replace the generated holes
+(`Config.Course.UseMappedCourses`).
+
+## Cosmetics art (all optional; everything has a procedural fallback)
+
+- **Club meshes**: paste a head `MeshId` / `TextureId` per category into
+  `CosmeticsData.ClubMeshes`, or put whole club Models in `ReplicatedStorage.GolfRivalsAssets.Clubs`
+  named after the skin item id (one exact skin) or the category (`Driver`, `FairwayWood`,
+  `LongIron`, `ShortIron`, `Wedge`, `Putter`). Give the Model a part named **Grip** (the end the
+  hand holds); it is welded to the golfer's right hand during the swing.
+- **Ball skins**: `CosmeticsData.BallMeshes[itemId] = { MeshId = "...", TextureId = "..." }`.
+- **Trail textures**: `CosmeticsData.TrailTextures[itemId] = "rbxassetid://..."`.
+- **Swing / stance / victory emote animations**: `CosmeticsData.AnimationIds[itemId]`. For swings,
+  add an Animation Event named exactly **Impact** on the frame the club meets the ball.
+
+Paste ids as `"rbxassetid://123456"`.
+
+---
 
 ## First play-test checklist
 
-1. **Boot.** Press F5. Output shows the boot steps through "Step 7: lobby coin zones" and
-   "Server ready.", then "Client ready.".
-2. **Topbar.** The profile card, coins and gems sit **below** Roblox's menu / chat / voice
-   buttons. Coin icons are drawn (no empty boxes) and window close buttons show an X.
-3. **Lobby.**
-   - The left tiles open Shop, Cases, Loadout, Trade-Up, Quests and Ranks.
-   - Cases shows x1 / x3 / x5 / x10 fully, with no clipped description.
-   - Loadout shows six tabs: Driver, Fairway Wood, Long Iron, Short Iron, Wedge, Putter.
-4. **Driving range.**
-   - Press DRIVING RANGE, walk onto a bay and press E.
-   - Three clicks: the swing plays, then the ball flies on impact.
-   - Land on a green to earn coins; the bullseye pays double. Earnings show "x / 3,000 today".
-5. **AFK lounge.** Press AFK LOUNGE. The banner counts down to "+15". After 60 s a toast
-   pays out. Step off the deck and the timer resets.
-6. **Bot match** (Play > Easy):
-   - The fly-over plays fully. The bot does not shoot during it.
-   - On your turn: your golfer stands at the ball with a club, the aim arc appears and grows
-     with the vertical power meter, and three clicks start your swing. The ball leaves on impact.
-   - The bot visibly swings before its ball flies.
-   - On the green, the putter is selected and locked, and a putting line is drawn on the
-     ground (it bends with the slope).
-   - After hole 3, the podium shows both golfers: the winner celebrating on the top step, the
-     loser dejected, with the scoreboard on the left. Then Return to Lobby.
-7. **Two players** (Test > Local Server, 2 players). Both queue Rookie League and see each
-   other's swings. The winner is paid. One quits mid-match and forfeits.
-8. **Old saves.** A profile saved before this update (14-club bag) loads as the six-club bag.
-   Upgrades are kept and iron skins appear in both iron slots.
+1. **Boot.** F5. Output shows the boot steps through "Step 8: daily wheelspin", "Server ready.",
+   then "Client ready.".
+2. **Lobby.** Golden-hour light with haze, bloom and sun rays; the background softly blurred; lamp
+   caps and signs slowly cycling colour; drifting pollen over the plaza. Tiles: Shop, Cases,
+   Loadout, Inventory, Trade-Up, Quests, Daily Spin (green FREE badge), Ranks.
+3. **Daily wheel.** Walk to the wheel stand west of the fountain and press E (or the Daily Spin
+   tile). SPIN FREE: the on-screen wheel and the 3D wheel spin together and land on the reward.
+   Spin again: "No spins left" and a countdown. Buy a spin for 25 gems and spin it.
+   Rejoin: the countdown continues (saved in the profile).
+4. **Inventory.** Each tab lists what you own with a 3D preview; EQUIP a ball / trail / club skin.
+5. **Bot match** (Play > Easy):
+   - The hole is real terrain (rolling grass, sunken sand bunkers, water) with trees and rocks
+     around it.
+   - Your turn starts in the **overhead view**. Drag the yellow target; it stops at the club's max
+     distance (faint ring) and the arc shows the flight. Space / SWING ▶.
+   - The camera glides behind your golfer, the **timing bar** arms: click once to lock POWER
+     (the white tick is what the target needs), click again on the green SWEET SPOT. Early =
+     slice, late = hook. ◀ AIM / Tab goes back before power is locked.
+   - Balls in the sand stop quickly, balls in rough lose distance, water costs a stroke.
+   - On the green the bar is much slower; a putt that just reaches the rim curls in.
+   - Your equipped ball, trail, club model and hole effect show for you and your opponent.
+6. **Driving range.** Same aim -> swing flow; land on a target green to earn coins.
+7. **Two players** (Test > Local Server, 2 players): both see the same wheel spin and each
+   other's cosmetics in a match.

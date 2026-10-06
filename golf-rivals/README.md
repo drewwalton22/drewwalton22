@@ -1,6 +1,7 @@
 # Golf Rivals (Roblox / Luau)
 
-Competitive 3-click-swing golf with ranked leagues, loot cases, a daily shop and club upgrades.
+Competitive golf with a 2-stage timing swing, overhead aiming, Smooth Terrain courses, ranked
+leagues, loot cases, a daily shop, a daily wheelspin, club upgrades and mesh cosmetics.
 
 **Putting it into Studio:** see [docs/STUDIO_SETUP.md](docs/STUDIO_SETUP.md) for step-by-step placement
 of every script (Rojo or by hand), settings, optional art uploads, and a play-test checklist.
@@ -12,6 +13,9 @@ of every script (Rojo or by hand), settings, optional art uploads, and a play-te
 | `ReplicatedStorage.GolfRivals.Shared` | `src/ReplicatedStorage/GolfRivals/Shared` | Config, item/case/club databases, math utils, remotes |
 | `ServerScriptService.GolfRivals.Server` | `src/ServerScriptService/GolfRivals/Server` | DataStore, economy, inventory validation, bots, matches |
 | `StarterPlayerScripts.GolfRivals.Client` | `src/StarterPlayer/StarterPlayerScripts/GolfRivals/Client` | UI, camera, swing input, trajectory prediction |
+| `ServerStorage.GolfRivalsAssets.Decor` | (Studio) | optional foliage / rock templates for MapDecorator |
+| `ReplicatedStorage.GolfRivalsAssets.Clubs` | (Studio) | optional 3D club models |
+| `Workspace.GolfCourses` | (Studio) | optional hand-built, high-detail holes |
 
 ## Build progress
 
@@ -31,6 +35,20 @@ of every script (Rojo or by hand), settings, optional art uploads, and a play-te
   - Live aim arc, vertical power meter, auto-putter with a ground putting line.
   - Driving range and AFK lounge coin zones.
   - Post-game podium with victory and defeat animations.
+- [x] 9. Terrain, timing, aiming, wheel and cosmetics update:
+  - Holes are built in Smooth Terrain (or hand-built in `Workspace.GolfCourses`); a raycast
+    surface reads Grass / LeafyGrass / Sand / Water as Fairway / Rough / Bunker / Water with
+    per-material bounce and friction; MapDecorator surrounds each hole with foliage and rocks.
+  - Slower classic 2-stage timing bar (power, then an accuracy sweet spot; early = slice,
+    late = hook) with its own, much slower putting speeds.
+  - Overhead aerial aiming camera with a draggable landing reticle clamped to the club's reach.
+  - Bigger cup capture and a gentle cup magnet near the rim.
+  - Daily wheelspin (screen + physical lobby wheel), 24 h cooldown saved in the profile,
+    weighted coin / gem / cosmetic rewards, extra spins for gems or Robux (Developer Product).
+  - CosmeticsData: ball skins, Trail / Sparkle / Ribbon trails, club meshes welded to the hand,
+    swing / victory animations, hole effects; Inventory screen with 3D previews.
+  - Lobby visuals: Atmosphere, Bloom, SunRays, colour grading, soft shadows, depth of field,
+    neon accent colour cycling and ambient particles.
 
 ## Offline checks (no Studio needed)
 
@@ -66,8 +84,8 @@ played in Studio yet. Suggested first pass:
 2. Play (F5). Output should show the boot log through "Server ready." and "Client ready.".
 3. Lobby: the plaza, fountain and clubhouse sign appear; Shop / Cases / Quests / Leaderboard,
    Play, Loadout and Trade-Up all open.
-4. Play > a bot (Easy): fly-over, gauge, 3 clicks, ball flight with chase camera + telemetry,
-   results screen, Return to Lobby.
+4. Play > a bot (Easy): fly-over, overhead aim (drag the target, Space), the 2-click timing bar,
+   ball flight with chase camera + telemetry, results screen, Return to Lobby.
 5. Test with 2 players (Test > Local Server, 2 players): both queue Rookie League, play, and the
    winner is paid. Quit one player mid-match to check forfeit + payout.
 6. Known unknowns worth watching: arena offsets for simultaneous matches, DataStore budgets under

@@ -8,8 +8,9 @@
 
 	  top-left       profile card: avatar headshot, name, OVR
 	  top-right      currency pills (drawn coin / gem icons) and "+"
-	  left           2-column tile menu: Shop, Cases, Loadout, Trade-Up, Quests (with
-	                 an unclaimed-rewards badge), Leaderboard
+	  left           2-column tile menu: Shop, Cases, Loadout, Inventory, Trade-Up,
+	                 Quests (unclaimed-rewards badge), Daily Wheel ("FREE" badge when
+	                 the free spin is ready), Leaderboard
 	  bottom-centre  DRIVING RANGE  |  PLAY  |  AFK LOUNGE   (range and lounge walk
 	                 you straight there)
 	  top-centre     status banners: ranked search (with Cancel), AFK lounge / range
@@ -41,6 +42,7 @@ export type Hud = {
 	setCurrency: (coins: number, gems: number) -> (),
 	setOvr: (ovr: number) -> (),
 	setQuestBadge: (count: number) -> (),
+	setWheelBadge: (ready: boolean) -> (),
 	setQueue: (text: string?) -> (),
 	setZoneStatus: (text: string?, color: Color3?) -> (),
 	setVisible: (visible: boolean) -> (),
@@ -56,8 +58,10 @@ local TILES: { TileDef } = {
 	{ Screen = "Shop", Label = "SHOP", Glyph = "🛒", Asset = "ShopTile", Variant = "orange" },
 	{ Screen = "Cases", Label = "CASES", Glyph = "📦", Asset = "CasesTile", Variant = "gold" },
 	{ Screen = "Loadout", Label = "LOADOUT", Glyph = "🏌", Asset = "LoadoutTile", Variant = "secondary" },
+	{ Screen = "Inventory", Label = "INVENTORY", Glyph = "🎒", Asset = "InventoryTile", Variant = "secondary" },
 	{ Screen = "TradeUp", Label = "TRADE-UP", Glyph = "🔁", Asset = "TradeUpTile", Variant = "purple" },
 	{ Screen = "Quests", Label = "QUESTS", Glyph = "📜", Asset = "QuestsTile", Variant = "teal" },
+	{ Screen = "Wheel", Label = "DAILY SPIN", Glyph = "🎡", Asset = "WheelTile", Variant = "orange" },
 	{ Screen = "Leaderboard", Label = "RANKS", Glyph = "🏆", Asset = "LeaderboardTile", Variant = "ghost" },
 }
 
@@ -111,10 +115,11 @@ function LobbyHud.new(): Hud
 	end, { Size = UDim2.fromOffset(40, 40), LayoutOrder = 3, TextSize = 26, Font = Theme.Fonts.Title, Parent = bar })
 
 	-- ---- tile menu (left) ------------------------------------------------------------------------------
-	local menu = Kit.new("Frame", { Size = UDim2.fromOffset(196, 3 * 96 + 2 * 10), Position = UDim2.new(0, 0, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), BackgroundTransparency = 1, Parent = safe }, {
-		Kit.grid(UDim2.fromOffset(92, 96), 10),
+	local menu = Kit.new("Frame", { Size = UDim2.fromOffset(180, 4 * 88 + 3 * 10), Position = UDim2.new(0, 0, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), BackgroundTransparency = 1, Parent = safe }, {
+		Kit.grid(UDim2.fromOffset(84, 88), 10),
 	}) :: Frame
 	local questBadge: TextLabel? = nil
+	local wheelBadge: TextLabel? = nil
 	for index, tile in TILES do
 		local button = Kit.button("", tile.Variant, function()
 			opened.fire(tile.Screen)
@@ -123,9 +128,9 @@ function LobbyHud.new(): Hud
 		local art = AssetLoader.image(tile.Asset, UDim2.fromOffset(52, 52), function(size: UDim2): GuiObject
 			return Kit.label(tile.Glyph, { Size = size, TextSize = 36, TextXAlignment = Enum.TextXAlignment.Center })
 		end)
-		art.Position = UDim2.new(0.5, -26, 0, 8)
+		art.Position = UDim2.new(0.5, -26, 0, 4)
 		art.Parent = button
-		Kit.label(tile.Label, { Size = UDim2.new(1, -6, 0, 22), Position = UDim2.new(0, 3, 1, -28), TextSize = 14, Font = Theme.Fonts.Title, TextXAlignment = Enum.TextXAlignment.Center, Parent = button })
+		Kit.label(tile.Label, { Size = UDim2.new(1, -6, 0, 22), Position = UDim2.new(0, 3, 1, -26), TextSize = 12, Font = Theme.Fonts.Title, TextXAlignment = Enum.TextXAlignment.Center, Parent = button })
 		if tile.Screen == "Quests" then
 			local badge = Kit.label("0", {
 				Size = UDim2.fromOffset(26, 26), Position = UDim2.new(1, -18, 0, -8), TextSize = 14, Font = Theme.Fonts.Title, BackgroundColor3 = C.Danger,
@@ -134,6 +139,14 @@ function LobbyHud.new(): Hud
 			Kit.corner(13).Parent = badge
 			Kit.stroke(Color3.new(1, 1, 1), 2).Parent = badge
 			questBadge = badge
+		elseif tile.Screen == "Wheel" then
+			local badge = Kit.label("FREE", {
+				Size = UDim2.fromOffset(44, 22), Position = UDim2.new(1, -30, 0, -8), TextSize = 12, Font = Theme.Fonts.Title, BackgroundColor3 = C.Good,
+				BackgroundTransparency = 0, TextXAlignment = Enum.TextXAlignment.Center, Visible = false, ZIndex = 3, Parent = button,
+			})
+			Kit.corner(11).Parent = badge
+			Kit.stroke(Color3.new(1, 1, 1), 2).Parent = badge
+			wheelBadge = badge
 		end
 	end
 
@@ -186,6 +199,11 @@ function LobbyHud.new(): Hud
 			if questBadge then
 				questBadge.Visible = count > 0
 				questBadge.Text = tostring(count)
+			end
+		end,
+		setWheelBadge = function(ready: boolean)
+			if wheelBadge then
+				wheelBadge.Visible = ready
 			end
 		end,
 		setQueue = function(text: string?)

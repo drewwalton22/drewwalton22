@@ -5,7 +5,9 @@
 	Wires the lobby together:
 
 	  * builds the HUD (currency, menu, Play / Loadout / Trade-Up) and the window host
-	  * registers every screen: Shop, Play, Cases, Loadout, TradeUp, Quests, Leaderboard
+	  * registers every screen: Shop, Play, Cases, Loadout, Inventory, TradeUp, Quests,
+	    Wheel (daily wheelspin), Leaderboard
+	  * the daily wheel tile shows "FREE" while the free spin is ready
 	  * keeps the HUD in step with the profile (ClientState.changed) and refreshes the
 	    open screen when the profile changes underneath it
 	  * ranked queue: shows the "searching" banner with a live timer, cancel refunds
@@ -30,11 +32,13 @@ local ProfileOps = require(Shared.ProfileOps)
 local QuestEngine = require(Shared.QuestEngine)
 local Remotes = require(Shared.Remotes)
 local TableUtil = require(Shared.TableUtil)
+local WheelRules = require(Shared.WheelRules)
 
 local Bus = require(script.Parent.Parent.Bus)
 local ClientState = require(script.Parent.Parent.ClientState)
 local Toast = require(script.Parent.Parent.UI.Toast)
 local CasesScreen = require(script.Parent.CasesScreen)
+local InventoryScreen = require(script.Parent.InventoryScreen)
 local LeaderboardScreen = require(script.Parent.LeaderboardScreen)
 local LoadoutScreen = require(script.Parent.LoadoutScreen)
 local LobbyHud = require(script.Parent.LobbyHud)
@@ -44,6 +48,7 @@ local QuestsScreen = require(script.Parent.QuestsScreen)
 local Reasons = require(script.Parent.Reasons)
 local ShopScreen = require(script.Parent.ShopScreen)
 local TradeUpScreen = require(script.Parent.TradeUpScreen)
+local WheelScreen = require(script.Parent.WheelScreen)
 local Theme = require(script.Parent.Parent.UI.Theme)
 
 local LobbyController = {}
@@ -59,6 +64,8 @@ function LobbyController.start()
 	host.register("TradeUp", TradeUpScreen.factory)
 	host.register("Quests", QuestsScreen.factory)
 	host.register("Leaderboard", LeaderboardScreen.factory)
+	host.register("Inventory", InventoryScreen.factory)
+	host.register("Wheel", WheelScreen.factory)
 
 	hud.onOpen.connect(function(name: any)
 		host.open(tostring(name))
@@ -83,17 +90,26 @@ function LobbyController.start()
 			hud.setQuestBadge(QuestEngine.claimable(TableUtil.deepCopy(profile), os.time()))
 		end
 	end
+	local function updateWheelBadge()
+		local profile = ClientState.get()
+		if profile and profile.Wheel then
+			hud.setWheelBadge(WheelRules.state(profile, math.floor(workspace:GetServerTimeNow())).FreeReady)
+		end
+	end
 	ClientState.changed.connect(function()
 		updateHud()
 		updateQuestBadge()
+		updateWheelBadge()
 		host.refreshCurrent()
 	end)
 	updateHud()
 	updateQuestBadge()
+	updateWheelBadge()
 	task.spawn(function()
 		while true do
 			task.wait(30)
 			updateQuestBadge()
+			updateWheelBadge()
 		end
 	end)
 

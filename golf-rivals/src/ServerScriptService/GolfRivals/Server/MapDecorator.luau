@@ -13,7 +13,7 @@
 	    1. TEMPLATES  ServerStorage.GolfRivalsAssets.Decor.<Kind>  - any MeshParts or
 	                  Models you drop in (one is picked per item, scaled and rotated)
 	    2. MESH IDS   Config.Decor.MeshIds[<Kind>]  - MeshPart asset ids, loaded once
-	                  with InsertService:CreateMeshPartAsync and cached as templates
+	                  with AssetService:CreateMeshPartAsync and cached as templates
 	    3. FALLBACK   a procedural stand-in: Rock / GrassPatch are painted INTO the
 	                  Smooth Terrain (Rock boulders, LeafyGrass tufts); Tree / Bush
 	                  are simple part trees so the course is never bare
@@ -22,7 +22,7 @@
 	surfaces count), so they can't change a shot.
 ]]
 
-local InsertService = game:GetService("InsertService")
+local AssetService = game:GetService("AssetService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 
@@ -64,7 +64,10 @@ local function templatesFor(kind: string): { Instance }
 		local cached: BasePart? = meshTemplates[id]
 		if not cached then
 			local ok, part = pcall(function(): any
-				return InsertService:CreateMeshPartAsync(id, Enum.CollisionFidelity.Box, Enum.RenderFidelity.Automatic)
+				return AssetService:CreateMeshPartAsync(Content.fromUri(id), {
+					CollisionFidelity = Enum.CollisionFidelity.Box,
+					RenderFidelity = Enum.RenderFidelity.Automatic,
+				})
 			end)
 			if ok and typeof(part) == "Instance" and part:IsA("BasePart") then
 				meshTemplates[id] = part

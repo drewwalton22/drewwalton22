@@ -319,7 +319,7 @@ Config.Course = {
 -- Decorative foliage, rocks and grass patches around course borders. Each kind
 -- is filled from, in order: templates in ServerStorage.GolfRivalsAssets.Decor.<Kind>
 -- (drag your MeshParts / Models there), then the MeshIds below (loaded with
--- InsertService:CreateMeshPartAsync), then a simple procedural stand-in.
+-- AssetService:CreateMeshPartAsync), then a simple procedural stand-in.
 Config.Decor = {
 	BandInsideMeters = 6, -- how far inside the bounds edge decoration may start
 	BandOutsideMeters = 45, -- and how far beyond it
