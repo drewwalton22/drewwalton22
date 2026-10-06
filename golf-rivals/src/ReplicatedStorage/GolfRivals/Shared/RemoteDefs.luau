@@ -101,10 +101,17 @@ RemoteDefs.List = {
 		Limit = UI_ACTION,
 	},
 	{
+		Name = "BuyClub",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "(clubId: string) -> { ok, reason? } Buy a club from the club shop for its coin price.",
+		Limit = UI_ACTION,
+	},
+	{
 		Name = "UpgradeClub",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(clubId: string, stat: 'Distance'|'Accuracy'|'Forgiveness') -> { ok, reason?, newLevel? } Spend coins to upgrade one stat.",
+		Doc = "(clubId: string, stat: 'Distance'|'Accuracy'|'Forgiveness') -> { ok, reason?, NewLevel?, Cost? } Spend coins to upgrade one stat.",
 		Limit = UI_ACTION,
 	},
 
@@ -113,7 +120,7 @@ RemoteDefs.List = {
 		Name = "GetShop",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "() -> { offers = {itemIds}, rotationEndsAt: number } Today's rotating shop.",
+		Doc = "() -> { ok, offers = { {ItemId, Rarity, Price, Purchased} }, EndsAt: number (unix) } Today's rotating shop.",
 		Limit = UI_QUERY,
 	},
 	{
@@ -127,21 +134,21 @@ RemoteDefs.List = {
 		Name = "OpenCases",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(caseId: string, count: integer 1..MaxCasesPerOpen) -> { ok, reason?, drops? } Server charges, rolls and grants everything atomically.",
+		Doc = "(caseId: string, count: integer 1..MaxCasesPerOpen) -> { ok, reason?, Drops = { {ItemId, Rarity, IsNew} }, Spent } Server charges, rolls and grants everything atomically.",
 		Limit = HEAVY_ACTION,
 	},
 	{
 		Name = "SellItems",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(itemIds: {string}) -> { ok, reason?, coinsGained? } Sell owned duplicates for coins.",
+		Doc = "(itemIds: {string}, repeat an id to sell several copies) -> { ok, reason?, CoinsGained? } Sell spare copies for coins.",
 		Limit = UI_ACTION,
 	},
 	{
 		Name = "TradeUp",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(itemIds: {string} of length TradeUp.InputCount) -> { ok, reason?, reward? } Consume inputs, grant one item of the next rarity.",
+		Doc = "(itemIds: {string} of length TradeUp.InputCount) -> { ok, reason?, Reward = {ItemId, Rarity, IsNew}? } Consume inputs, grant one item of the next rarity.",
 		Limit = HEAVY_ACTION,
 	},
 

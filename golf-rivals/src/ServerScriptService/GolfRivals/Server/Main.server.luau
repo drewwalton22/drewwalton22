@@ -7,7 +7,7 @@
 	  1. Validate the static databases.
 	  2. Create the network remotes (Remotes.init).
 	  3. Player profiles (session-locked DataStore saves, autosave, GetProfile remote)
-	  4. Economy: shop rotation, cases, trade-up, upgrades
+	  4. Economy service: shop rotation, cases, sell, trade-up, upgrades, equip
 	  5. Matchmaking, AI bots, match orchestration
 	  6. Quests
 
@@ -25,6 +25,7 @@ local ClubDatabase = require(Shared:WaitForChild("ClubDatabase"))
 local CaseDatabase = require(Shared:WaitForChild("CaseDatabase"))
 local Remotes = require(Shared:WaitForChild("Remotes"))
 local ProfileService = require(script.Parent:WaitForChild("ProfileService"))
+local EconomyService = require(script.Parent:WaitForChild("EconomyService"))
 
 Logger.info("Server", "Booting Golf Rivals server...")
 Logger.info("Server", "Step 1: validating item / club / case databases (economy exploit checks included)")
@@ -46,4 +47,7 @@ Remotes.init()
 Logger.info("Server", "Step 3: starting player profile service (session-locked DataStore saves)")
 ProfileService.start()
 
-Logger.info("Server", "Next build step: economy services (shop rotation, cases, trade-up, upgrades).")
+Logger.info("Server", "Step 4: starting economy service (client requests are validated, atomic, server-rolled)")
+EconomyService.start()
+
+Logger.info("Server", "Next build step: matchmaking, AI bots and match orchestration.")

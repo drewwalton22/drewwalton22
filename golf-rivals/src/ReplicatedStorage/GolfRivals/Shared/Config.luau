@@ -34,6 +34,7 @@ Config.Economy = {
 	StartingGems = 0,
 	-- Cap on cases opened in one request (the "Open x3" UI + anti-spam).
 	MaxCasesPerOpen = 10,
+	SellBatchMax = 200, -- most item entries in one Sell request
 	-- Hard caps keep balances exact (doubles are exact below 2^53) and bound
 	-- the damage of any future duplication bug.
 	MaxCoins = 1e12,
@@ -54,6 +55,9 @@ Config.Data = {
 	LoadAttempts = 6, -- tries when the profile is locked or the DataStore errors
 	LoadRetrySeconds = 3,
 	ReleaseAttempts = 3,
+	-- After a purchase/case/trade the server saves within this many seconds
+	-- (debounced) instead of waiting for the next autosave.
+	SaveSoonSeconds = 5,
 }
 
 -- DAILY ROTATING SHOP ---------------------------------------------------

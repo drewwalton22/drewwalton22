@@ -18,6 +18,8 @@
 	  ProfileService.waitFor(player, timeout)-> yields until loaded (or nil)
 	  ProfileService.onLoaded(callback)      -> callback(player, data) after each load
 	  ProfileService.notify(player, patch)   -> pushes a partial update to that client
+	  ProfileService.saveSoon(player)        -> debounced save within SaveSoonSeconds
+	                                            (call after purchases, case opens, trades)
 
 	Mutate profiles ONLY through ProfileOps, and never yield between a check and
 	the mutation it protects (see ProfileOps header).
@@ -49,6 +51,7 @@ local profiles: { [Player]: ProfileStore.Profile } = {}
 local loadedCallbacks: { (player: Player, data: ProfileTemplate.ProfileData) -> () } = {}
 local store: ProfileStore.Store? = nil
 local pendingReleases = 0 -- releases in flight; BindToClose waits for this to reach 0
+local saveQueued: { [Player]: boolean } = {} -- players with a debounced save scheduled
 
 local KICK_MESSAGES: { [string]: string } = {
 	Locked = "Your data is still saving from your last session. Please rejoin in a moment.",
@@ -232,6 +235,29 @@ function ProfileService.waitFor(player: Player, timeoutSeconds: number?): Profil
 		task.wait(0.1)
 	end
 	return nil
+end
+
+-- Schedules a save a few seconds out. Many calls inside the window collapse to
+-- one DataStore write (opening 10 cases in a row costs one save, not ten), while
+-- a valuable change is never more than SaveSoonSeconds from disk.
+function ProfileService.saveSoon(player: Player)
+	if saveQueued[player] or profiles[player] == nil then
+		return
+	end
+	saveQueued[player] = true
+	task.delay(Config.Data.SaveSoonSeconds, function()
+		saveQueued[player] = nil
+		local profile = profiles[player]
+		if profile == nil then
+			return -- left; PlayerRemoving already released (and saved) it
+		end
+		local status = profile.save()
+		if status == "LostLock" then
+			player:Kick(KICK_MESSAGES.LostLock)
+		elseif status == "Error" then
+			Logger.info("Profiles", `save-soon failed for {player.Name}; autosave will retry`)
+		end
+	end)
 end
 
 function ProfileService.onLoaded(callback: (player: Player, data: ProfileTemplate.ProfileData) -> ())
