@@ -12,12 +12,20 @@
 	  * hides the whole lobby UI while a match is on screen and restores it afterwards
 	  * the quest badge: how many finished-but-unclaimed quests (computed locally from
 	    a COPY of the profile so display logic can never touch the real one)
+	  * DRIVING RANGE / AFK LOUNGE buttons walk the character straight to the zone
+	  * the AFK lounge banner (live countdown to the next payout, today's total) from
+	    the server's ZoneStatus events; the HUD hides while hitting range balls
 ]]
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage.GolfRivals.Shared
+local Config = require(Shared.Config)
+local Format = require(Shared.Format)
+local LobbyLayout = require(Shared.LobbyLayout)
 local ModeView = require(Shared.ModeView)
+local RangeRules = require(Shared.RangeRules)
 local ProfileOps = require(Shared.ProfileOps)
 local QuestEngine = require(Shared.QuestEngine)
 local Remotes = require(Shared.Remotes)
@@ -36,6 +44,7 @@ local QuestsScreen = require(script.Parent.QuestsScreen)
 local Reasons = require(script.Parent.Reasons)
 local ShopScreen = require(script.Parent.ShopScreen)
 local TradeUpScreen = require(script.Parent.TradeUpScreen)
+local Theme = require(script.Parent.Parent.UI.Theme)
 
 local LobbyController = {}
 
@@ -113,6 +122,70 @@ function LobbyController.start()
 		else
 			Toast.show(Reasons.text(if type(reply) == "table" then reply.reason else nil), "error")
 		end
+	end)
+
+	-- ---- zones: travel buttons + AFK lounge banner ---------------------------------------------------
+	hud.onGetGems.connect(function()
+		Toast.show("Gem packs are coming soon!", "info")
+	end)
+	hud.onTravel.connect(function(zone: any)
+		local character = Players.LocalPlayer.Character
+		if character == nil then
+			return
+		end
+		host.close()
+		if zone == "Range" then
+			-- In front of the middle bays, facing downrange.
+			local bay = RangeRules.Bays[2]
+			local spot = Vector3.new(RangeRules.ORIGIN.X + 14, 5, bay.WorldZ + 8)
+			character:PivotTo(CFrame.lookAt(spot, spot + Vector3.new(-1, 0, 0)))
+			Toast.show("Walk onto a bay and press E (or tap Hit balls) to start.", "info")
+		elseif zone == "Afk" then
+			local lounge = LobbyLayout.AFK_LOUNGE
+			local spot = Vector3.new(lounge.X, 5, lounge.Z)
+			character:PivotTo(CFrame.new(spot))
+			Toast.show(`Relax here: +{Config.Afk.CoinsPerTick} coins every minute.`, "info")
+		end
+	end)
+
+	local afkInside, afkSecondsLeft, afkReceivedAt, afkEarned, afkCap = false, 0, 0.0, 0, 0
+	local function renderAfk()
+		if not afkInside then
+			hud.setZoneStatus(nil, nil)
+		elseif afkEarned >= afkCap then
+			hud.setZoneStatus(`AFK LOUNGE  ·  daily limit reached ({Format.commas(afkCap)})`, Theme.Colors.TextDim)
+		else
+			local left = math.max(0, afkSecondsLeft - (os.clock() - afkReceivedAt))
+			hud.setZoneStatus(`AFK LOUNGE  ·  +{Config.Afk.CoinsPerTick} in {Format.clock(left)}  ·  {Format.commas(afkEarned)} / {Format.commas(afkCap)} today`, Theme.Colors.Teal)
+		end
+	end
+	Remotes.onClientEvent("ZoneStatus", function(status: any)
+		if type(status) ~= "table" or status.Zone ~= "Afk" then
+			return
+		end
+		afkInside = status.Inside == true
+		afkSecondsLeft = tonumber(status.SecondsLeft) or 0
+		afkReceivedAt = os.clock()
+		afkEarned = tonumber(status.Earned) or 0
+		afkCap = tonumber(status.Cap) or Config.Afk.DailyCoinCap
+		renderAfk()
+	end)
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			if afkInside then
+				renderAfk()
+			end
+		end
+	end)
+
+	Bus.RangeEntered.connect(function()
+		host.close()
+		hud.setVisible(false)
+	end)
+	Bus.RangeExited.connect(function()
+		hud.setVisible(true)
+		updateHud()
 	end)
 
 	-- ---- match takeover ---------------------------------------------------------------------------

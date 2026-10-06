@@ -29,7 +29,7 @@ local ShopScreen = {}
 local C = Theme.Colors
 
 ShopScreen.factory = {
-	Title = "🛒  DAILY SHOP",
+	Title = "DAILY SHOP",
 	create = function(content: Frame, _host: ModalHost.Host): ModalHost.ScreenApi
 		local tab = "ClubSkin"
 		local filter = "All"
@@ -113,7 +113,8 @@ ShopScreen.factory = {
 					Primary = card.Primary,
 					Secondary = card.Secondary,
 					Glyph = if item then ItemCard.glyphFor(item.Slot) else "⭐",
-					Footer = if card.Purchased then "✔ OWNED TODAY" else `{if card.Currency == "Gems" then "💎" else "🪙"} {card.AmountText}`,
+					Footer = if card.Purchased then "✔ OWNED TODAY" else nil,
+					FooterPrice = if card.Purchased then nil else { Currency = card.Currency :: string, Text = card.AmountText },
 					FooterColor = if card.Purchased then C.Good elseif card.CanAfford then (if card.Currency == "Gems" then C.Gem else C.Gold) else C.Poor,
 					Badge = if card.OwnedCount > 0 and not card.Purchased then `x{card.OwnedCount}` else nil,
 					LayoutOrder = index,

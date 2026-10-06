@@ -3219,7 +3219,7 @@ do
 		end
 	end
 	local lead = Config.Match.SwingLeadSeconds
-	expect("A shot carries the swing lead (ImpactDelay) for the clients' impact frame", shotOk and shot ~= nil and shot.ImpactDelay == lead)
+	expect("A shot carries the swing lead (ImpactDelay) and power for the clients' swing animation", shotOk and shot ~= nil and shot.ImpactDelay == lead and shot.Power == 80)
 	if shot then
 		local landsAt = intro + 5 + lead + shot.TotalSeconds + Config.Match.FlightPadSeconds
 		e.tick(landsAt - 0.05)
@@ -3265,6 +3265,34 @@ do
 		m.drainEvents()
 	end
 	expect(`Auto-putter: all {greenTurns} turns on the green start with the putter, none off it`, m.isFinished() and greenTurns > 0 and puttsOk and offGreenOk)
+
+	-- On the green, other clubs are refused; off it, any club is fine.
+	local g = MatchEngine.new({ IntroSeconds = 0, Players = bots, Holes = { CourseDatabase.hole(3) }, Seed = 2, Now = 0 })
+	local gid = g.activeId() :: string
+	local teeOk = g.setClub(gid, "WG")
+	local refusedOnGreen = false
+	local t = 0
+	for _ = 1, 2000 do
+		if g.isFinished() or refusedOnGreen then
+			break
+		end
+		t += 0.25
+		g.tick(t)
+		local id = g.activeId()
+		if id and g.phase() == "Swing" then
+			for _, view in g.snapshot(t).Players do
+				if view.Id == id and view.Lie == "Green" then
+					local okWedge, whyWedge = g.setClub(id, "WG")
+					refusedOnGreen = not okWedge and whyWedge == "putter_only_on_green" and g.setClub(id, "PT")
+				end
+			end
+			if not refusedOnGreen then
+				BotBrain.play(g, id, "Hard", rng, t)
+			end
+		end
+		g.drainEvents()
+	end
+	expect("Putter only on the green (other clubs refused there, allowed elsewhere)", teeOk and refusedOnGreen)
 	expect("Intro banner reads the hole and par", string.find(MatchView.hud(first, "H1", statsFor).Banner, "PAR") ~= nil)
 end
 

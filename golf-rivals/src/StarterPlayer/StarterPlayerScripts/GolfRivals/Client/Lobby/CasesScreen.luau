@@ -13,6 +13,9 @@
 	     straight to the results.
 	  4. Results: the items, EQUIP for new ones, SELL ALL (spare copies only, at the
 	     rarity sell values) and OPEN ANOTHER.
+
+	LAYOUT: the three columns are proportional (26% / 46% / 28%), so the quantity
+	buttons and the description always fit the window, whatever the screen size.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -61,7 +64,7 @@ local function miniCard(itemId: string, height: number): Frame
 end
 
 CasesScreen.factory = {
-	Title = "📦  CASES",
+	Title = "CASES",
 	create = function(content: Frame, _host: ModalHost.Host): ModalHost.ScreenApi
 		local selected = CaseDatabase.Order[1]
 		local quantity = 1
@@ -70,22 +73,29 @@ CasesScreen.factory = {
 
 		-- ---- main view --------------------------------------------------------------------------
 		local main = Kit.new("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = content }) :: Frame
-		local caseColumn = Kit.new("Frame", { Size = UDim2.new(0, 250, 1, 0), BackgroundTransparency = 1, Parent = main }, { Kit.list(Enum.FillDirection.Vertical, 10) }) :: Frame
-		local center = Kit.panel({ Size = UDim2.new(1, -560, 1, 0), Position = UDim2.fromOffset(262, 0), Parent = main })
-		local oddsPanel = Kit.panel({ Size = UDim2.fromOffset(286, 1), Position = UDim2.new(1, -286, 0, 0), Parent = main })
-		oddsPanel.Size = UDim2.new(0, 286, 1, 0)
+		local caseColumn = Kit.new("ScrollingFrame", {
+			Size = UDim2.new(0.26, 0, 1, 0), BackgroundTransparency = 1, BorderSizePixel = 0, CanvasSize = UDim2.new(0, 0, 0, 0),
+			AutomaticCanvasSize = Enum.AutomaticSize.Y, ScrollBarThickness = 4, Parent = main,
+		}, { Kit.list(Enum.FillDirection.Vertical, 10), Kit.padding(2) }) :: ScrollingFrame
+		local center = Kit.panel({ Size = UDim2.new(0.46, -24, 1, 0), Position = UDim2.new(0.26, 12, 0, 0), Parent = main })
+		local oddsPanel = Kit.panel({ Size = UDim2.new(0.28, 0, 1, 0), Position = UDim2.fromScale(0.72, 0), Parent = main })
 
-		local crate = Kit.new("Frame", { Size = UDim2.fromOffset(240, 200), Position = UDim2.new(0.5, -120, 0, 24), BackgroundColor3 = C.Gold, BorderSizePixel = 0, Parent = center }, {
+		local crate = Kit.new("Frame", { Size = UDim2.fromOffset(170, 140), Position = UDim2.new(0.5, -85, 0, 18), BackgroundColor3 = C.Gold, BorderSizePixel = 0, Parent = center }, {
 			Kit.corner(18),
 			Kit.new("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(255, 214, 90), Color3.fromRGB(190, 120, 20)), Rotation = 90 }),
 		}) :: Frame
-		Kit.label("📦", { Size = UDim2.fromScale(1, 1), TextSize = 110, TextXAlignment = Enum.TextXAlignment.Center, Parent = crate })
-		local caseName = Kit.label("", { Size = UDim2.new(1, -20, 0, 36), Position = UDim2.fromOffset(10, 236), TextSize = 26, Font = Theme.Fonts.Title, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.Gold, Parent = center })
-		local caseDesc = Kit.label("", { Size = UDim2.new(1, -40, 0, 40), Position = UDim2.fromOffset(20, 274), TextSize = 14, TextColor3 = C.TextDim, TextXAlignment = Enum.TextXAlignment.Center, Parent = center })
-		local qtyRow = Kit.new("Frame", { Size = UDim2.new(1, -40, 0, 44), Position = UDim2.new(0, 20, 1, -122), BackgroundTransparency = 1, Parent = center }, {
+		Kit.label("📦", { Size = UDim2.fromScale(1, 1), TextSize = 84, TextXAlignment = Enum.TextXAlignment.Center, Parent = crate })
+		local caseName = Kit.label("", { Size = UDim2.new(1, -20, 0, 32), Position = UDim2.fromOffset(10, 166), TextSize = 24, Font = Theme.Fonts.Title, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = C.Gold, TextTruncate = Enum.TextTruncate.AtEnd, Parent = center })
+		-- Room for three wrapped lines; long text shrinks rather than clipping.
+		local caseDesc = Kit.label("", {
+			Size = UDim2.new(1, -32, 0, 58), Position = UDim2.fromOffset(16, 200), TextSize = 14, TextColor3 = C.TextDim, TextXAlignment = Enum.TextXAlignment.Center,
+			TextYAlignment = Enum.TextYAlignment.Top, TextScaled = true, Font = Theme.Fonts.Body, Parent = center,
+		})
+		Kit.new("UITextSizeConstraint", { MaxTextSize = 15, MinTextSize = 10, Parent = caseDesc })
+		local qtyRow = Kit.new("Frame", { Size = UDim2.new(1, -32, 0, 42), Position = UDim2.new(0, 16, 1, -118), BackgroundTransparency = 1, Parent = center }, {
 			Kit.list(Enum.FillDirection.Horizontal, 8, { HorizontalAlignment = Enum.HorizontalAlignment.Center }),
 		}) :: Frame
-		local openButton = Kit.button("OPEN CASE", "primary", nil, { Size = UDim2.new(1, -40, 0, 56), Position = UDim2.new(0, 20, 1, -70), TextSize = 22, Parent = center })
+		local openButton, setOpenText = Kit.priceButton("OPEN CASE", "Coins", nil, "primary", nil, { Size = UDim2.new(1, -32, 0, 56), Position = UDim2.new(0, 16, 1, -68), TextSize = 20, Parent = center })
 
 		Kit.label("DROP RATES", { Size = UDim2.new(1, -24, 0, 26), Position = UDim2.fromOffset(14, 10), TextSize = 16, TextColor3 = C.TextDim, Parent = oddsPanel })
 		local oddsList = Kit.new("Frame", { Size = UDim2.new(1, -24, 1, -56), Position = UDim2.fromOffset(12, 44), BackgroundTransparency = 1, Parent = oddsPanel }, { Kit.list(Enum.FillDirection.Vertical, 8) }) :: Frame
@@ -113,10 +123,10 @@ CasesScreen.factory = {
 				local button = Kit.button("", if isSelected then "secondary" else "ghost", function()
 					selected = card.Id
 					render()
-				end, { Size = UDim2.new(1, 0, 0, 92), LayoutOrder = index, Parent = caseColumn })
-				Kit.label("📦", { Size = UDim2.fromOffset(60, 92), Position = UDim2.fromOffset(8, 0), TextSize = 40, TextXAlignment = Enum.TextXAlignment.Center, Parent = button })
-				Kit.label(card.Name, { Size = UDim2.new(1, -80, 0, 38), Position = UDim2.fromOffset(72, 10), TextSize = 15, Parent = button })
-				Kit.label(`🪙 {card.PriceText}`, { Size = UDim2.new(1, -80, 0, 22), Position = UDim2.fromOffset(72, 56), TextSize = 16, Font = Theme.Fonts.Bold, TextColor3 = C.Gold, Parent = button })
+				end, { Size = UDim2.new(1, -6, 0, 86), LayoutOrder = index, Parent = caseColumn })
+				Kit.label("📦", { Size = UDim2.fromOffset(52, 86), Position = UDim2.fromOffset(6, 0), TextSize = 34, TextXAlignment = Enum.TextXAlignment.Center, Parent = button })
+				Kit.label(card.Name, { Size = UDim2.new(1, -66, 0, 40), Position = UDim2.fromOffset(60, 8), TextSize = 15, TextYAlignment = Enum.TextYAlignment.Top, Parent = button })
+				Kit.amount("Coins", card.PriceText, { TextSize = 15, Position = UDim2.fromOffset(60, 54), Parent = button })
 			end
 
 			local current = CaseDatabase.Cases[selected]
@@ -137,11 +147,15 @@ CasesScreen.factory = {
 				Kit.button(`x{n}`, if n == quantity then "secondary" else "ghost", function()
 					quantity = n
 					render()
-				end, { Size = UDim2.fromOffset(78, 40), TextSize = 17, TextTransparency = if n > maxAffordable then 0.5 else 0, Parent = qtyRow })
+				end, { Size = UDim2.new(1 / #CasesView.Quantities, -8, 1, 0), TextSize = 17, TextTransparency = if n > maxAffordable then 0.5 else 0, LayoutOrder = n, Parent = qtyRow })
 			end
 			local total = CasesView.total(selected, quantity)
 			local canOpen, why = CasesView.canOpen(profile, selected, quantity)
-			openButton.Text = if canOpen then `OPEN {if quantity > 1 then quantity .. " CASES" else "CASE"}   🪙 {Format.commas(total.Amount)}` else (why or "CAN'T OPEN")
+			if canOpen then
+				setOpenText(`OPEN {if quantity > 1 then quantity .. " CASES" else "CASE"}`, Format.commas(total.Amount))
+			else
+				setOpenText(string.upper(why or "CAN'T OPEN"), nil)
+			end
 			openButton.BackgroundColor3 = if canOpen then C.Accent else C.PanelLight
 		end
 
@@ -178,7 +192,7 @@ CasesScreen.factory = {
 					end, { Size = UDim2.fromOffset(124, 36), Position = UDim2.fromOffset(0, 156), TextSize = 14, Parent = slot })
 				end
 			end
-			local sellButton = Kit.button(if results.SellValue > 0 then `SELL ALL   🪙 {Format.commas(results.SellValue)}` else "NOTHING TO SELL", if results.SellValue > 0 then "ghost" else "ghost", nil, {
+			local sellButton, setSellText = Kit.priceButton(if results.SellValue > 0 then "SELL ALL" else "NOTHING TO SELL", "Coins", if results.SellValue > 0 then Format.commas(results.SellValue) else nil, "ghost", nil, {
 				Size = UDim2.fromOffset(280, 52), Position = UDim2.new(0.5, -294, 1, -68), TextSize = 18, Parent = layer,
 			})
 			sellButton.Activated:Connect(function()
@@ -188,7 +202,7 @@ CasesScreen.factory = {
 				local reply = Remotes.invoke("SellItems", results.SellIds)
 				if type(reply) == "table" and reply.ok then
 					Toast.show(`Sold for {Format.commas(reply.CoinsGained)} coins`, "success")
-					sellButton.Text = "SOLD"
+					setSellText("SOLD", nil)
 					results.SellValue = 0
 				else
 					Toast.show(Reasons.text(if type(reply) == "table" then reply.reason else nil), "error")

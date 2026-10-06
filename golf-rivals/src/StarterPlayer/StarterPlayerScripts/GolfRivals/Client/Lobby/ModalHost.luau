@@ -12,6 +12,9 @@
 
 	`api.refresh()` is also called by the lobby whenever the profile changes while the
 	screen is open. Escape closes the window.
+
+	The window lives inside Kit.safeArea, so it is always clear of Roblox's top-bar
+	buttons; the dim backdrop still covers the whole screen.
 ]]
 
 local UserInputService = game:GetService("UserInputService")
@@ -51,12 +54,19 @@ function ModalHost.new(): Host
 		Visible = false, Parent = gui,
 	}) :: TextButton
 
+	backdrop.ZIndex = 0
+	local safe = Kit.safeArea(gui)
+	safe.Visible = false
+	safe.ZIndex = 2 -- above the backdrop; clicks outside the window fall through to it
 	local window = Kit.panel({
-		Size = UDim2.new(0.88, 0, 0.84, 0), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), Parent = backdrop,
-	}, { Kit.new("UISizeConstraint", { MaxSize = Vector2.new(1180, 700), MinSize = Vector2.new(760, 460) }) })
+		Size = UDim2.fromScale(0.94, 1), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5),
+		BackgroundTransparency = 0, Parent = safe,
+	}, { Kit.new("UISizeConstraint", { MaxSize = Vector2.new(1180, 720), MinSize = Vector2.new(640, 380) }) })
+	-- A thin accent line under the title bar.
+	Kit.new("Frame", { Size = UDim2.new(1, -32, 0, 2), Position = UDim2.fromOffset(16, 52), BackgroundColor3 = Theme.Colors.StrokeSoft, BorderSizePixel = 0, Parent = window })
 
-	local titleLabel = Kit.label("", { Size = UDim2.new(1, -80, 0, 48), Position = UDim2.fromOffset(20, 0), TextSize = 22, Font = Theme.Fonts.Title, Parent = window })
-	local content = Kit.new("Frame", { Size = UDim2.new(1, -24, 1, -64), Position = UDim2.fromOffset(12, 52), BackgroundTransparency = 1, Parent = window }) :: Frame
+	local titleLabel = Kit.label("", { Size = UDim2.new(1, -90, 0, 52), Position = UDim2.fromOffset(20, 0), TextSize = 24, Font = Theme.Fonts.Title, TextTruncate = Enum.TextTruncate.AtEnd, Parent = window })
+	local content = Kit.new("Frame", { Size = UDim2.new(1, -24, 1, -70), Position = UDim2.fromOffset(12, 62), BackgroundTransparency = 1, Parent = window }) :: Frame
 
 	local factories: { [string]: Factory } = {}
 	local apis: { [string]: ScreenApi? } = {}
@@ -70,6 +80,7 @@ function ModalHost.new(): Host
 		end
 		currentName = nil
 		backdrop.Visible = false
+		safe.Visible = false
 		local api = apis[name]
 		if api and api.onClose then
 			api.onClose()
@@ -98,6 +109,7 @@ function ModalHost.new(): Host
 		titleLabel.Text = factory.Title
 		currentName = name
 		backdrop.Visible = true
+		safe.Visible = true
 		local api = apis[name]
 		if api then
 			if api.onOpen then
@@ -107,7 +119,7 @@ function ModalHost.new(): Host
 		end
 	end
 
-	Kit.button("✕", "ghost", close, { Size = UDim2.fromOffset(40, 36), Position = UDim2.new(1, -52, 0, 6), TextSize = 18, Parent = window })
+	Kit.closeButton(close, { Size = UDim2.fromOffset(40, 40), Position = UDim2.new(1, -52, 0, 7), Parent = window })
 	-- Clicking the dim area outside the window closes it (clicks inside don't reach it).
 	backdrop.Activated:Connect(function()
 		close()

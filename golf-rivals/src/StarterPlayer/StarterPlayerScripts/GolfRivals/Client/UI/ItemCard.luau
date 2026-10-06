@@ -12,6 +12,7 @@
 
 local Theme = require(script.Parent.Theme)
 local Kit = require(script.Parent.Kit)
+local Icons = require(script.Parent.Icons)
 
 local ItemCard = {}
 
@@ -24,6 +25,8 @@ export type Props = {
 	Glyph: string?,
 	Footer: string?,
 	FooterColor: Color3?,
+	-- A price footer drawn with a real coin/gem icon (takes precedence over Footer).
+	FooterPrice: { Currency: string, Text: string }?,
 	Badge: string?, -- small corner tag: "NEW", "x3", "LOCKED"
 	Locked: boolean?,
 	Selected: boolean?,
@@ -33,7 +36,7 @@ export type Props = {
 }
 
 local GLYPHS: { [string]: string } = {
-	Driver = "🏌", Wood = "🏌", Iron = "🏌", Wedge = "🏌", Putter = "🏌",
+	Driver = "🏌", FairwayWood = "🏌", LongIron = "🏌", ShortIron = "🏌", Wedge = "🏌", Putter = "⛳",
 	Swing = "💪", Stance = "🧍", Emote = "🎉",
 	BallModel = "⚪", BallTrail = "☄", HoleEffect = "🎆",
 }
@@ -78,7 +81,10 @@ function ItemCard.new(props: Props): Frame
 	})
 	if locked then
 		tile.BackgroundTransparency = 0.5
-		Kit.label("🔒", { Size = UDim2.fromScale(1, 1), TextSize = 24, TextXAlignment = Enum.TextXAlignment.Center, Parent = tile })
+		local lock = Icons.lock(UDim2.fromOffset(22, 26))
+		lock.AnchorPoint = Vector2.new(0.5, 0.5)
+		lock.Position = UDim2.fromScale(0.5, 0.5)
+		lock.Parent = tile
 	end
 
 	Kit.label(props.Name, {
@@ -90,7 +96,11 @@ function ItemCard.new(props: Props): Frame
 			TextTruncate = Enum.TextTruncate.AtEnd, Parent = card,
 		})
 	end
-	if props.Footer then
+	if props.FooterPrice then
+		Kit.amount(props.FooterPrice.Currency, props.FooterPrice.Text, {
+			TextSize = 14, TextColor3 = props.FooterColor, Position = UDim2.new(0, 6, 1, -26), Parent = card,
+		})
+	elseif props.Footer then
 		Kit.label(props.Footer, {
 			Size = UDim2.new(1, -10, 0, 20), Position = UDim2.new(0, 6, 1, -26), TextSize = 14, TextColor3 = props.FooterColor or Theme.Colors.Text,
 			Font = Theme.Fonts.Bold, Parent = card,

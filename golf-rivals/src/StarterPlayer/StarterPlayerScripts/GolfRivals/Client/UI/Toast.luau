@@ -24,13 +24,15 @@ local function ensureGui(): Frame
 	if holder and holder.Parent then
 		return holder
 	end
-	gui = Kit.screenGui("GolfRivalsToasts", 100)
+	local screen = Kit.screenGui("GolfRivalsToasts", 100)
+	gui = screen
+	-- Below the top-centre banners and clear of Roblox's top bar.
 	local created = Kit.new("Frame", {
 		Name = "Holder",
 		BackgroundTransparency = 1,
 		Size = UDim2.new(0, 420, 0, 300),
-		Position = UDim2.new(0.5, -210, 0, 70),
-		Parent = gui,
+		Position = UDim2.new(0.5, -210, 0, 132),
+		Parent = Kit.safeArea(screen),
 	}, { Kit.list(Enum.FillDirection.Vertical, 8, { HorizontalAlignment = Enum.HorizontalAlignment.Center }) }) :: Frame
 	holder = created
 	return created

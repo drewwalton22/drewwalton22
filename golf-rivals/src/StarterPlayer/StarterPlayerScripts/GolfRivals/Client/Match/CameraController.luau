@@ -8,6 +8,10 @@
 	  address(ball, aimX, aimZ)     behind the ball, looking down the aim line
 	  follow(getBall)               chase camera: tracks behind and alongside the
 	                                ball every frame until the caller switches mode
+	  golfer(ball, aimX, aimZ, putt)  behind and a little right of the ball, low, so the
+	                                golfer (side-on, left of the ball), the ball and the
+	                                aim arc / putting line are all in frame
+	  static(position, look, fov)   a fixed shot (the podium, the driving range)
 	  release()                     give the camera back to Roblox
 
 	It binds one render-step callback while active and sets the camera to Scriptable;
@@ -23,7 +27,7 @@ local CameraController = {}
 
 local BIND_NAME = "GolfRivalsMatchCamera"
 
-type Mode = "None" | "Intro" | "Address" | "Follow"
+type Mode = "None" | "Intro" | "Address" | "Follow" | "Static"
 
 local mode: Mode = "None"
 local previousType: Enum.CameraType? = nil
@@ -35,6 +39,9 @@ local introDone: (() -> ())? = nil
 local addressPose: CameraMath.Pose? = nil
 local followState: CameraMath.FollowState? = nil
 local getBall: (() -> Vector3?)? = nil
+local staticPose: CameraMath.Pose? = nil
+local staticFov = 60
+local addressFov = 60
 
 local function toVec(v: Vector3): CameraMath.Vec3
 	return { X = v.X, Y = v.Y, Z = v.Z }
@@ -63,7 +70,9 @@ local function step(dt: number)
 			end
 		end
 	elseif mode == "Address" and addressPose then
-		apply(addressPose, 60)
+		apply(addressPose, addressFov)
+	elseif mode == "Static" and staticPose then
+		apply(staticPose, staticFov)
 	elseif mode == "Follow" and followState and getBall then
 		local ball = getBall()
 		if ball then
@@ -90,7 +99,31 @@ end
 function CameraController.address(ball: Vector3, aimX: number, aimZ: number)
 	ensureBound()
 	mode = "Address"
+	addressFov = 60
 	addressPose = CameraMath.addressPose(toVec(ball), aimX, aimZ)
+end
+
+function CameraController.golfer(ball: Vector3, aimX: number, aimZ: number, isPutt: boolean)
+	ensureBound()
+	local forward = Vector3.new(aimX, 0, aimZ)
+	forward = if forward.Magnitude > 1e-6 then forward.Unit else Vector3.new(1, 0, 0)
+	local right = Vector3.new(-forward.Z, 0, forward.X)
+	local back, height, side, ahead = 15, 6, 3.5, 34
+	if isPutt then
+		back, height, side, ahead = 11, 5.5, 2, 16
+	end
+	local position = ball - forward * back + right * side + Vector3.new(0, height, 0)
+	local look = ball + forward * ahead + Vector3.new(0, if isPutt then -1 else 2, 0)
+	mode = "Address"
+	addressFov = 62
+	addressPose = { Pos = toVec(position), Look = toVec(look) }
+end
+
+function CameraController.static(position: Vector3, look: Vector3, fov: number?)
+	ensureBound()
+	mode = "Static"
+	staticFov = fov or 60
+	staticPose = { Pos = toVec(position), Look = toVec(look) }
 end
 
 function CameraController.follow(ball: Vector3, aimX: number, aimZ: number, provider: () -> Vector3?)
@@ -110,7 +143,7 @@ function CameraController.release()
 		end
 		previousType = nil
 	end
-	mode, introDone, followState, getBall, addressPose = "None", nil, nil, nil, nil
+	mode, introDone, followState, getBall, addressPose, staticPose = "None", nil, nil, nil, nil, nil
 end
 
 return CameraController

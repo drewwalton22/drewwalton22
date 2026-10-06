@@ -42,6 +42,21 @@ local TEXT: { [string]: string } = {
 	not_active = "That quest isn't active any more.",
 	unknown_quest = "That quest doesn't exist.",
 	not_in_match = "You aren't in a match.",
+	-- Driving range
+	busy = "Leave the queue or match first.",
+	unknown_bay = "That bay doesn't exist.",
+	bay_taken = "Someone is using that bay. Try another one.",
+	no_character = "Your character is still loading.",
+	too_far = "Walk up to the bay first.",
+	no_bay = "Take a bay at the driving range first.",
+	bad_club = "Pick a club (no putting at the range).",
+	bad_aim = "Aim further toward the targets.",
+	ball_not_ready = "Wait for the next ball.",
+	too_fast = "Swing again - that was too quick.",
+	bad_power = "Swing again.",
+	bad_offset = "Swing again.",
+	power_too_low = "Give it a bit more power.",
+	putter_only_on_green = "On the green you putt.",
 }
 
 function Reasons.text(reason: any): string

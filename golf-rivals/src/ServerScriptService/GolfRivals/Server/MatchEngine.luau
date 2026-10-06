@@ -29,6 +29,7 @@
 	    costs one more stroke.
 	  * A hole ends for a player at par + MaxStrokesOverPar (pick-up).
 	  * Fewest total strokes wins; equal totals draw. A forfeiting player loses.
+	  * On the green the putter is selected automatically and is the only club.
 	  * Timeouts: a swing not completed within TurnSeconds is played as a
 	    deliberately poor automatic shot; MaxTimeouts of them forfeit the match.
 
@@ -446,6 +447,7 @@ function MatchEngine.new(config: EngineConfig): Engine
 			HoleIndex = holeIndex,
 			Stroke = ps.Strokes,
 			ClubLabel = label,
+			Power = power, -- lets every client size the golfer's backswing
 			Auto = auto,
 			Quality = shot.Quality,
 			StartLie = startLie,
@@ -552,6 +554,10 @@ function MatchEngine.new(config: EngineConfig): Engine
 		end
 		if type(label) ~= "string" or ClubDatabase.getSlot(label) == nil then
 			return false, "unknown_club_slot"
+		end
+		-- Auto-putter: on the green the putter is the only club.
+		if ps.Lie == "Green" and label ~= ClubStats.PUTTER then
+			return false, "putter_only_on_green"
 		end
 		ps.ClubLabel = label
 		return true, nil

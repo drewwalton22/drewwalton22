@@ -32,7 +32,7 @@ local TradeUpScreen = {}
 local C = Theme.Colors
 
 TradeUpScreen.factory = {
-	Title = "🔁  TRADE-UP CONTRACT",
+	Title = "TRADE-UP CONTRACT",
 	create = function(content: Frame, _host: ModalHost.Host): ModalHost.ScreenApi
 		local selection: { string } = {}
 		local busy = false
@@ -45,10 +45,12 @@ TradeUpScreen.factory = {
 
 		local right = Kit.panel({ Size = UDim2.new(0.5, -10, 1, 0), Position = UDim2.new(0.5, 10, 0, 0), Parent = content })
 		Kit.label(`CONTRACT  ·  {Config.TradeUp.InputCount} ITEMS OF ONE RARITY`, { Size = UDim2.new(1, -20, 0, 26), Position = UDim2.fromOffset(14, 10), TextSize = 14, TextColor3 = C.TextDim, Font = Theme.Fonts.Bold, Parent = right })
-		local slots = Kit.new("Frame", { Size = UDim2.new(1, -20, 0, 160), Position = UDim2.fromOffset(10, 42), BackgroundTransparency = 1, Parent = right }, {
-			Kit.grid(UDim2.fromOffset(92, 150), 6, { HorizontalAlignment = Enum.HorizontalAlignment.Center }),
+		-- Five slots always fit one row (proportional cells), so the result card
+		-- below never covers slot 5 on narrow windows.
+		local slots = Kit.new("Frame", { Size = UDim2.new(1, -20, 0, 128), Position = UDim2.fromOffset(10, 42), BackgroundTransparency = 1, Parent = right }, {
+			Kit.grid(UDim2.new(1 / Config.TradeUp.InputCount, -6, 0, 124), 6, { HorizontalAlignment = Enum.HorizontalAlignment.Center }),
 		}) :: Frame
-		local resultArea = Kit.new("Frame", { Size = UDim2.new(1, -20, 0, 170), Position = UDim2.fromOffset(10, 212), BackgroundTransparency = 1, Parent = right }) :: Frame
+		local resultArea = Kit.new("Frame", { Size = UDim2.new(1, -20, 0, 166), Position = UDim2.fromOffset(10, 178), BackgroundTransparency = 1, Parent = right }) :: Frame
 		local message = Kit.label("", { Size = UDim2.new(1, -24, 0, 44), Position = UDim2.new(0, 12, 1, -130), TextSize = 16, TextXAlignment = Enum.TextXAlignment.Center, Parent = right })
 		local tradeButton = Kit.button("TRADE UP", "primary", nil, { Size = UDim2.new(1, -40, 0, 56), Position = UDim2.new(0, 20, 1, -72), TextSize = 22, Parent = right })
 
@@ -119,14 +121,14 @@ TradeUpScreen.factory = {
 				if item then
 					ItemCard.new({
 						Name = item.Name, Color = Rarity.Info[item.Rarity].Color, Primary = item.Visual.Primary, Secondary = item.Visual.Secondary,
-						Glyph = ItemCard.glyphFor(item.Slot), Size = UDim2.fromOffset(92, 150), LayoutOrder = index,
+						Glyph = ItemCard.glyphFor(item.Slot), LayoutOrder = index,
 						OnClick = function()
 							selection = TradeUpView.remove(selection, index)
 							render()
 						end,
 					}).Parent = slots
 				else
-					local empty = Kit.panel({ Size = UDim2.fromOffset(92, 150), BackgroundColor3 = C.PanelDark, LayoutOrder = index, Parent = slots })
+					local empty = Kit.panel({ BackgroundColor3 = C.PanelDark, LayoutOrder = index, Parent = slots })
 					Kit.label(tostring(index), { Size = UDim2.fromScale(1, 1), TextSize = 30, TextColor3 = C.Stroke, TextXAlignment = Enum.TextXAlignment.Center, Parent = empty })
 				end
 			end
@@ -144,6 +146,7 @@ TradeUpScreen.factory = {
 			message.TextColor3 = if state.Valid then C.Good else C.TextDim
 			tradeButton.BackgroundColor3 = if state.Valid then C.Accent else C.PanelLight
 			tradeButton.Text = if state.Valid then "TRADE UP" else `ADD {state.Needed - state.Count} MORE`
+			tradeButton.TextWrapped = true
 		end
 
 		tradeButton.Activated:Connect(function()

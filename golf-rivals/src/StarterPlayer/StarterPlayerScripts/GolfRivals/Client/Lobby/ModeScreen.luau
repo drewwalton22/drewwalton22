@@ -36,7 +36,7 @@ local LEAGUE_COLORS: { [string]: Color3 } = {
 }
 
 ModeScreen.factory = {
-	Title = "⛳  PLAY",
+	Title = "PLAY",
 	create = function(content: Frame, host: ModalHost.Host): ModalHost.ScreenApi
 		Kit.label("RANKED LEAGUES", { Size = UDim2.new(1, 0, 0, 24), TextSize = 16, TextColor3 = C.TextDim, Font = Theme.Fonts.Bold, Parent = content })
 		local leagueRow = Kit.new("Frame", { Size = UDim2.new(1, 0, 0, 250), Position = UDim2.fromOffset(0, 28), BackgroundTransparency = 1, Parent = content }, {
@@ -65,8 +65,16 @@ ModeScreen.factory = {
 				end
 				Kit.label("🛡", { Size = UDim2.new(1, 0, 0, 56), Position = UDim2.fromOffset(0, 10), TextSize = 44, TextXAlignment = Enum.TextXAlignment.Center, Parent = card })
 				Kit.label(string.upper(league.DisplayName), { Size = UDim2.new(1, -16, 0, 24), Position = UDim2.fromOffset(8, 68), TextSize = 17, Font = Theme.Fonts.Title, TextColor3 = accent, TextXAlignment = Enum.TextXAlignment.Center, Parent = card })
-				Kit.label(`Entry fee   🪙 {league.FeeText}`, { Size = UDim2.new(1, -16, 0, 20), Position = UDim2.fromOffset(8, 104), TextSize = 14, TextColor3 = C.TextDim, TextXAlignment = Enum.TextXAlignment.Center, Parent = card })
-				Kit.label(`Win   🪙 {league.PayoutText}`, { Size = UDim2.new(1, -16, 0, 22), Position = UDim2.fromOffset(8, 126), TextSize = 17, Font = Theme.Fonts.Bold, TextColor3 = C.Gold, TextXAlignment = Enum.TextXAlignment.Center, Parent = card })
+				local feeRow = Kit.new("Frame", { Size = UDim2.new(1, -16, 0, 22), Position = UDim2.fromOffset(8, 102), BackgroundTransparency = 1, Parent = card }, {
+					Kit.list(Enum.FillDirection.Horizontal, 6, { HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Center }),
+				})
+				Kit.label("Entry fee", { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 20), TextSize = 14, TextColor3 = C.TextDim, LayoutOrder = 1, Parent = feeRow })
+				Kit.amount("Coins", league.FeeText, { TextSize = 14, TextColor3 = C.Text, LayoutOrder = 2, Parent = feeRow })
+				local winRow = Kit.new("Frame", { Size = UDim2.new(1, -16, 0, 26), Position = UDim2.fromOffset(8, 126), BackgroundTransparency = 1, Parent = card }, {
+					Kit.list(Enum.FillDirection.Horizontal, 6, { HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Center }),
+				})
+				Kit.label("Win", { AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, 22), TextSize = 17, Font = Theme.Fonts.Bold, TextColor3 = C.Gold, LayoutOrder = 1, Parent = winRow })
+				Kit.amount("Coins", league.PayoutText, { TextSize = 17, LayoutOrder = 2, Parent = winRow })
 				local queued = Bus.Queued
 				local label = if queued then "IN QUEUE" elseif league.CanAfford then "FIND MATCH" else `NEED {league.Shortfall} MORE`
 				Kit.button(label, if league.CanAfford and not queued then "primary" else "ghost", function()

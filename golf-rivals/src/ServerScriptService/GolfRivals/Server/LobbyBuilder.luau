@@ -11,6 +11,11 @@
 
 	Signs are parts with a SurfaceGui on the Front face; LobbyLayout guarantees the
 	front faces the plaza.
+
+	Driving-range mats get a ProximityPrompt ("Hit balls") carrying a BayId
+	attribute; the client's RangeController turns a trigger into a RangeJoin request
+	(the server re-checks the distance itself). The AFK lounge needs no prompt: the
+	server's ZoneService checks positions.
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -101,7 +106,21 @@ function LobbyBuilder.build()
 	folder.Name = "Lobby"
 
 	for _, spec in layout.Parts do
-		PartFactory.create(spec, Vector3.zero).Parent = folder
+		local part = PartFactory.create(spec, Vector3.zero)
+		local bayId = string.match(spec.Name, "^RangeMat_(%d+)$")
+		if bayId then
+			local prompt = Instance.new("ProximityPrompt")
+			prompt.Name = "RangeBayPrompt"
+			prompt.ActionText = "Hit balls"
+			prompt.ObjectText = `Driving range · Bay {bayId}`
+			prompt.KeyboardKeyCode = Enum.KeyCode.E
+			prompt.HoldDuration = 0
+			prompt.MaxActivationDistance = 12
+			prompt.RequiresLineOfSight = false
+			prompt:SetAttribute("BayId", tonumber(bayId))
+			prompt.Parent = part
+		end
+		part.Parent = folder
 	end
 	for _, sign in layout.Signs do
 		buildSign(sign, folder)

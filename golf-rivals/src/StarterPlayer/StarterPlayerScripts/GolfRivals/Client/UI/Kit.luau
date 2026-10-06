@@ -10,11 +10,19 @@
 	Property tables are applied with plain assignment (an unknown property name is a
 	loud error, which is what we want), `Parent` is applied last so a screen is never
 	shown half-built, and children can be passed in the third argument.
+
+	TOPBAR SAFETY: every ScreenGui ignores the GUI inset (so dim backdrops cover the
+	whole screen), and HUD content goes inside Kit.safeArea(gui): a frame padded by
+	GuiService.TopbarInset (the height of Roblox's own top-bar buttons, kept live if
+	it changes) plus Theme.Gutter, so nothing ever sits under the Roblox menu,
+	chat or voice buttons.
 ]]
 
+local GuiService = game:GetService("GuiService")
 local TweenService = game:GetService("TweenService")
 
 local Theme = require(script.Parent.Theme)
+local Icons = require(script.Parent.Icons)
 
 local Kit = {}
 
@@ -88,9 +96,14 @@ function Kit.grid(cellSize: UDim2, gap: number, props: Props?): Instance
 	return Kit.new("UIGridLayout", merged)
 end
 
--- A rounded panel with the standard border.
+-- Vertical two-colour gradient (top -> bottom).
+function Kit.gradient(top: Color3, bottom: Color3): Instance
+	return Kit.new("UIGradient", { Color = ColorSequence.new(top, bottom), Rotation = 90 })
+end
+
+-- A rounded glass panel with the standard border.
 function Kit.panel(props: Props?, children: { any }?): Frame
-	local merged: Props = { BackgroundColor3 = Theme.Colors.Panel, BorderSizePixel = 0 }
+	local merged: Props = { BackgroundColor3 = Theme.Colors.Panel, BackgroundTransparency = Theme.PanelTransparency, BorderSizePixel = 0 }
 	if props then
 		for k, v in props do
 			merged[k] = v
@@ -120,20 +133,16 @@ function Kit.label(text: string, props: Props?): TextLabel
 	return Kit.new("TextLabel", merged) :: TextLabel
 end
 
--- A button that calls onClick when pressed. `variant` picks the colour:
--- "primary" (green), "secondary" (blue), "ghost" (dark), "danger" (red).
+-- A button that calls onClick when pressed. `variant` picks the colour pair from
+-- Theme.Variants: "primary" (green), "secondary" (blue), "ghost" (dark), "danger"
+-- (red), "gold", "purple", "teal", "orange". Buttons get a soft top-to-bottom
+-- gradient (white -> shade, multiplied over the base colour) and a press scale.
 function Kit.button(text: string, variant: string?, onClick: (() -> ())?, props: Props?): TextButton
-	local colors = {
-		primary = Theme.Colors.Accent,
-		secondary = Theme.Colors.Blue,
-		ghost = Theme.Colors.PanelLight,
-		danger = Theme.Colors.Danger,
-	}
-	local base = colors[variant or "primary"] or Theme.Colors.Accent
+	local pair = Theme.Variants[variant or "primary"] or Theme.Variants.primary
 	local merged: Props = {
 		Text = text,
 		AutoButtonColor = true,
-		BackgroundColor3 = base,
+		BackgroundColor3 = pair[1],
 		TextColor3 = Theme.Colors.Text,
 		Font = Theme.Fonts.Bold,
 		TextSize = 16,
@@ -145,11 +154,122 @@ function Kit.button(text: string, variant: string?, onClick: (() -> ())?, props:
 		end
 	end
 	local button = Kit.new("TextButton", merged) :: TextButton
-	Kit.corner(8).Parent = button
+	Kit.corner(10).Parent = button
+	-- Gradient as a tint so changing BackgroundColor3 later (enable/disable) still works.
+	Kit.new("UIGradient", {
+		Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.new(0.78, 0.78, 0.82)),
+		Rotation = 90,
+		Parent = button,
+	})
 	if onClick then
 		button.Activated:Connect(onClick)
 	end
 	return button
+end
+
+-- [icon] 1,234   (currency amount that never relies on the coin emoji)
+function Kit.amount(currency: string, text: string, props: Props?): Frame
+	local textSize = if props and props.TextSize then props.TextSize else 16
+	local color = if props and props.TextColor3 then props.TextColor3 else (if currency == "Gems" then Theme.Colors.Gem else Theme.Colors.Gold)
+	local frame = Kit.new("Frame", {
+		BackgroundTransparency = 1,
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.fromOffset(0, textSize + 6),
+	}, {
+		Kit.list(Enum.FillDirection.Horizontal, 5, { VerticalAlignment = Enum.VerticalAlignment.Center }),
+	}) :: Frame
+	local icon = Icons.currency(currency, UDim2.fromOffset(textSize + 2, textSize + 2))
+	icon.LayoutOrder = 1
+	icon.Parent = frame
+	Kit.new("TextLabel", {
+		Text = text,
+		BackgroundTransparency = 1,
+		AutomaticSize = Enum.AutomaticSize.X,
+		Size = UDim2.fromOffset(0, textSize + 6),
+		Font = if props and props.Font then props.Font else Theme.Fonts.Title,
+		TextSize = textSize,
+		TextColor3 = color,
+		LayoutOrder = 2,
+		Parent = frame,
+	})
+	if props then
+		for k, v in props do
+			if k ~= "TextSize" and k ~= "TextColor3" and k ~= "Font" then
+				(frame :: any)[k] = v
+			end
+		end
+	end
+	return frame
+end
+
+-- A button reading "PREFIX  [icon] 1,234", centred. Returns the button and a
+-- setter that rewrites prefix/amount (pass amount = nil to show only the prefix).
+function Kit.priceButton(prefix: string, currency: string, amountText: string?, variant: string?, onClick: (() -> ())?, props: Props?): (TextButton, (prefix: string, amountText: string?) -> ())
+	local textSize = if props and props.TextSize then props.TextSize else 16
+	local button = Kit.button("", variant, onClick, props)
+	local row = Kit.new("Frame", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromScale(1, 1),
+		Parent = button,
+	}, {
+		Kit.list(Enum.FillDirection.Horizontal, 8, {
+			HorizontalAlignment = Enum.HorizontalAlignment.Center,
+			VerticalAlignment = Enum.VerticalAlignment.Center,
+		}),
+	}) :: Frame
+	local function set(newPrefix: string, newAmount: string?)
+		Kit.clear(row)
+		if newPrefix ~= "" then
+			Kit.new("TextLabel", {
+				Text = newPrefix, BackgroundTransparency = 1, AutomaticSize = Enum.AutomaticSize.X, Size = UDim2.fromOffset(0, textSize + 4),
+				Font = Theme.Fonts.Bold, TextSize = textSize, TextColor3 = Theme.Colors.Text, LayoutOrder = 1, Parent = row,
+			})
+		end
+		if newAmount then
+			Kit.amount(currency, newAmount, { TextSize = textSize, TextColor3 = Theme.Colors.Text, LayoutOrder = 2, Parent = row })
+		end
+	end
+	set(prefix, amountText)
+	return button, set
+end
+
+-- The round "X" close button used by windows.
+function Kit.closeButton(onClick: () -> (), props: Props?): TextButton
+	local button = Kit.button("", "ghost", onClick, props)
+	local icon = Icons.close(UDim2.fromScale(0.42, 0.42))
+	icon.AnchorPoint = Vector2.new(0.5, 0.5)
+	icon.Position = UDim2.fromScale(0.5, 0.5)
+	icon.Parent = button
+	return button
+end
+
+-- Top inset in pixels taken by Roblox's own top-bar buttons.
+function Kit.topbarHeight(): number
+	local inset = GuiService.TopbarInset
+	return math.max(inset.Max.Y, 36)
+end
+
+-- A full-screen frame padded clear of the Roblox top bar (see header).
+function Kit.safeArea(gui: ScreenGui, extraTop: number?): Frame
+	local area = Kit.new("Frame", {
+		Name = "SafeArea",
+		Size = UDim2.fromScale(1, 1),
+		BackgroundTransparency = 1,
+		Parent = gui,
+	}) :: Frame
+	local gutter = UDim.new(0, Theme.Gutter)
+	local padding = Kit.new("UIPadding", {
+		PaddingLeft = gutter,
+		PaddingRight = gutter,
+		PaddingBottom = gutter,
+		Parent = area,
+	}) :: UIPadding
+	local function apply()
+		padding.PaddingTop = UDim.new(0, Kit.topbarHeight() + (extraTop or 8))
+	end
+	apply()
+	GuiService:GetPropertyChangedSignal("TopbarInset"):Connect(apply)
+	return area
 end
 
 function Kit.clear(parent: Instance)

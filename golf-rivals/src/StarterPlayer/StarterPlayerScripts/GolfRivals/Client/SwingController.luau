@@ -19,8 +19,12 @@
 	bar UI (built in the lobby/HUD step) can draw it. This controller has no
 	visuals of its own.
 
+	`onSubmit(power, offset)` (optional) replaces the default SubmitSwing send - the
+	match uses it to start the golfer's swing animation the instant the third click
+	lands, the driving range to call RangeSwing instead.
+
 	USAGE (from the match HUD, when the server says it's your turn):
-	    local controller = SwingController.new(function(gauge) ... end)
+	    local controller = SwingController.new(function(gauge) ... end, onSubmit)
 	    controller.enable()   -- arms the gauge; the next click is "click 1"
 	    controller.disable()  -- turn over / menu open
 ]]
@@ -47,7 +51,7 @@ local function isClick(input: InputObject): boolean
 		or input.KeyCode == Enum.KeyCode.Space
 end
 
-function SwingController.new(onGauge: ((SwingStateMachine.Gauge) -> ())?): Controller
+function SwingController.new(onGauge: ((SwingStateMachine.Gauge) -> ())?, onSubmit: ((power: number, offset: number) -> ())?): Controller
 	local machine = SwingStateMachine.new()
 	local enabled = false
 
@@ -56,7 +60,11 @@ function SwingController.new(onGauge: ((SwingStateMachine.Gauge) -> ())?): Contr
 		local result = machine.result()
 		if result then
 			enabled = false -- one shot per arm; the server re-arms us next turn
-			Remotes.fire("SubmitSwing", result.Power, result.AccuracyOffset)
+			if onSubmit then
+				onSubmit(result.Power, result.AccuracyOffset)
+			else
+				Remotes.fire("SubmitSwing", result.Power, result.AccuracyOffset)
+			end
 		end
 	end
 

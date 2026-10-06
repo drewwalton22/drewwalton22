@@ -8,6 +8,8 @@
 	  3. toasts for server notifications
 	  4. the in-match experience (listens for MatchState / ShotResult)
 	  5. the lobby: HUD, screens (Shop, Play, Cases, Loadout, Trade-Up, Quests, Leaderboard)
+	  6. the driving range (bay prompts -> range mode); the AFK lounge needs no client
+	     logic beyond the lobby banner (the server tracks presence)
 ]]
 
 if not game:IsLoaded() then
@@ -23,6 +25,7 @@ local Remotes = require(Shared.Remotes)
 local ClientState = require(script.Parent.ClientState)
 local LobbyController = require(script.Parent.Lobby.LobbyController)
 local MatchController = require(script.Parent.Match.MatchController)
+local RangeController = require(script.Parent.Zones.RangeController)
 local Toast = require(script.Parent.UI.Toast)
 
 Logger.info("Client", "Starting Golf Rivals client...")
@@ -35,5 +38,6 @@ end)
 
 MatchController.start()
 LobbyController.start()
+RangeController.start()
 
 Logger.info("Client", "Client ready.")

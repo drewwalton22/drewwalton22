@@ -2,6 +2,9 @@
 
 Competitive 3-click-swing golf with ranked leagues, loot cases, a daily shop and club upgrades.
 
+**Putting it into Studio:** see [docs/STUDIO_SETUP.md](docs/STUDIO_SETUP.md) for step-by-step placement
+of every script (Rojo or by hand), settings, optional art uploads, and a play-test checklist.
+
 ## Layout (Rojo: `default.project.json`)
 
 | Roblox location | Source | Purpose |
@@ -20,6 +23,14 @@ Competitive 3-click-swing golf with ranked leagues, loot cases, a daily shop and
 - [x] 6. Matchmaking, AI bots, match orchestration (course data, stroke-play engine, ranked queues, 3 bot levels)
 - [x] 7a. Client: match HUD, 3-click gauge, chase camera, live telemetry, course builder (Roblox API type-checked)
 - [x] 7b. Lobby: 3D hub, loadout, shop, cases (roulette), trade-up, play/matchmaking, quests, leaderboard
+- [x] 8. Overhaul:
+  - Topbar-safe modern UI with drawn icons and asset fallbacks.
+  - Six club categories with Power / Accuracy / Spin (save migration v1 -> v2).
+  - The golfer swings and the ball launches on the impact frame, for players and bots.
+  - The hole intro is server-timed (fixes bots shooting during the fly-over).
+  - Live aim arc, vertical power meter, auto-putter with a ground putting line.
+  - Driving range and AFK lounge coin zones.
+  - Post-game podium with victory and defeat animations.
 
 ## Offline checks (no Studio needed)
 
@@ -59,5 +70,9 @@ played in Studio yet. Suggested first pass:
    results screen, Return to Lobby.
 5. Test with 2 players (Test > Local Server, 2 players): both queue Rookie League, play, and the
    winner is paid. Quit one player mid-match to check forfeit + payout.
-6. Known unknowns worth watching: UI sizing at different resolutions, the emoji glyphs rendering in
-   your chosen fonts, arena offsets for simultaneous matches, and DataStore budgets under load.
+6. Known unknowns worth watching: arena offsets for simultaneous matches, DataStore budgets under
+   load, and how the procedural swing reads on unusual avatar packages (upload a real
+   `Swing` animation with an `Impact` marker in `Shared/Assets` to replace it).
+
+The full, current checklist (driving range, AFK lounge, podium, auto-putter) is in
+[docs/STUDIO_SETUP.md](docs/STUDIO_SETUP.md#first-play-test-checklist).

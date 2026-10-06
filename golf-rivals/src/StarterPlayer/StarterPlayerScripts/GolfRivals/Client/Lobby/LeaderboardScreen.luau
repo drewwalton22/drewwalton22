@@ -22,7 +22,7 @@ local LeaderboardScreen = {}
 local C = Theme.Colors
 
 LeaderboardScreen.factory = {
-	Title = "🏆  LEADERBOARD",
+	Title = "LEADERBOARD",
 	create = function(content: Frame, _host: ModalHost.Host): ModalHost.ScreenApi
 		local entries: { any } = {}
 		local yourOvr = 0

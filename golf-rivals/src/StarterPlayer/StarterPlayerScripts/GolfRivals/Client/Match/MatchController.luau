@@ -6,71 +6,112 @@
 	module listens to two remotes and turns them into what the player sees:
 
 	  MatchState  -> hole changes, scoreboard, whose turn, club/aim, timer
-	  ShotResult  -> ball flight animation, chase camera, live telemetry, effects
+	  ShotResult  -> golfer swing -> club impact -> ball flight, chase camera,
+	                 live telemetry, effects
 
-	TURN FLOW (my turn):  MatchState(Swing, active = me)
-	    -> address camera behind the ball, gauge armed (SwingController)
-	    -> three clicks -> SubmitSwing(power, offset) to the server
-	    -> ShotResult arrives: gauge disarmed, ball flies, camera chases it, telemetry
-	       counts up until the ball is at rest, then feedback / effects
-	    -> next MatchState (someone's turn) -> repeat.
+	EVERY SHOT (yours, your opponent's, the bot's) plays in the same order:
+	  1. the shooter's golfer (your avatar, the opponent's avatar, or the bot rig)
+	     stands side-on at the ball with the club from their equipped skin
+	  2. the swing animation plays (GolferRig; uploaded asset or procedural)
+	  3. on the IMPACT frame the ball starts flying - the server already waited
+	     Config.Match.SwingLeadSeconds before its flight clock, so client and
+	     server stay in step
+	  Your own swing starts the moment your third click lands (no network wait);
+	  the ball still launches only once the server's result has arrived AND the
+	  club has reached the ball.
 
-	While a ball is flying (`animating`) state updates still refresh the text HUD but
-	do not move balls, rebuild holes or arm the gauge; when the animation ends the
-	latest state is applied. That keeps a late/early packet from teleporting a ball
-	mid-flight.
+	YOUR TURN
+	  * the camera frames you, the ball and the aim
+	  * an AIM ARC (or, on the green, a PUTTING LINE on the ground) shows where a
+	    perfectly struck ball goes with the selected club and aim, growing live with
+	    the power bar (AimGuide = the same physics the server runs, minus wind)
+	  * the vertical POWER METER takes the three clicks
+	  * on the green the putter is selected automatically and locked in
 
-	ARENAS: each match renders at its own world offset (`MatchId` x ARENA_SPACING),
-	far from the lobby and from other matches, so players in different matches never
-	see each other's course or characters.
+	INTRO: each hole opens with a fly-over that the SERVER times (Intro phase), so
+	nobody - bots included - can shoot while it plays, and nothing here waits on a
+	camera callback (the old bug: a bot shot during the fly-over cancelled the intro
+	callback and the gauge never armed).
+
+	SHOT QUEUE: results that arrive while a shot is still animating wait their turn,
+	so two shots never overlap and a ball is never teleported mid-flight.
+
+	END: the podium (PodiumStage) shows the winner and loser avatars with victory /
+	defeat animations, next to the final scoreboard.
+
+	ARENAS: each match renders at its own world offset (MatchId x ARENA_SPACING).
 ]]
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
 
 local Shared = ReplicatedStorage.GolfRivals.Shared
+local AimGuide = require(Shared.AimGuide)
 local ClubAdvisor = require(Shared.ClubAdvisor)
 local ClubDatabase = require(Shared.ClubDatabase)
+local ClubStats = require(Shared.ClubStats)
 local Config = require(Shared.Config)
 local CourseDatabase = require(Shared.CourseDatabase)
+local CourseTerrain = require(Shared.CourseTerrain)
 local Format = require(Shared.Format)
 local GaugeView = require(Shared.GaugeView)
 local ItemDatabase = require(Shared.ItemDatabase)
 local MatchView = require(Shared.MatchView)
+local PodiumView = require(Shared.PodiumView)
 local ProfileOps = require(Shared.ProfileOps)
 local Remotes = require(Shared.Remotes)
+local ShotPhysics = require(Shared.ShotPhysics)
 local SwingMath = require(Shared.SwingMath)
+local SwingStateMachine = require(Shared.SwingStateMachine)
 local TelemetryView = require(Shared.TelemetryView)
 
 local Bus = require(script.Parent.Parent.Bus)
 local ClientState = require(script.Parent.Parent.ClientState)
 local SwingController = require(script.Parent.Parent.SwingController)
 local Theme = require(script.Parent.Parent.UI.Theme)
+local AimVisual = require(script.Parent.Parent.Golf.AimVisual)
+local ClubLook = require(script.Parent.Parent.Golf.ClubLook)
+local GolferRig = require(script.Parent.Parent.Golf.GolferRig)
 local BallAnimator = require(script.Parent.BallAnimator)
 local CameraController = require(script.Parent.CameraController)
 local CourseBuilder = require(script.Parent.CourseBuilder)
 local MatchHud = require(script.Parent.MatchHud)
+local PodiumStage = require(script.Parent.PodiumStage)
 
 local MatchController = {}
 
 local ARENA_BASE = Vector3.new(30000, 0, 0)
 local ARENA_SPACING = 6000
+local PODIUM_HEIGHT = 900 -- the podium stage floats above the arena
+local AIM_REFRESH_SECONDS = 0.05
 local localPlayer = Players.LocalPlayer
-local DEFAULT_STATS: ClubDatabase.Stats = { Power = 50, Accuracy = 50, Spin = 50 }
+
+type LocalSwing = {
+	ImpactReached: boolean,
+	Launch: (() -> ())?,
+	Consumed: boolean,
+}
 
 -- ---- session state (nil / false while in the lobby) --------------------------------------
 local active = false
 local myId = ""
 local hud: MatchHud.Hud? = nil
 local course: CourseBuilder.Course? = nil
+local terrain: ShotPhysics.Terrain? = nil
+local matchFolder: Folder? = nil
 local balls: { [string]: BallAnimator.Animator } = {}
+local rigs: { [string]: GolferRig.Rig } = {}
 local cosmeticsById: { [string]: { [string]: string } } = {}
+local aim: AimVisual.Visual? = nil
 local swing: SwingController.Controller? = nil
+local podium: PodiumStage.Stage? = nil
 local armed = false
 local animating = false
-local introActive = false
+local shotQueue: { any } = {}
+local localSwing: LocalSwing? = nil
+local gauge: SwingStateMachine.Gauge? = nil
 local currentHoleId = 0
 local lastSnapshot: any = nil
 local snapshotAt = 0.0
@@ -79,37 +120,41 @@ local coinsAtStart = 0
 local summaryShown = false
 local savedWalkSpeed: number? = nil
 local savedJump: number? = nil
+local aimKey = ""
+local aimRefreshedAt = 0.0
 local connections: { RBXScriptConnection } = {}
 
 -- ---- helpers --------------------------------------------------------------------------------
 
--- Effective stats of the club in a bag slot, from my (server-synced) profile.
 local function statsFor(label: string): ClubDatabase.Stats
 	local profile = ClientState.get()
 	if profile == nil then
-		return DEFAULT_STATS
+		return ClubStats.baseline()
 	end
 	local clubId = profile.EquippedClubs[label]
-	return (clubId and ProfileOps.clubStats(profile, clubId)) or DEFAULT_STATS
+	return (clubId and ProfileOps.clubStats(profile, clubId)) or ClubStats.baseline()
 end
 
-local function myView(): any
-	if lastSnapshot == nil then
+local function viewOf(id: string?): any
+	if lastSnapshot == nil or id == nil then
 		return nil
 	end
 	for _, view in lastSnapshot.Players do
-		if view.Id == myId then
+		if view.Id == id then
 			return view
 		end
 	end
 	return nil
 end
 
--- Unit aim direction in the hole frame for a player (pin direction + aim offset).
-local function aimDirection(view: any): (number, number)
+local function myView(): any
+	return viewOf(myId)
+end
+
+-- Aim heading (radians, hole frame) for a player: pin direction + aim offset.
+local function headingOf(view: any): number
 	local pin = lastSnapshot.Hole.Pin
-	local heading = math.atan2(pin.Z - view.Position.Z, pin.X - view.Position.X) + math.rad(view.AimDeg)
-	return math.cos(heading), math.sin(heading)
+	return math.atan2(pin.Z - view.Position.Z, pin.X - view.Position.X) + math.rad(view.AimDeg)
 end
 
 local function appearanceFor(playerId: string): BallAnimator.Appearance
@@ -142,18 +187,6 @@ local function lobbyCFrame(): CFrame?
 	return nil
 end
 
--- Stand the golfer beside their ball, facing down the aim line.
-local function placeCharacter(ballWorld: Vector3, dirX: number, dirZ: number)
-	local character = localPlayer.Character
-	if character == nil then
-		return
-	end
-	local forward = Vector3.new(dirX, 0, dirZ)
-	local right = Vector3.new(-dirZ, 0, dirX)
-	local position = ballWorld - forward * 3 - right * 4 + Vector3.new(0, 3.5, 0)
-	character:PivotTo(CFrame.lookAt(position, position + forward))
-end
-
 local function freezeCharacter(freeze: boolean)
 	local character = localPlayer.Character
 	local humanoid = if character then character:FindFirstChildOfClass("Humanoid") else nil
@@ -175,17 +208,141 @@ local function ballWorld(view: any): Vector3
 	return c.toWorld(view.Position.X, 0, view.Position.Z)
 end
 
--- ---- gauge ---------------------------------------------------------------------------------------
+-- ---- golfers -------------------------------------------------------------------------------------
 
-local function onGauge(gauge: any)
+-- The rig for a player: my avatar, the bot rig, or an opponent's avatar (animated
+-- locally; their own client positions it).
+local function rigFor(view: any): GolferRig.Rig?
+	local existing = rigs[view.Id]
+	if existing and existing.Model.Parent ~= nil then
+		return existing
+	end
+	local rig: GolferRig.Rig? = nil
+	if view.IsBot then
+		rig = GolferRig.newBot(view.Name, matchFolder :: Folder, nil)
+	else
+		local player = Players:GetPlayerByUserId(tonumber(view.Id) or 0)
+		local character = if player then player.Character else nil
+		if character then
+			rig = GolferRig.forCharacter(character)
+		end
+	end
+	if rig then
+		rigs[view.Id] = rig
+	end
+	return rig
+end
+
+-- Who may this client move? Its own character and bots; other humans are placed
+-- by their own clients (we only animate them).
+local function weControl(view: any): boolean
+	return view.IsBot or view.Id == myId
+end
+
+local function dressClub(rig: GolferRig.Rig, view: any, label: string)
+	local color, material, isPutter = ClubLook.forLabel(cosmeticsById[view.Id], label)
+	rig.setClub(color, material, isPutter)
+end
+
+-- Address the ball (active golfer) or wait to the side (everyone else).
+local function placeGolfers(snapshot: any)
+	if course == nil then
+		return
+	end
+	for _, view in snapshot.Players do
+		local rig = rigFor(view)
+		if rig and weControl(view) and not (view.Id == myId and localSwing ~= nil) then
+			local heading = headingOf(view)
+			local dir = Vector3.new(math.cos(heading), 0, math.sin(heading))
+			local position = ballWorld(view)
+			if snapshot.Phase == "Swing" and snapshot.ActiveId == view.Id then
+				dressClub(rig, view, view.ClubLabel)
+				rig.address(position, dir, view.Lie == "Green")
+			else
+				-- Out of the way: behind and to the side of their own ball.
+				rig.removeClub()
+				rig.stop()
+				local right = Vector3.new(-dir.Z, 0, dir.X)
+				local spot = position - dir * 7 - right * 5
+				rig.standAt(CFrame.lookAt(spot, spot + dir))
+			end
+		end
+	end
+end
+
+-- ---- aim arc / putting line --------------------------------------------------------------------------
+
+local function hideAim()
+	aimKey = ""
+	if aim then
+		aim.hide()
+	end
+end
+
+local function currentPower(): number
+	local g = gauge
+	if g == nil or g.Phase == "Idle" then
+		return 100 -- before charging, show the club's full reach
+	end
+	if g.Phase == "PowerRising" then
+		return math.clamp(g.Marker, 0, 1) * 100
+	end
+	return math.clamp(g.LockedPower or 1, 0, 1) * 100
+end
+
+local function refreshAim(force: boolean)
+	local view = myView()
+	local built = course
+	local visual = aim
+	local ground = terrain
+	if not armed or view == nil or built == nil or ground == nil or visual == nil then
+		return
+	end
+	local category = ClubStats.get(view.ClubLabel)
+	if category == nil then
+		return
+	end
+	local power = math.floor(currentPower() + 0.5)
+	local key = `{view.ClubLabel}|{view.AimDeg}|{view.Lie}|{power}|{view.Position.X}|{view.Position.Z}`
+	local now = os.clock()
+	if not force and (key == aimKey or now - aimRefreshedAt < AIM_REFRESH_SECONDS) then
+		return
+	end
+	aimKey, aimRefreshedAt = key, now
+	local guide = AimGuide.compute({
+		Terrain = ground,
+		X = view.Position.X,
+		Z = view.Position.Z,
+		HeadingRad = headingOf(view),
+		Slot = category,
+		Stats = statsFor(view.ClubLabel),
+		Lie = view.Lie,
+		Power = power,
+	})
+	local points: { Vector3 } = {}
+	for _, p in guide.Points do
+		table.insert(points, built.toWorld(p.X, p.Y, p.Z) + Vector3.new(0, if guide.IsPutt then 0.14 else 0.85, 0))
+	end
+	local tint = if guide.IsPutt then Color3.fromRGB(255, 255, 255) else Color3.fromRGB(120, 230, 255)
+	visual.show(points, guide.IsPutt, tint)
+end
+
+-- ---- gauge -------------------------------------------------------------------------------------------
+
+local function greenFor(view: any): number
+	local stats = statsFor(view.ClubLabel)
+	local penalty = SwingMath.effectivePenalty(view.Lie, stats.Spin)
+	return SwingMath.greenHalfWidth(stats.Accuracy, penalty)
+end
+
+local function onGauge(g: SwingStateMachine.Gauge)
+	gauge = g
 	local view = myView()
 	if hud == nil or view == nil then
 		return
 	end
-	local stats = statsFor(view.ClubLabel)
-	local penalty = SwingMath.effectivePenalty(view.Lie, stats.Spin)
-	local green = SwingMath.greenHalfWidth(stats.Accuracy, penalty)
-	hud.setGauge(GaugeView.layout(gauge, green), nil)
+	hud.setGauge(GaugeView.layout(g, greenFor(view)), nil)
+	refreshAim(false)
 end
 
 local function arm()
@@ -193,8 +350,11 @@ local function arm()
 		return
 	end
 	armed = true
+	gauge = nil
 	swing.enable()
-	hud.setGauge(GaugeView.layout({ Phase = "Idle", Marker = 0, LockedPower = nil }, SwingMath.greenHalfWidth(50, 0)), nil)
+	local view = myView()
+	hud.setGauge(GaugeView.layout({ Phase = "Idle", Marker = 0, LockedPower = nil }, if view then greenFor(view) else SwingMath.greenHalfWidth(50, 0)), nil)
+	refreshAim(true)
 end
 
 local function disarm()
@@ -202,12 +362,14 @@ local function disarm()
 		swing.disable()
 	end
 	armed = false
+	gauge = nil
 	if hud then
 		hud.setGauge(nil, nil)
 	end
+	hideAim()
 end
 
--- ---- applying a snapshot ----------------------------------------------------------------------------------
+-- ---- holes ----------------------------------------------------------------------------------------------
 
 local function buildHole(snapshot: any)
 	if course then
@@ -225,6 +387,7 @@ local function buildHole(snapshot: any)
 		end
 	end
 	currentHoleId = hole.Id
+	terrain = CourseTerrain.forHole(hole)
 	course = CourseBuilder.build(hole, arenaOrigin)
 	local built = course :: CourseBuilder.Course
 	for _, view in snapshot.Players do
@@ -233,16 +396,43 @@ local function buildHole(snapshot: any)
 	if hud then
 		hud.setHole(hole)
 	end
+	-- The server times the fly-over (Intro phase); nothing waits for it to finish.
+	local seconds = if snapshot.Phase == "Intro" then math.max(1, snapshot.IntroSecondsLeft or Config.Match.HoleIntroSeconds) else 1.5
+	CameraController.intro(built.Tee, built.Pin, seconds, nil)
+end
 
-	-- Fly over the hole, then settle behind the tee.
-	introActive = true
-	CameraController.intro(built.Tee, built.Pin, 4, function()
-		introActive = false
-		MatchController.apply(lastSnapshot)
+-- ---- podium -----------------------------------------------------------------------------------------------
+
+local function showPodium(snapshot: any)
+	disarm()
+	for _, ball in balls do
+		ball.setVisible(false)
+	end
+	local view = PodiumView.build(snapshot, myId)
+	if podium then
+		podium.destroy()
+	end
+	local stage = PodiumStage.build(view, arenaOrigin + Vector3.new(0, PODIUM_HEIGHT, 0))
+	podium = stage
+	CameraController.static(stage.CameraPosition, stage.CameraLook, 55)
+	local function show()
+		local profile = ClientState.get()
+		local delta = if profile then profile.Coins - coinsAtStart else 0
+		if hud then
+			hud.showSummary(MatchView.summary(snapshot, myId), view, if delta > 0 then `+{Format.commas(delta)} COINS` else nil)
+		end
+	end
+	show()
+	-- The payout reaches the profile just after the final state: refresh the text once.
+	task.delay(1.5, function()
+		if active and hud then
+			show()
+		end
 	end)
 end
 
--- Bring everything in line with the latest server state.
+-- ---- applying a snapshot ----------------------------------------------------------------------------------
+
 function MatchController.apply(snapshot: any)
 	if not active or snapshot == nil or hud == nil then
 		return
@@ -254,64 +444,80 @@ function MatchController.apply(snapshot: any)
 	hud.update(model)
 
 	if animating or course == nil then
-		return -- text is fresh; balls, camera and gauge wait for the animation to end
+		return -- text is fresh; balls, golfers, camera and gauge wait for the animation
 	end
-	local built = course :: CourseBuilder.Course
 
 	local dots: { MatchHud.Dot } = {}
 	for _, view in snapshot.Players do
 		local ball = balls[view.Id]
 		if ball then
-			ball.placeAt(built.toWorld(view.Position.X, 0, view.Position.Z))
+			ball.placeAt(ballWorld(view))
 			ball.setVisible(not view.Holed)
 		end
 		table.insert(dots, { X = view.Position.X, Z = view.Position.Z, IsMe = view.Id == myId, Holed = view.Holed })
 	end
 	hud.setDots(dots)
 
-	local mine = myView()
-	if model.IsMyTurn and mine and not introActive then
-		local dirX, dirZ = aimDirection(mine)
-		local position = ballWorld(mine)
-		CameraController.address(position, dirX, dirZ)
-		placeCharacter(position, dirX, dirZ)
-		arm()
+	if snapshot.Finished then
+		if not summaryShown then
+			summaryShown = true
+			showPodium(snapshot)
+		end
+		return
+	end
+
+	placeGolfers(snapshot)
+	if snapshot.Phase == "Swing" then
+		local shooter = viewOf(snapshot.ActiveId)
+		if shooter then
+			local heading = headingOf(shooter)
+			CameraController.golfer(ballWorld(shooter), math.cos(heading), math.sin(heading), shooter.Lie == "Green")
+		end
+		if model.IsMyTurn and localSwing == nil then
+			arm()
+			refreshAim(true)
+		elseif armed then
+			disarm()
+		end
 	elseif armed then
 		disarm()
 	end
-
-	if snapshot.Finished and not summaryShown then
-		summaryShown = true
-		disarm()
-		local function show()
-			local profile = ClientState.get()
-			local delta = if profile then profile.Coins - coinsAtStart else 0
-			(hud :: MatchHud.Hud).showSummary(MatchView.summary(snapshot, myId), if delta > 0 then `+{Format.commas(delta)} COINS` else nil)
-		end
-		show()
-		-- The payout reaches the profile just after the final state: refresh the text once.
-		task.delay(1.5, function()
-			if active and hud then
-				show()
-			end
-		end)
-	end
 end
 
--- ---- shots -------------------------------------------------------------------------------------------------
+-- ---- shots ---------------------------------------------------------------------------------------------------
 
-local function onShot(shot: any)
-	if not active or course == nil or hud == nil then
-		return
-	end
-	local built = course :: CourseBuilder.Course
+local playNext: () -> ()
+
+local function finishShot()
+	task.delay(2.2, function()
+		if not active then
+			return
+		end
+		animating = false
+		if hud then
+			hud.hideTelemetry()
+		end
+		if #shotQueue > 0 then
+			playNext()
+		else
+			MatchController.apply(lastSnapshot)
+		end
+	end)
+end
+
+-- Ball flight + camera + telemetry, starting at the club's impact.
+local function launch(shot: any)
+	local built = course
 	local ball = balls[shot.PlayerId]
-	if ball == nil then
+	if built == nil or ball == nil or hud == nil then
+		animating = false
 		return
 	end
-	animating = true
-	disarm()
-
+	if shot.Quality then
+		local quality = string.upper(shot.Quality)
+		local color = if quality == "PERFECT" then Theme.Colors.Good elseif quality == "GOOD" then Theme.Colors.Gold else Theme.Colors.Poor
+		hud.feedback(if shot.Auto then "TIME OUT" else (if quality == "PERFECT" then "PERFECT!" else quality), color)
+	end
 	local startX, startZ = shot.Start.X, shot.Start.Z
 	local aimX, aimZ = shot.End.X - startX, shot.End.Z - startZ
 	if math.abs(aimX) + math.abs(aimZ) < 1e-6 then
@@ -324,19 +530,10 @@ local function onShot(shot: any)
 	else
 		aimX, aimZ = 1, 0
 	end
-
-	if shot.Quality then
-		local quality = string.upper(shot.Quality)
-		local color = if quality == "PERFECT" then Theme.Colors.Good elseif quality == "GOOD" then Theme.Colors.Gold else Theme.Colors.Poor
-		hud.feedback(if shot.Auto then "TIME OUT" else (if quality == "PERFECT" then "PERFECT!" else quality), color)
-	end
-
 	ball.setVisible(true)
-	local startWorld = built.toWorld(startX, 0, startZ)
-	CameraController.follow(startWorld, aimX, aimZ, function(): Vector3?
+	CameraController.follow(built.toWorld(startX, 0, startZ), aimX, aimZ, function(): Vector3?
 		return ball.Part.Position
 	end)
-
 	ball.play(shot, built.toWorld, function(t: number, _position: Vector3)
 		if hud then
 			hud.showTelemetry(TelemetryView.at(shot, t))
@@ -350,20 +547,119 @@ local function onShot(shot: any)
 				BallAnimator.burst(built.Pin, holeEffectColor(shot.PlayerId), 80)
 				hud.feedback(string.upper(Format.scoreName(shot.Stroke, par)), Theme.Colors.Gold)
 			elseif shot.Penalty then
-				BallAnimator.burst(built.toWorld(shot.Samples[#shot.Samples][2], 0, shot.Samples[#shot.Samples][4]), Theme.Colors.Blue, 50)
+				local last = shot.Samples[#shot.Samples]
+				BallAnimator.burst(built.toWorld(last[2], 0, last[4]), Theme.Colors.Blue, 50)
 				hud.feedback("PENALTY STROKE", Theme.Colors.Poor)
 			end
 		end
-		task.delay(2.2, function()
-			if not active then
-				return
+		finishShot()
+	end)
+end
+
+playNext = function()
+	local shot = table.remove(shotQueue, 1)
+	if shot == nil or not active or course == nil then
+		animating = false
+		return
+	end
+	animating = true
+	disarm()
+	local built = course :: CourseBuilder.Course
+	local isPutt = shot.ClubLabel == ClubStats.PUTTER
+	local startWorld = built.toWorld(shot.Start.X, 0, shot.Start.Z)
+	local ball = balls[shot.PlayerId]
+	if ball then
+		ball.placeAt(startWorld)
+		ball.setVisible(true)
+	end
+
+	-- My own swing may already be under way (it starts on the third click).
+	local mine = localSwing
+	if shot.PlayerId == myId and mine and not mine.Consumed then
+		mine.Consumed = true
+		localSwing = nil
+		if mine.ImpactReached then
+			launch(shot)
+		else
+			mine.Launch = function()
+				launch(shot)
 			end
-			animating = false
-			if hud then
-				hud.hideTelemetry()
+		end
+		return
+	end
+
+	-- Everyone else: address the ball, swing, launch on impact.
+	local view = viewOf(shot.PlayerId)
+	local rig = if view then rigFor(view) else nil
+	local dx, dz = shot.End.X - shot.Start.X, shot.End.Z - shot.Start.Z
+	local heading = math.atan2(dz, dx)
+	if math.abs(dx) + math.abs(dz) < 1e-6 and view then
+		heading = headingOf(view)
+	end
+	local dir = Vector3.new(math.cos(heading), 0, math.sin(heading))
+	CameraController.golfer(startWorld, dir.X, dir.Z, isPutt)
+	local launched = false
+	local function go()
+		if not launched then
+			launched = true
+			launch(shot)
+		end
+	end
+	if rig and view then
+		dressClub(rig, view, shot.ClubLabel)
+		if weControl(view) then
+			rig.address(startWorld, dir, isPutt)
+		end
+		rig.play(if isPutt then "Putt" else "Swing", shot.Power, go)
+	end
+	-- Safety net: the ball always launches, rig or no rig.
+	task.delay((shot.ImpactDelay or Config.Match.SwingLeadSeconds) + 0.6, go)
+end
+
+local function onShot(shot: any)
+	if not active or course == nil then
+		return
+	end
+	table.insert(shotQueue, shot)
+	if not animating then
+		playNext()
+	end
+end
+
+-- Third click: start my swing right away, send the swing, launch on impact.
+local function onSubmit(power: number, offset: number)
+	Remotes.fire("SubmitSwing", power, offset)
+	local view = myView()
+	local rig = if view then rigFor(view) else nil
+	local swingState: LocalSwing = { ImpactReached = false, Launch = nil, Consumed = false }
+	localSwing = swingState
+	if hud then
+		hud.setGauge(nil, nil)
+	end
+	hideAim()
+	armed = false
+	local function impact()
+		swingState.ImpactReached = true
+		local go = swingState.Launch
+		if go then
+			swingState.Launch = nil
+			go()
+		end
+	end
+	if rig and view then
+		rig.play(if view.Lie == "Green" then "Putt" else "Swing", power, impact)
+	else
+		task.delay(Config.Match.SwingLeadSeconds, impact)
+	end
+	-- Rejected swing (no ShotResult comes): give the turn back after a moment.
+	task.delay(3, function()
+		if localSwing == swingState and not swingState.Consumed then
+			localSwing = nil
+			if rig then
+				rig.stop()
 			end
 			MatchController.apply(lastSnapshot)
-		end)
+		end
 	end)
 end
 
@@ -376,8 +672,9 @@ local function exitMatch()
 	active = false
 	armed = false
 	animating = false
-	introActive = false
 	summaryShown = false
+	localSwing = nil
+	shotQueue = {}
 	currentHoleId = 0
 	for _, connection in connections do
 		connection:Disconnect()
@@ -391,9 +688,25 @@ local function exitMatch()
 		ball.destroy()
 	end
 	balls = {}
+	for _, rig in rigs do
+		rig.destroy() -- bots are deleted; avatars just lose their club and pose
+	end
+	rigs = {}
+	if aim then
+		aim.destroy()
+		aim = nil
+	end
+	if podium then
+		podium.destroy()
+		podium = nil
+	end
 	if course then
 		course.destroy()
 		course = nil
+	end
+	if matchFolder then
+		matchFolder:Destroy()
+		matchFolder = nil
 	end
 	if hud then
 		hud.destroy()
@@ -409,9 +722,20 @@ local function exitMatch()
 	Bus.MatchExited.fire()
 end
 
+local function selectClub(label: string)
+	local view = myView()
+	if view == nil or not armed then
+		return
+	end
+	if view.Lie == "Green" and label ~= ClubStats.PUTTER then
+		return -- the putter is locked in on the green
+	end
+	Remotes.fire("SelectClub", label)
+end
+
 local function stepClub(delta: number)
 	local view = myView()
-	if view == nil or lastSnapshot == nil then
+	if view == nil then
 		return
 	end
 	local labels = ClubDatabase.BagSlots
@@ -421,13 +745,12 @@ local function stepClub(delta: number)
 			index = i
 		end
 	end
-	local nextIndex = (index - 1 + delta) % #labels + 1
-	Remotes.fire("SelectClub", labels[nextIndex].Label)
+	selectClub(labels[(index - 1 + delta) % #labels + 1].Label)
 end
 
 local function stepAim(delta: number)
 	local view = myView()
-	if view == nil then
+	if view == nil or not armed then
 		return
 	end
 	Remotes.fire("SetAim", math.clamp(view.AimDeg + delta, -Config.Match.MaxAimDegrees, Config.Match.MaxAimDegrees))
@@ -436,6 +759,8 @@ end
 local function enter(snapshot: any)
 	active = true
 	summaryShown = false
+	shotQueue = {}
+	localSwing = nil
 	myId = tostring(localPlayer.UserId)
 	arenaOrigin = ARENA_BASE + Vector3.new((snapshot.MatchId or 0) * ARENA_SPACING, 0, 0)
 	local profile = ClientState.get()
@@ -444,19 +769,32 @@ local function enter(snapshot: any)
 	for _, view in snapshot.Players do
 		cosmeticsById[view.Id] = view.Cosmetics
 	end
+	-- My own cosmetics come from my profile (always complete).
+	if profile then
+		cosmeticsById[myId] = profile.EquippedItems
+	end
+
+	local folder = Instance.new("Folder")
+	folder.Name = "GolfRivalsMatch"
+	folder.Parent = workspace
+	matchFolder = folder
+	aim = AimVisual.new(folder)
 
 	Bus.MatchEntered.fire()
 	local newHud = MatchHud.new()
 	hud = newHud
-	swing = SwingController.new(onGauge)
+	swing = SwingController.new(onGauge, onSubmit)
 	freezeCharacter(true)
 
+	newHud.onClubPick.connect(function(label: any)
+		selectClub(tostring(label))
+	end)
 	newHud.onClubStep.connect(stepClub)
 	newHud.onAimStep.connect(stepAim)
 	newHud.onClubAuto.connect(function()
 		local view = myView()
 		if view then
-			Remotes.fire("SelectClub", ClubAdvisor.recommendClub(view.YardsToPin, view.Lie, statsFor))
+			selectClub(ClubAdvisor.recommendClub(view.YardsToPin, view.Lie, statsFor))
 		end
 	end)
 	newHud.onForfeit.connect(function()
@@ -498,6 +836,9 @@ function MatchController.start()
 		lastSnapshot = snapshot
 		snapshotAt = os.clock()
 		if not active then
+			if snapshot.Finished then
+				return -- a late final state for a match we already left
+			end
 			enter(snapshot)
 		end
 		MatchController.apply(snapshot)

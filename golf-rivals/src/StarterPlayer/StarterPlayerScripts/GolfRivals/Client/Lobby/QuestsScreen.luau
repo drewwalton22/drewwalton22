@@ -25,19 +25,37 @@ local QuestsScreen = {}
 
 local C = Theme.Colors
 
+-- Plain-text reward ("500 coins + 25 gems") for toasts.
 local function rewardText(reward: any): string
 	local parts: { string } = {}
 	if type(reward.Coins) == "number" then
-		table.insert(parts, `🪙 {Format.commas(reward.Coins)}`)
+		table.insert(parts, `{Format.commas(reward.Coins)} coins`)
 	end
 	if type(reward.Gems) == "number" then
-		table.insert(parts, `💎 {Format.commas(reward.Gems)}`)
+		table.insert(parts, `{Format.commas(reward.Gems)} gems`)
 	end
-	return table.concat(parts, "   ")
+	return table.concat(parts, " + ")
+end
+
+-- Reward with drawn coin / gem icons for the quest rows.
+local function rewardRow(reward: any, props: { [string]: any }): Frame
+	local row = Kit.new("Frame", { BackgroundTransparency = 1 }, {
+		Kit.list(Enum.FillDirection.Horizontal, 12, { VerticalAlignment = Enum.VerticalAlignment.Center }),
+	}) :: Frame
+	if type(reward.Coins) == "number" then
+		Kit.amount("Coins", Format.commas(reward.Coins), { TextSize = 17, LayoutOrder = 1, Parent = row })
+	end
+	if type(reward.Gems) == "number" then
+		Kit.amount("Gems", Format.commas(reward.Gems), { TextSize = 17, LayoutOrder = 2, Parent = row })
+	end
+	for key, value in props do
+		(row :: any)[key] = value
+	end
+	return row
 end
 
 QuestsScreen.factory = {
-	Title = "📜  QUEST BOARD",
+	Title = "QUEST BOARD",
 	create = function(content: Frame, _host: ModalHost.Host): ModalHost.ScreenApi
 		local periods: { any } = {}
 		local serverOffset = 0 -- serverNow - os.time(), so countdowns use server time
@@ -95,7 +113,7 @@ QuestsScreen.factory = {
 				local bar = Kit.new("Frame", { Size = UDim2.new(0.5, -20, 0, 14), Position = UDim2.fromOffset(16, 42), BackgroundColor3 = C.PanelDark, BorderSizePixel = 0, Parent = row }, { Kit.corner(7) }) :: Frame
 				Kit.new("Frame", { Size = UDim2.fromScale(ratio, 1), BackgroundColor3 = if quest.Complete then C.Good else C.Blue, BorderSizePixel = 0, Parent = bar }, { Kit.corner(7) })
 				Kit.label(`{Format.commas(quest.Progress)} / {Format.commas(quest.Target)}`, { Size = UDim2.fromOffset(150, 20), Position = UDim2.new(0.5, 0, 0, 40), TextSize = 13, TextColor3 = C.TextDim, Parent = row })
-				Kit.label(rewardText(quest.Reward), { Size = UDim2.fromOffset(200, 24), Position = UDim2.new(1, -330, 0, 22), TextSize = 17, Font = Theme.Fonts.Bold, TextColor3 = C.Gold, Parent = row })
+				rewardRow(quest.Reward, { Size = UDim2.fromOffset(200, 24), Position = UDim2.new(1, -330, 0, 22), Parent = row })
 				local label = if quest.Claimed then "CLAIMED" elseif quest.Complete then "CLAIM" else "IN PROGRESS"
 				Kit.button(label, if quest.Complete and not quest.Claimed then "primary" else "ghost", function()
 					if quest.Claimed or not quest.Complete then
