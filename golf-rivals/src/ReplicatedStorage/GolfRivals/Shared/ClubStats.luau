@@ -116,6 +116,20 @@ ClubStats.StatInfo = TableUtil.deepFreeze({
 	{ Id = "Spin", DisplayName = "SPIN", Blurb = "Stops the ball on greens; escapes bad lies." },
 } :: { StatInfo }) :: { StatInfo }
 
+-- Furthest the club sends the ball at full power (yards): the carry for full
+-- swings, the roll for the putter. The aerial aim reticle is clamped to this.
+--   ClubStats.maxDistanceYds(ClubStats.get("DR"))          -> 250 at baseline stats
+--   ClubStats.maxDistanceYds(category, playerStats)        -> stat-adjusted
+function ClubStats.maxDistanceYds(category: Category, stats: Stats?): number
+	local factor = if stats then ClubStats.speedFactor(stats.Power) else 1
+	if category.Class == "Putter" then
+		-- Roll distance scales with speed squared.
+		return Config.Swing.PuttFullPowerYards * factor * factor
+	end
+	-- Carry grows a little faster than ball speed (see ClubAdvisor).
+	return category.BaseCarryYds * factor ^ 1.1
+end
+
 -- A neutral stat line (every stat at the baseline): carries match BaseCarryYds.
 function ClubStats.baseline(): Stats
 	local b = Config.Swing.StatBaseline

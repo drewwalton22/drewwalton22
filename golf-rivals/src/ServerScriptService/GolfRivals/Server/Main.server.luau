@@ -11,6 +11,7 @@
 	  5. Match service: ranked queues, AI bots, match orchestration
 	  6. Quests, leaderboard, and the lobby world
 	  7. Lobby coin zones: driving range bays + AFK lounge
+	  8. Daily wheelspin + Robux receipt processing
 
 	If validation fails the error aborts this script on purpose: a server with
 	broken economy data must not accept players.
@@ -28,10 +29,13 @@ local Remotes = require(Shared:WaitForChild("Remotes"))
 local ProfileService = require(script.Parent:WaitForChild("ProfileService"))
 local EconomyService = require(script.Parent:WaitForChild("EconomyService"))
 local MatchService = require(script.Parent:WaitForChild("MatchService"))
+local CourseRegistry = require(script.Parent:WaitForChild("CourseRegistry"))
 local QuestService = require(script.Parent:WaitForChild("QuestService"))
 local LeaderboardService = require(script.Parent:WaitForChild("LeaderboardService"))
 local LobbyBuilder = require(script.Parent:WaitForChild("LobbyBuilder"))
 local ZoneService = require(script.Parent:WaitForChild("ZoneService"))
+local WheelService = require(script.Parent:WaitForChild("WheelService"))
+local ReceiptService = require(script.Parent:WaitForChild("ReceiptService"))
 
 Logger.info("Server", "Booting Golf Rivals server...")
 Logger.info("Server", "Step 1: validating item / club / case databases (economy exploit checks included)")
@@ -57,6 +61,7 @@ Logger.info("Server", "Step 4: starting economy service (client requests are val
 EconomyService.start()
 
 Logger.info("Server", "Step 5: starting match service (ranked queues, bot practice, turn loop)")
+CourseRegistry.load() -- hand-built holes in Workspace.GolfCourses (optional)
 MatchService.start()
 
 Logger.info("Server", "Step 6: quests, leaderboard and the lobby world")
@@ -66,5 +71,9 @@ LobbyBuilder.build()
 
 Logger.info("Server", "Step 7: lobby coin zones (driving range + AFK lounge, server-simulated and daily-capped)")
 ZoneService.start()
+
+Logger.info("Server", "Step 8: daily wheelspin (24 h free spin saved in the profile; gem / Robux spins)")
+WheelService.start()
+ReceiptService.start()
 
 Logger.info("Server", "Server ready.")

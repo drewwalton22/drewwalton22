@@ -78,6 +78,10 @@ export type EngineConfig = {
 	Seed: number,
 	Now: number,
 	IntroSeconds: number?, -- per-hole fly-over (default Config.Match.HoleIntroSeconds; 0 = none)
+	-- The ground of each hole (physics terrain, lies, bounds). Default: the
+	-- hole's analytic 2D shapes. The server passes a Smooth Terrain raycast
+	-- surface (TerrainSurface) built for the match's arena.
+	Surface: ((hole: CourseDatabase.HoleDef) -> CourseTerrain.CourseSurface)?,
 	SwingLeadSeconds: number?, -- swing animation lead before impact (default Config.Match.SwingLeadSeconds)
 }
 
@@ -179,6 +183,8 @@ function MatchEngine.new(config: EngineConfig): Engine
 
 	local holeIndex = 0
 	local hole: CourseDatabase.HoleDef = config.Holes[1]
+	local surfaceFor = config.Surface or CourseTerrain.analytic
+	local surface: CourseTerrain.CourseSurface? = nil -- built when the hole starts
 	local terrain: ShotPhysics.Terrain = CourseTerrain.forHole(hole)
 	local windMph, windDirDeg = 0.0, 0.0
 	local phase: Phase = "Swing"
@@ -302,7 +308,9 @@ function MatchEngine.new(config: EngineConfig): Engine
 	local function startHole(index: number, now: number)
 		holeIndex = index
 		hole = config.Holes[index]
-		terrain = CourseTerrain.forHole(hole)
+		local holeSurface = surfaceFor(hole)
+		surface = holeSurface
+		terrain = holeSurface.Terrain
 		local wind = Prng.new(config.Seed * 31 + index * 17 + 5)
 		windMph = wind.next() * M.MaxWindMph
 		windDirDeg = wind.next() * 360
@@ -410,13 +418,13 @@ function MatchEngine.new(config: EngineConfig): Engine
 		if result.Outcome == "Holed" then
 			holed = true
 			ps.X, ps.Z = hole.Pin.X, hole.Pin.Z
-		elseif result.Outcome == "Water" or not CourseTerrain.inBounds(hole, endX, endZ) then
+		elseif result.Outcome == "Water" or not (surface :: CourseTerrain.CourseSurface).inBounds(endX, endZ) then
 			-- Hazard / out of bounds: penalty stroke, replay from the same spot.
 			penalty = true
 			ps.Strokes += M.PenaltyStrokes
 		else
 			ps.X, ps.Z = endX, endZ
-			ps.Lie = CourseTerrain.lieAt(hole, endX, endZ)
+			ps.Lie = (surface :: CourseTerrain.CourseSurface).lieAt(endX, endZ)
 			if ps.Lie == "Green" and distance(endX, endZ, hole.Pin.X, hole.Pin.Z) <= M.GimmeMeters then
 				ps.Strokes += 1 -- the tap-in
 				ps.X, ps.Z = hole.Pin.X, hole.Pin.Z
@@ -544,7 +552,8 @@ function MatchEngine.new(config: EngineConfig): Engine
 		end
 		local headingRad = math.rad(pinHeadingDeg(ps) + clampAim(aimOffsetDeg))
 		local x, z = CourseTerrain.toHole(ps.X, ps.Z, headingRad, result.FinalX, result.FinalZ)
-		return CourseTerrain.lieAt(hole, x, z), CourseTerrain.inBounds(hole, x, z)
+		local here = surface :: CourseTerrain.CourseSurface
+		return here.lieAt(x, z), here.inBounds(x, z)
 	end
 
 	local function setClub(playerId: string, label: any): (boolean, string?)
@@ -583,7 +592,7 @@ function MatchEngine.new(config: EngineConfig): Engine
 		if phase ~= "Swing" or active ~= ps then
 			return false, "not_your_turn"
 		end
-		local ok, why = SwingMath.validateSubmission(power, offset, now - turnStartedAt)
+		local ok, why = SwingMath.validateSubmission(power, offset, now - turnStartedAt, ps.ClubLabel == ClubStats.PUTTER)
 		if not ok then
 			return false, why
 		end

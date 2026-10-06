@@ -3,30 +3,24 @@
 --[[
 	SwingController.luau  (StarterPlayerScripts.GolfRivals.Client)
 
-	Binds player input to the shared 3-click SwingStateMachine and, when the
-	third click completes, sends the two swing numbers to the server:
+	Binds player input to the shared 2-stage SwingStateMachine (power, then
+	accuracy) and, when the second click completes, reports the two swing numbers:
 
+	    onSubmit(power, accuracyOffset)        -- or, by default,
 	    Remotes.fire("SubmitSwing", power, accuracyOffset)
 
-	Clicks: left mouse, touch tap, or Space (all count as "a click").
+	Clicks: left mouse, touch tap, or Space (all count as "a click"). Clicks that
+	land on a GUI button are ignored, so pressing a club chip never swings.
+
 	The controller only reports intent - the server recomputes the shot with
-	SwingMath/ShotPhysics and also rejects submissions faster than a human could
-	produce (SwingMath.validateSubmission), so a hacked client gains nothing by
-	sending perfect numbers instantly.
+	SwingMath/ShotPhysics and rejects submissions faster than the timing bar allows
+	(SwingMath.validateSubmission), so a hacked client gains nothing.
 
-	UI hookup: pass `onGauge`; it is called every frame while enabled with the
-	current gauge (phase + marker 0..1, negative after the centre) so the power
-	bar UI (built in the lobby/HUD step) can draw it. This controller has no
-	visuals of its own.
-
-	`onSubmit(power, offset)` (optional) replaces the default SubmitSwing send - the
-	match uses it to start the golfer's swing animation the instant the third click
-	lands, the driving range to call RangeSwing instead.
-
-	USAGE (from the match HUD, when the server says it's your turn):
-	    local controller = SwingController.new(function(gauge) ... end, onSubmit)
-	    controller.enable()   -- arms the gauge; the next click is "click 1"
-	    controller.disable()  -- turn over / menu open
+	USAGE (when the server says it's your turn and aiming is done):
+	    local controller = SwingController.new(onGauge, onSubmit)
+	    controller.enable("Full")   -- the power marker starts moving now
+	    controller.enable("Putt")   -- the slower putting bar
+	    controller.disable()        -- turn over / back to aiming / menu open
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -38,8 +32,9 @@ local Remotes = require(Shared:WaitForChild("Remotes"))
 local SwingStateMachine = require(Shared:WaitForChild("SwingStateMachine"))
 
 export type Controller = {
-	enable: () -> (),
+	enable: (mode: SwingStateMachine.Mode?) -> (),
 	disable: () -> (),
+	isEnabled: () -> boolean,
 	destroy: () -> (),
 }
 
@@ -55,11 +50,11 @@ function SwingController.new(onGauge: ((SwingStateMachine.Gauge) -> ())?, onSubm
 	local machine = SwingStateMachine.new()
 	local enabled = false
 
-	-- If the machine finished (3rd click, or an auto-lock deadline), send it once.
+	-- If the machine finished (2nd click, or the accuracy deadline), send it once.
 	local function submitIfDone()
 		local result = machine.result()
 		if result then
-			enabled = false -- one shot per arm; the server re-arms us next turn
+			enabled = false -- one shot per arm; the caller re-arms next turn
 			if onSubmit then
 				onSubmit(result.Power, result.AccuracyOffset)
 			else
@@ -69,7 +64,6 @@ function SwingController.new(onGauge: ((SwingStateMachine.Gauge) -> ())?, onSubm
 	end
 
 	local inputConnection = UserInputService.InputBegan:Connect(function(input: InputObject, gameProcessed: boolean)
-		-- gameProcessed = the click landed on a GUI button; don't swing for that.
 		if not enabled or gameProcessed or not isClick(input) then
 			return
 		end
@@ -77,7 +71,7 @@ function SwingController.new(onGauge: ((SwingStateMachine.Gauge) -> ())?, onSubm
 		submitIfDone()
 	end)
 
-	-- Per-frame: advance auto-lock deadlines and feed the UI.
+	-- Per-frame: advance the accuracy deadline and feed the UI.
 	local frameConnection = RunService.RenderStepped:Connect(function()
 		if not enabled then
 			return
@@ -90,13 +84,17 @@ function SwingController.new(onGauge: ((SwingStateMachine.Gauge) -> ())?, onSubm
 	end)
 
 	return {
-		enable = function()
+		enable = function(mode: SwingStateMachine.Mode?)
 			machine.reset()
+			machine.start(os.clock(), mode or "Full")
 			enabled = true
 		end,
 		disable = function()
 			enabled = false
 			machine.reset()
+		end,
+		isEnabled = function(): boolean
+			return enabled
 		end,
 		destroy = function()
 			enabled = false

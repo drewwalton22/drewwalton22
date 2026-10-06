@@ -64,6 +64,9 @@ LobbyLayout.PLAZA_RADIUS = 95
 -- The AFK lounge deck (studs). Shared by the layout and the server's presence check.
 LobbyLayout.AFK_LOUNGE = { X = 112, Z = 172, Radius = 20, MaxHeight = 14 }
 
+-- The daily wheel stand (studs): hub position, wheel radius; it faces the plaza centre.
+LobbyLayout.WHEEL = { X = -62, Z = 63, HubY = 14, Radius = 9 } -- south-west of the fountain, clear of the benches
+
 -- The west range field (studs): ground extends to RANGE_FAR_X.
 LobbyLayout.RANGE_FAR_X = -1180
 
@@ -98,6 +101,35 @@ local function ball(name: string, x: number, y: number, z: number, diameter: num
 		Name = name, Shape = "Ball", X = x, Y = y, Z = z, SX = diameter, SY = diameter, SZ = diameter,
 		YawDeg = 0, Color = color, Material = material, Transparency = 0, CanCollide = false,
 	}
+end
+
+-- DAILY WHEEL STAND (plaza, west) ------------------------------------------------------------------
+-- The spinning wheel itself is built by LobbyBuilder (it animates); this is the
+-- pedestal, posts and sign around it.
+function LobbyLayout.wheelYawDeg(): number
+	local w = LobbyLayout.WHEEL
+	-- Front (-sin yaw, -cos yaw) points at the plaza centre (0, 40).
+	return math.deg(math.atan2(-(0 - w.X), -(40 - w.Z)))
+end
+
+function LobbyLayout.addWheelStand(parts: { PartSpec }, signs: { Sign }, lights: { Light })
+	local w = LobbyLayout.WHEEL
+	local yaw = LobbyLayout.wheelYawDeg()
+	local yawRad = math.rad(yaw)
+	-- Local axes: "side" runs across the wheel face, "back" points away from the plaza.
+	local sideX, sideZ = math.cos(yawRad), -math.sin(yawRad)
+	local backX, backZ = math.sin(yawRad), math.cos(yawRad)
+	table.insert(parts, block("WheelPedestal", w.X + backX * 1.5, 1.2, w.Z + backZ * 1.5, w.Radius * 2.6, 2.4, 7, { 40, 46, 70 }, "Metal", true, yaw))
+	for i, side in { -1, 1 } do
+		local px, pz = w.X + sideX * side * (w.Radius + 1.6) + backX * 1.5, w.Z + sideZ * side * (w.Radius + 1.6) + backZ * 1.5
+		table.insert(parts, block(`WheelPost_{i}`, px, w.HubY / 2 + 1.2, pz, 1.4, w.HubY + 2, 1.4, { 235, 190, 60 }, "Metal", true, yaw))
+	end
+	table.insert(parts, block("WheelBackplate", w.X + backX * 2.2, w.HubY, w.Z + backZ * 2.2, w.Radius * 2.3, w.Radius * 2.3, 0.6, { 20, 24, 40 }, "SmoothPlastic", true, yaw))
+	table.insert(signs, {
+		Name = "WheelSign", X = w.X + backX * 1.9, Y = w.HubY + w.Radius + 3.2, Z = w.Z + backZ * 1.9, SX = 22, SY = 4.5, YawDeg = yaw,
+		Lines = { "DAILY SPIN" }, Color = { 30, 20, 60 }, TextColor = { 255, 214, 90 },
+	})
+	table.insert(lights, { X = w.X - backX * 6, Y = w.HubY + 4, Z = w.Z - backZ * 6, Range = 26, Brightness = 1.4, Color = { 255, 210, 160 } })
 end
 
 -- DRIVING RANGE (west) ---------------------------------------------------------------------------
@@ -287,6 +319,7 @@ function LobbyLayout.build(): Layout
 		end
 	end
 
+	LobbyLayout.addWheelStand(parts, signs, lights)
 	LobbyLayout.addRange(parts, signs, lights)
 	LobbyLayout.addAfkLounge(parts, signs, lights)
 

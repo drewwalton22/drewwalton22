@@ -54,6 +54,12 @@ local RangeRules = require("./RangeRules")
 local ZoneRewards = require("./ZoneRewards")
 local SwingPose = require("./SwingPose")
 local PodiumView = require("./PodiumView")
+local SurfaceMaterials = require("./SurfaceMaterials")
+local TerrainPlan = require("./TerrainPlan")
+local DecorPlanner = require("./DecorPlanner")
+local AimMath = require("./AimMath")
+local WheelRules = require("./WheelRules")
+local CosmeticsData = require("./CosmeticsData")
 
 local Types = require("./Types")
 local P_YD = Config.Physics.YardsToMeters -- metres per yard
@@ -164,63 +170,68 @@ limiter.clear("p1")
 expect("RateLimiter.clear resets a player", call("p1"))
 
 
--- Swing state machine -------------------------------------------------------
+-- Swing state machine (2-stage timing bar) ---------------------------------
 print("-- swing state machine")
-local function swing(c1: number, c2: number, c3: number?): SwingStateMachine.SwingResult?
+local PS, AS = Config.Swing.PowerSweepSeconds, Config.Swing.AccuracySweepSeconds
+local function swing(c1: number, c2: number?, mode: SwingStateMachine.Mode?): SwingStateMachine.SwingResult?
 	local sm = SwingStateMachine.new()
+	sm.start(0, mode)
 	sm.click(c1)
-	sm.click(c2)
-	if c3 then
-		sm.click(c3)
+	if c2 then
+		sm.click(c2)
 	end
 	return sm.result()
 end
 do
-	-- Rise 1.1s, fall 0.9s, window 0.3s. Click 2 at 0.55s = 50% power,
-	-- centre at 0.55 + 0.5*0.9 = 1.0s after click 1... (t2 = 0.55, tCenter = 1.0)
-	local r = swing(0, 0.55, 1.0)
-	expect("Perfectly timed 50% swing: power 50, offset 0", r ~= nil and math.abs(r.Power - 50) < 1e-9 and math.abs(r.AccuracyOffset) < 1e-9)
-	local early = swing(0, 0.55, 0.85)
-	expect("Early click -> negative offset (-0.5)", early ~= nil and math.abs(early.AccuracyOffset - -0.5) < 1e-9)
-	local late = swing(0, 0.55, 1.15)
-	expect("Late click -> positive offset (+0.5)", late ~= nil and math.abs(late.AccuracyOffset - 0.5) < 1e-9)
-	local veryEarly = swing(0, 1.0, 1.0)
-	expect("Offset clamps at -1 (clicked instantly after click 2)", veryEarly ~= nil and veryEarly.AccuracyOffset == -1)
+	expect("Timing is slower than the old 3-click gauge (power sweep >= 1.5 s, accuracy >= 1.2 s)", PS >= 1.5 and AS >= 1.2)
+	expect("Putting bar is slower still", Config.Swing.PuttPowerSweepSeconds > PS and Config.Swing.PuttAccuracySweepSeconds > AS)
+	-- Click 1 at half the power sweep = 50%; click 2 half-way across the track = sweet spot.
+	local r = swing(PS * 0.5, PS * 0.5 + AS * 0.5)
+	expect("Perfect 50% swing: power 50, offset 0 (sweet spot)", r ~= nil and math.abs(r.Power - 50) < 1e-9 and math.abs(r.AccuracyOffset) < 1e-9)
+	local early = swing(PS * 0.5, PS * 0.5 + AS * 0.25)
+	expect("Early click 2 -> negative offset (-0.5, slice)", early ~= nil and math.abs(early.AccuracyOffset + 0.5) < 1e-9)
+	local late = swing(PS * 0.5, PS * 0.5 + AS * 0.75)
+	expect("Late click 2 -> positive offset (+0.5, hook)", late ~= nil and math.abs(late.AccuracyOffset - 0.5) < 1e-9)
+	local instant = swing(PS * 0.5, PS * 0.5)
+	expect("Clicking straight after click 1 clamps at -1", instant ~= nil and instant.AccuracyOffset == -1)
 
 	local sm = SwingStateMachine.new()
-	expect("Starts Idle", sm.phase() == "Idle" and sm.result() == nil)
-	sm.click(10)
-	expect("Click 1 -> PowerRising", sm.phase() == "PowerRising")
-	expect("Marker rises linearly (0.55s -> 0.5)", math.abs(sm.gauge(10.55).Marker - 0.5) < 1e-9)
-	sm.click(10.55)
-	expect("Click 2 -> AccuracyFalling with locked power", sm.phase() == "AccuracyFalling" and math.abs((sm.gauge(10.55).LockedPower :: number) - 0.5) < 1e-9)
-	expect("Marker falls to 0 exactly at the centre (t=11.0)", math.abs(sm.gauge(11.0).Marker) < 1e-9)
-	sm.click(11.0)
-	expect("Click 3 -> Done; extra clicks ignored", sm.phase() == "Done" and (function()
-		sm.click(12)
-		local r = sm.result()
-		return r ~= nil and math.abs(r.AccuracyOffset) < 1e-9
+	expect("Starts Idle, no result", sm.phase() == "Idle" and sm.result() == nil)
+	sm.start(10)
+	expect("start() arms the power stage", sm.phase() == "Power")
+	expect("Power rises linearly to 100% ...", math.abs(sm.gauge(10 + PS * 0.25).Power - 0.25) < 1e-9 and math.abs(sm.gauge(10 + PS).Power - 1) < 1e-9)
+	expect("... then sweeps back down (no auto-lock in stage 1)", math.abs(sm.gauge(10 + PS * 1.5).Power - 0.5) < 1e-9 and sm.phase() == "Power" and math.abs(sm.gauge(10 + PS * 2).Power) < 1e-9)
+	sm.click(10 + PS * 1.25) -- on the way down: 75%
+	expect("Click 1 locks the power where the marker is (75% on the way down)", sm.phase() == "Accuracy" and math.abs((sm.gauge(10 + PS * 1.25).LockedPower :: number) - 0.75) < 1e-9)
+	local t1 = 10 + PS * 1.25
+	expect("The needle starts at the left edge and crosses at 2/AccuracySweep per second", math.abs(sm.gauge(t1).Needle + 1) < 1e-9 and math.abs(sm.gauge(t1 + AS * 0.5).Needle) < 1e-9)
+	sm.click(t1 + AS * 0.5)
+	expect("Click 2 -> Done; extra clicks ignored", sm.phase() == "Done" and (function()
+		sm.click(t1 + 5)
+		local res = sm.result()
+		return res ~= nil and math.abs(res.Power - 75) < 1e-9 and math.abs(res.AccuracyOffset) < 1e-9
 	end)())
 	sm.reset()
 	expect("reset() returns to Idle", sm.phase() == "Idle")
 
-	-- Auto-lock: never click 2 -> power locks at exactly 100% at t1+1.1.
-	local auto = SwingStateMachine.new()
-	auto.click(0)
-	auto.update(5) -- polled long after the deadline
-	local g = auto.gauge(5)
-	expect("No click 2: auto-locks at 100% power", g.Phase == "AccuracyFalling" or g.Phase == "Done")
-	-- tCenter = 1.1 + 0.9 = 2.0; deadline = 2.3 -> offset +1
-	local ar = auto.result()
-	expect("No click 3 either: auto-locks power 100, offset +1 (late hook)", ar ~= nil and ar.Power == 100 and ar.AccuracyOffset == 1)
-	-- Same result no matter how often the UI polls.
-	local a2 = SwingStateMachine.new()
-	a2.click(0)
-	for step = 1, 30 do
-		a2.update(step * 0.1)
+	local stall = SwingStateMachine.new()
+	stall.start(0)
+	stall.click(PS)
+	stall.update(PS + AS * 3)
+	local sr = stall.result()
+	expect("No click 2: auto-locks at exactly +1 (hard hook) when the needle runs out", sr ~= nil and sr.AccuracyOffset == 1 and sr.Power == 100)
+	local polled = SwingStateMachine.new()
+	polled.start(0)
+	polled.click(PS)
+	for step = 1, 60 do
+		polled.update(PS + step * 0.1)
 	end
-	local ar2 = a2.result()
-	expect("Auto-lock is independent of polling frequency", ar2 ~= nil and ar ~= nil and ar2.Power == ar.Power and ar2.AccuracyOffset == ar.AccuracyOffset)
+	local pr = polled.result()
+	expect("Auto-lock is independent of polling frequency", pr ~= nil and sr ~= nil and pr.AccuracyOffset == sr.AccuracyOffset)
+
+	local putt = SwingStateMachine.new()
+	putt.start(0, "Putt")
+	expect("Putt mode uses the slower putting sweep", math.abs(putt.gauge(Config.Swing.PuttPowerSweepSeconds * 0.5).Power - 0.5) < 1e-9 and putt.gauge(0).Mode == "Putt")
 end
 
 -- Submission plausibility (anti-cheat) --------------------------------------
@@ -230,27 +241,32 @@ do
 	expect("Normal swing accepted", ok1)
 	local ok2, why2 = SwingMath.validateSubmission(100, 0, 0.5)
 	expect("Full-power perfect swing in 0.5s rejected as too_fast", not ok2 and why2 == "too_fast")
-	local okEarly = SwingMath.validateSubmission(100, -1, 1.5)
-	expect("Very early click is faster, so 1.5s is plausible for (100, -1)", okEarly)
+	local okEarly = SwingMath.validateSubmission(100, -1, PS)
+	expect("A clamped -1 needs no accuracy time", okEarly)
+	local fastPutt = SwingMath.validateSubmission(100, 0, PS + AS * 0.5, true)
+	expect("Putts are timed against the slower putting bar", not fastPutt and SwingMath.validateSubmission(100, 0, PS + AS * 0.5, false))
 	local _, whyNaN = SwingMath.validateSubmission(0 / 0, 0, 10)
 	local _, whyRange = SwingMath.validateSubmission(150, 0, 10)
 	local _, whyOffset = SwingMath.validateSubmission(50, 2, 10)
 	local _, whyLow = SwingMath.validateSubmission(0, 0, 10)
 	local _, whyType = SwingMath.validateSubmission("100", 0, 10)
 	expect("Rejects NaN / out-of-range / wrong type / whiff", whyNaN == "bad_power" and whyRange == "bad_power" and whyOffset == "bad_offset" and whyLow == "power_too_low" and whyType == "bad_power")
-	-- Every state-machine result a human can really produce must validate.
+	-- Every result a human can really produce (from the moment the bar arms) validates.
 	local allValid = true
-	for _, c2 in { 0.2, 0.55, 1.1 } do
-		for _, c3 in { 0.0, 0.2, 0.5, 1.0, 1.6, 2.5 } do
-			local sm = SwingStateMachine.new()
-			sm.click(0)
-			sm.click(c2)
-			sm.click(c2 + c3)
-			local r = sm.result()
-			if r and r.Power >= Config.Swing.MinPower then
-				local ok = SwingMath.validateSubmission(r.Power, r.AccuracyOffset, c2 + c3)
-				if not ok then
-					allValid = false
+	for _, mode in { "Full", "Putt" } :: { SwingStateMachine.Mode } do
+		local ps, as = SwingStateMachine.speeds(mode)
+		for _, c1 in { 0.05, ps * 0.3, ps, ps * 1.7, ps * 3.2 } do
+			for _, gap in { 0, as * 0.1, as * 0.5, as * 0.9, as * 2 } do
+				local sm = SwingStateMachine.new()
+				sm.start(0, mode)
+				sm.click(c1)
+				sm.click(c1 + gap)
+				sm.update(c1 + gap)
+				local r = sm.result()
+				if r and r.Power >= Config.Swing.MinPower then
+					if not SwingMath.validateSubmission(r.Power, r.AccuracyOffset, c1 + gap, mode == "Putt") then
+						allValid = false
+					end
 				end
 			end
 		end
@@ -444,8 +460,8 @@ do
 	expect("Slow putt through the cup is holed (ball snaps to the cup)", drop.Outcome == "Holed" and math.abs(drop.FinalX - cup.X) < 1e-9)
 	local fast = putt(100, 0, nil, cup)
 	expect("Same line at 100% power rolls past the cup (lip-out)", fast.Outcome == "Rest" and fast.FinalX > cup.X + 5)
-	local offLine = putt(20, 0.6, nil, cup)
-	expect("Missing the line (late click) doesn't hole it", offLine.Outcome == "Rest")
+	local offLine = putt(20, 1, nil, cup)
+	expect("Badly missing the line (very late click) doesn't hole it", offLine.Outcome == "Rest")
 
 	-- Determinism.
 	local a = shot("DR", baseStats, 83, -0.37, "Rough", SwingMath.windToLocal(12, 140, 20)).Result
@@ -2397,31 +2413,17 @@ end
 -- Swing gauge layout --------------------------------------------------------------------------------
 print("-- gauge view")
 do
-	local w = GaugeView.window()
-	expect("Gauge window = AccuracyWindow / Fall = 1/3 marker unit", math.abs(w - 0.3 / 0.9) < 1e-12)
-	expect("toX maps -w -> 0 and 1 -> 1, monotonic", GaugeView.toX(-w) == 0 and GaugeView.toX(1) == 1 and GaugeView.toX(0.5) > GaugeView.toX(0.1) and GaugeView.toX(-1) == 0)
+	local green = 0.08
 	local sm = SwingStateMachine.new()
-	local green = 0.09
-	local idle = GaugeView.layout(sm.gauge(0), green)
-	expect("Idle: marker rests at the zero line, green zone is symmetric around it", math.abs(idle.MarkerX - idle.ZeroX) < 1e-12 and math.abs((idle.ZeroX - idle.GreenLeftX) - (idle.GreenRightX - idle.ZeroX)) < 1e-12 and idle.GreenLeftX < idle.ZeroX)
-	sm.click(10)
-	local rising = GaugeView.layout(sm.gauge(10.55), green)
-	expect("Rising: the fill grows from the zero line to the marker; 0.55 s = 50% power", rising.Phase == "PowerRising" and rising.FillFromX == rising.ZeroX and math.abs(rising.PowerPercent - 50) < 1e-9 and rising.FillToX > rising.ZeroX and rising.LockedX == nil)
-	local fullRise = GaugeView.layout(sm.gauge(10.99), green)
-	expect("Rising later means a longer fill", fullRise.FillToX > rising.FillToX)
-	sm.click(10.55)
-	local falling = GaugeView.layout(sm.gauge(10.7), green)
-	expect("After click 2 the locked power is marked and the marker slides back", falling.Phase == "AccuracyFalling" and falling.LockedX ~= nil and math.abs((falling.LockedX :: number) - GaugeView.toX(0.5)) < 1e-9 and falling.MarkerX < (falling.LockedX :: number) and math.abs(falling.PowerPercent - 50) < 1e-9)
-	local atCenter = GaugeView.layout(sm.gauge(11.0), green)
-	expect("The marker is on the zero line exactly at the perfect-click time", math.abs(atCenter.MarkerX - atCenter.ZeroX) < 1e-9)
-	local pastCenter = GaugeView.layout(sm.gauge(11.2), green)
-	expect("Past the centre the marker enters the late zone left of the line", pastCenter.MarkerX < pastCenter.ZeroX and pastCenter.MarkerX >= 0)
-	-- Green-zone edge = the click time whose offset equals the half-width.
-	local edge = GaugeView.layout(sm.gauge(11.0 + green * 0.3), green)
-	expect("A click at the green-zone edge puts the marker exactly on the zone's edge", math.abs(edge.MarkerX - edge.GreenLeftX) < 1e-9)
-	sm.click(11.0)
-	local done = GaugeView.layout(sm.gauge(11.5), green)
-	expect("Done: frozen", done.Phase == "Done")
+	sm.start(0)
+	local rising = GaugeView.layout(sm.gauge(PS * 0.4), green, 0.62)
+	expect("Stage 1: power fill follows the marker, no needle yet, target tick passed through", math.abs(rising.PowerFill - 0.4) < 1e-9 and rising.NeedleX == nil and not rising.Locked and rising.TargetPower == 0.62)
+	expect("Sweet spot is centred on the track and inside the good band", math.abs((rising.SweetLeft + rising.SweetRight) / 2 - 0.5) < 1e-12 and rising.GoodLeft < rising.SweetLeft and rising.GoodRight > rising.SweetRight)
+	sm.click(PS * 0.4)
+	local accuracy = GaugeView.layout(sm.gauge(PS * 0.4 + AS * 0.5), green, nil)
+	expect("Stage 2: power locked, needle at the track centre at the perfect time", accuracy.Locked and math.abs(accuracy.PowerPercent - 40) < 1e-9 and accuracy.NeedleX ~= nil and math.abs((accuracy.NeedleX :: number) - 0.5) < 1e-9)
+	local edge = GaugeView.layout(sm.gauge(PS * 0.4 + AS * (1 - green) / 2), green, nil)
+	expect("Needle on the sweet spot's left edge exactly at offset -greenHalfWidth", edge.NeedleX ~= nil and math.abs((edge.NeedleX :: number) - edge.SweetLeft) < 1e-9)
 end
 
 -- Mini map -------------------------------------------------------------------------------------------
@@ -3051,7 +3053,7 @@ do
 			lamps += 1
 		end
 	end
-	expect("Each lamp globe has a real light (+ the range deck and the AFK cabana)", lamps == 8 and #layout.Lights == lamps + 2)
+	expect("Each lamp globe has a real light (+ the range deck, the AFK cabana and the wheel stand)", lamps == 8 and #layout.Lights == lamps + 3)
 	local treesClear = true
 	for _, part in layout.Parts do
 		if string.sub(part.Name, 1, 9) == "TreeTrunk" then
@@ -3466,6 +3468,22 @@ do
 		end
 	end
 	expect("The built range matches RangeRules (targets + bays) and the lounge exists", targetsBuilt and matsBuilt and names.AfkDeck ~= nil)
+	-- The wheel stand must not overlap any other lobby furniture.
+	local w = LobbyLayout.WHEEL
+	local wheelClear = true
+	for _, part in layout.Parts do
+		if string.sub(part.Name, 1, 5) ~= "Wheel" and part.Name ~= "Ground" and part.Name ~= "Plaza" and part.Name ~= "PlazaRing" and part.Y > 0.5 then
+			-- Gap between the wheel's footprint circle and the part's (unrotated) box.
+			local half = math.max(part.SX, part.SZ) / 2 -- generous for rotated parts
+			local dx = math.max(math.abs(part.X - w.X) - (if part.YawDeg == 0 then part.SX / 2 else half), 0)
+			local dz = math.max(math.abs(part.Z - w.Z) - (if part.YawDeg == 0 then part.SZ / 2 else half), 0)
+			if math.sqrt(dx * dx + dz * dz) < w.Radius + 3 then
+				wheelClear = false
+				print("  wheel overlaps " .. part.Name)
+			end
+		end
+	end
+	expect("The daily wheel stand is clear of benches, lamps and trees", wheelClear)
 	expect("No trees on the range or the lounge", clearOfTrees)
 end
 
@@ -3514,6 +3532,312 @@ do
 	snap.Result = { WinnerId = "bot", Draw = false, Reason = "forfeit" }
 	local ff = PodiumView.build(snap, "bot")
 	expect("Forfeit: the forfeiter is the loser whatever their strokes", ff.Entries[1].Id == "bot" and ff.Entries[2].TotalText == "forfeited" and ff.Title == "VICTORY" and string.find(ff.Subtitle, "forfeit") ~= nil)
+end
+
+print("-- putting balance (cup capture + magnet)")
+do
+	local P = Config.Physics
+	local mx, mz = ShotPhysics.magnetAt({ X = 1, Z = 0 }, 0.8, 0, 0.5)
+	local fx = ShotPhysics.magnetAt({ X = 1, Z = 0 }, 0.8, 0, P.MagnetMaxSpeed + 1)
+	local far = ShotPhysics.magnetAt({ X = 1, Z = 0 }, 1 - P.MagnetRadius - 0.01, 0, 0.5)
+	expect("Magnet pulls a slow ball near the rim toward the cup; ignores fast or distant balls", mx > 0 and math.abs(mz) < 1e-12 and fx == 0 and far == 0)
+	expect("Capture radius is bigger than the visual cup (forgiving drops)", P.CupCaptureRadius > P.CupRadius + 0.04)
+
+	-- A putt on a flat green from 6 m, aimed a little off-line, at a pace that
+	-- would finish ~0.6 m past the hole.
+	local green = ShotPhysics.flatTerrain("Green")
+	local mu = Config.Lies.Green.RollFriction
+	local speed = math.sqrt(2 * mu * P.Gravity * 6.6)
+	local function putt(lateralAtCup: number): ShotPhysics.ShotResult
+		return ShotPhysics.simulate({
+			BallSpeed = speed, LaunchAngleRad = 0, BackspinRpm = 0, SidespinRpm = 0,
+			AimOffsetRad = math.atan2(lateralAtCup, 6), IsPutt = true,
+		}, green, nil, { X = 6, Z = 0 })
+	end
+	expect("A putt passing 9 cm from the centre drops (old 5.4 cm cup would miss it)", putt(0.09).Outcome == "Holed")
+	local savedAccel = P.MagnetAccel
+	P.MagnetAccel = 0
+	local noMagnet = putt(0.12)
+	P.MagnetAccel = savedAccel
+	local withMagnet = putt(0.12)
+	expect("The magnet curls in a 12 cm near-miss that would otherwise lip past", noMagnet.Outcome ~= "Holed" and withMagnet.Outcome == "Holed")
+	expect("A clearly missed putt (40 cm wide) still misses", putt(0.4).Outcome ~= "Holed")
+	local blast = ShotPhysics.simulate({
+		BallSpeed = math.sqrt(2 * mu * P.Gravity * 30), LaunchAngleRad = 0, BackspinRpm = 0, SidespinRpm = 0, AimOffsetRad = 0, IsPutt = true,
+	}, green, nil, { X = 6, Z = 0 })
+	expect("A putt charged straight over the hole at speed lips out", blast.Outcome ~= "Holed")
+end
+
+print("-- smooth terrain: materials, build plan, surface injection, decor")
+do
+	expect("Terrain materials map to golf lies (Grass fairway, LeafyGrass rough, Sand bunker, Water)",
+		SurfaceMaterials.lieFor("Grass", nil) == "Fairway" and SurfaceMaterials.lieFor("LeafyGrass", nil) == "Rough"
+			and SurfaceMaterials.lieFor("Sand", nil) == "Sand" and SurfaceMaterials.lieFor("Water", nil) == "Water"
+			and SurfaceMaterials.lieFor("Neon", nil) == "Rough")
+	expect("A part's GolfLie attribute beats its material; junk attributes are ignored",
+		SurfaceMaterials.lieFor("Grass", "Green") == "Green" and SurfaceMaterials.lieFor("Sand", "Tee") == "Tee" and SurfaceMaterials.lieFor("Grass", "Lava") == "Fairway" and SurfaceMaterials.lieFor("Grass", 5) == "Fairway")
+	local rock = SurfaceMaterials.physicsFor("Rock", "Rough")
+	local mud = SurfaceMaterials.physicsFor("Mud", "Rough")
+	expect("Material physics refine the lie: rock bounces/rolls more than rough, mud swallows the ball",
+		rock.Restitution > Config.Lies.Rough.Restitution and rock.RollFriction < Config.Lies.Rough.RollFriction and mud.RollFriction > Config.Lies.Rough.RollFriction
+			and SurfaceMaterials.physicsFor("Grass", "Fairway") == Config.Lies.Fairway and Config.Lies.Rough.Restitution == 0.20)
+
+	-- ShotPhysics honours a terrain's physicsAt (same lie, different material).
+	local function landOn(def: Config.LieDef?): ShotPhysics.ShotResult
+		local terrainWith: ShotPhysics.Terrain = {
+			heightAt = function(_x: number, _z: number): number
+				return 0
+			end,
+			lieAt = function(_x: number, _z: number): Types.LieId
+				return "Rough"
+			end,
+			slopeAt = function(_x: number, _z: number): (number, number)
+				return 0, 0
+			end,
+			physicsAt = function(_x: number, _z: number): Config.LieDef?
+				return def
+			end,
+		}
+		return SwingMath.resolveShot({ Slot = ClubStats.get("LI") :: ClubStats.Category, Stats = ClubStats.baseline(), Power = 100, AccuracyOffset = 0, Lie = "Fairway" }, terrainWith, nil).Result
+	end
+	expect("A shot landing on rock runs out further than the same shot landing in rough", landOn(rock).RollYds > landOn(nil).RollYds + 5)
+
+	local hole = CourseDatabase.hole(2)
+	local plan = TerrainPlan.build(hole)
+	local names: { [string]: TerrainPlan.Fill } = {}
+	for _, f in plan.Fills do
+		names[f.Name] = f
+	end
+	local partLies: { [string]: string } = {}
+	for _, p in plan.Parts do
+		if p.Lie then
+			partLies[p.Name] = p.Lie
+		end
+	end
+	local bunker: TerrainPlan.Fill? = names.Bunker_1
+	local water: TerrainPlan.Fill? = names.Water_1
+	local bunkerOk = bunker == nil or (bunker.Material == "Sand" and bunker.Y + bunker.SY / 2 < 0)
+	local waterOk = water ~= nil and water.Material == "Water" and water.Y + water.SY / 2 < 0 and names.WaterCarve_1.Material == "Air"
+	expect("Plan paints rough (LeafyGrass) then fairways (Grass), with sand bunkers and water carved below the surface",
+		names.Rough.Material == "LeafyGrass" and names.Fairway_1.Material == "Grass" and plan.Fills[1].Name == "Apron" and bunkerOk and waterOk)
+	local ordered = true
+	for index, f in plan.Fills do
+		if string.sub(f.Name, 1, 7) == "Fairway" and index < 3 then
+			ordered = false
+		end
+	end
+	expect("Ground comes first so features overwrite it", ordered)
+	expect("Greens and the tee are real parts tagged with their lie; the green base tilts with the hole's slope",
+		partLies.Green_1 == "Green" and partLies.TeeBox == "Tee" and names.GreenBase_1.SlopeX == hole.GreenSlope.X and names.GreenBase_1.SlopeZ == hole.GreenSlope.Z)
+	local SPM = CourseLayout.STUDS_PER_METER
+	expect("The clear-region covers the whole bounds plus apron", plan.Min.X < hole.Bounds.MinX * SPM and plan.Max.X > hole.Bounds.MaxX * SPM and plan.Min.Y < -TerrainPlan.GROUND_THICKNESS + 1 and plan.Max.Y > 0)
+	local pinOnGreen = math.abs(plan.Pin.Y - (0.15 + hole.GreenSlope.X * (hole.Pin.X - hole.Greens[1].X) * SPM + hole.GreenSlope.Z * (hole.Pin.Z - hole.Greens[1].Z) * SPM)) < 1e-9
+	expect("The cup sits on the tilted green surface", pinOnGreen)
+
+	-- The engine plays on whatever surface it is given.
+	local sandEverywhere: CourseTerrain.CourseSurface = {
+		Terrain = ShotPhysics.flatTerrain("Sand"),
+		lieAt = function(_x: number, _z: number): Types.LieId
+			return "Sand"
+		end,
+		inBounds = function(_x: number, _z: number): boolean
+			return true
+		end,
+	}
+	local function statsFor(_label: string): ClubDatabase.Stats
+		return ClubStats.baseline()
+	end
+	local injected = MatchEngine.new({
+		IntroSeconds = 0, Players = { { Id = "A", Name = "A", IsBot = true, StatsFor = statsFor }, { Id = "B", Name = "B", IsBot = true, StatsFor = statsFor } },
+		Holes = { CourseDatabase.hole(1) }, Seed = 3, Now = 0,
+		Surface = function(_hole: CourseDatabase.HoleDef): CourseTerrain.CourseSurface
+			return sandEverywhere
+		end,
+	})
+	local shooter = injected.activeId() :: string
+	injected.submitBotSwing(shooter, "DR", 0, 80, 0, 1)
+	local lieAfter = ""
+	for _, view in injected.snapshot(1).Players do
+		if view.Id == shooter then
+			lieAfter = view.Lie
+		end
+	end
+	expect("MatchEngine resolves lies through the injected course surface (raycast terrain in Studio)", lieAfter == "Sand")
+
+	local decor = DecorPlanner.forHole(hole, 77)
+	local again = DecorPlanner.forHole(hole, 77)
+	local inBand, clear, kinds = true, true, {}
+	local circles: { CourseDatabase.Circle } = {}
+	for _, list in { hole.Greens, hole.Bunkers, hole.Water } do
+		for _, c in list do
+			table.insert(circles, c)
+		end
+	end
+	local keepOut: DecorPlanner.Input = { Bounds = hole.Bounds, Circles = circles, Capsules = hole.Fairway, Seed = 0 }
+	for _, item in decor do
+		if not DecorPlanner.inBand(hole.Bounds, item.X, item.Z) then
+			inBand = false
+		end
+		if DecorPlanner.clearance(keepOut, item.X, item.Z) < Config.Decor.ClearanceMeters - 1e-9 then
+			clear = false
+		end
+		kinds[item.Kind] = true
+	end
+	expect(`Decor: {#decor} items, all in the border band and clear of every playing surface`, #decor > 40 and #decor <= Config.Decor.MaxItems and inBand and clear)
+	expect("Decor is deterministic per seed and mixes trees, bushes, rocks and grass patches", #again == #decor and again[5].X == decor[5].X and kinds.Tree and kinds.Bush and kinds.Rock and kinds.GrassPatch)
+end
+
+print("-- aerial aim reticle")
+do
+	local dr = ClubStats.get("DR") :: ClubStats.Category
+	local pt = ClubStats.get("PT") :: ClubStats.Category
+	expect("ClubStats max distance: driver 250 yds at baseline, more with Power; putter = full putt roll",
+		math.abs(ClubStats.maxDistanceYds(dr) - 250) < 1e-9 and ClubStats.maxDistanceYds(dr, { Power = 90, Accuracy = 50, Spin = 50 }) > 260 and ClubStats.maxDistanceYds(pt) == Config.Swing.PuttFullPowerYards)
+	local YD = Config.Physics.YardsToMeters
+	local maxM = 200 * YD
+	local inside = AimMath.clamp(0, 0, 100, 10, 0, maxM)
+	expect("A reticle inside the limits is kept as placed", not inside.Clamped and math.abs(inside.X - 100) < 1e-9 and math.abs(inside.Z - 10) < 1e-9 and math.abs(inside.AimDeg - math.deg(math.atan2(10, 100))) < 1e-9)
+	local tooFar = AimMath.clamp(0, 0, 500, 0, 0, maxM)
+	expect("Too far: pulled back to the club's max distance on the same line", tooFar.Clamped and math.abs(tooFar.DistanceMeters - maxM) < 1e-9 and math.abs(tooFar.Z) < 1e-9)
+	local wide = AimMath.clamp(0, 0, 0, 100, 0, maxM)
+	expect("Too wide: turned back to the max aim angle the server allows", wide.Clamped and math.abs(wide.AimDeg - Config.Match.MaxAimDegrees) < 1e-9)
+	local behind = AimMath.clamp(10, 10, 10, 10, math.rad(45), maxM)
+	expect("A click on the ball itself gives a short shot straight at the pin", behind.AimDeg == 0 and math.abs(behind.DistanceMeters - AimMath.MIN_METERS) < 1e-9)
+	local def = AimMath.defaultReticle(0, 0, 0, 300, 120)
+	expect("Default reticle: on the pin line, capped at the club's reach", math.abs(def.X) < 1e-9 and math.abs(def.Z - 120) < 1e-9 and def.AimDeg == 0)
+	-- The target power really sends a perfect strike about that far (carry% ~ power%).
+	local base = ClubStats.baseline()
+	local within = true
+	for _, fraction in { 0.35, 0.6, 0.85 } do
+		local power = AimMath.targetPower(fraction * 250, ClubStats.maxDistanceYds(dr, base)) * 100
+		local carry = AimGuide.compute({ Terrain = ShotPhysics.flatTerrain("Fairway"), X = 0, Z = 0, HeadingRad = 0, Slot = dr, Stats = base, Lie = "Fairway", Power = power }).DistanceYds
+		if math.abs(carry - fraction * 250) > 250 * 0.07 then
+			within = false
+			print(`  target {fraction * 250} -> carry {carry}`)
+		end
+	end
+	expect("The reticle's target power carries the ball to the reticle (within 7% of full reach)", within)
+	expect("Target power is clamped to the valid range", AimMath.targetPower(400, 250) == 1 and AimMath.targetPower(0, 250) == Config.Swing.MinPower / 100)
+end
+
+print("-- daily wheelspin")
+do
+	local day = 24 * 60 * 60
+	local d = ProfileTemplate.new(0)
+	d.Coins, d.Gems = 0, 0
+	local t0 = 1000000
+	local first = WheelRules.state(d, t0)
+	expect("A new player's free spin is ready", first.FreeReady and first.CanSpin and first.ExtraSpins == 0)
+	local seq = { 0.0, 0.5 }
+	local k = 0
+	local rng = function(): number
+		k += 1
+		return seq[(k - 1) % #seq + 1]
+	end
+	local result = WheelRules.spin(d, t0, rng)
+	expect("Spinning uses the free spin, restarts the 24 h cooldown and grants the rolled segment",
+		result ~= nil and result.UsedFree and result.SegmentIndex == 1 and d.Wheel.LastFreeSpinAt == t0 and d.Coins == Config.Wheel.Segments[1].Amount)
+	local after = WheelRules.state(d, t0 + 60)
+	local _, why = WheelRules.spin(d, t0 + 60, rng)
+	expect("No second spin until the cooldown ends", not after.CanSpin and math.abs(after.SecondsUntilFree - (day - 60)) < 1e-9 and why == "no_spins")
+	expect("The free spin comes back after 24 hours", WheelRules.state(d, t0 + day).FreeReady)
+
+	local broke, whyBroke = WheelRules.buyWithGems(d)
+	d.Gems = Config.Wheel.GemSpinPrice
+	local bought = WheelRules.buyWithGems(d)
+	expect("Extra spins cost gems (refused when broke)", not broke and whyBroke == "insufficient_funds" and bought and d.Gems == 0 and d.Wheel.ExtraSpins == 1)
+	local paid = WheelRules.spin(d, t0 + 120, rng)
+	expect("A bought spin is used while the free one is cooling down", paid ~= nil and not paid.UsedFree and d.Wheel.ExtraSpins == 0 and d.Wheel.LastFreeSpinAt == t0)
+	local g1 = WheelRules.grantPurchase(d, "receipt-A")
+	local g2 = WheelRules.grantPurchase(d, "receipt-A")
+	expect("A Robux receipt grants spins exactly once (re-delivery is ignored)", g1 and not g2 and d.Wheel.ExtraSpins == Config.Wheel.RobuxSpinsPerPurchase)
+
+	-- Weighted odds: empirical frequencies follow the weights.
+	local counts: { number } = {}
+	local prng = Prng.new(4242)
+	local n = 40000
+	for _ = 1, n do
+		local i = WheelRules.pick(prng.next)
+		counts[i] = (counts[i] or 0) + 1
+	end
+	local odds = WheelRules.odds()
+	local close, total = true, 0
+	for i, pct in odds do
+		total += pct
+		if math.abs((counts[i] or 0) / n * 100 - pct) > 1.0 then
+			close = false
+		end
+	end
+	expect("Rolls follow the configured weights (40k samples within 1 point); odds sum to 100%", close and math.abs(total - 100) < 1e-9)
+	expect("The jackpot is the rarest segment", odds[#odds] == math.min(table.unpack(odds)))
+	local stops = true
+	for index = 1, #Config.Wheel.Segments do
+		for _, jitter in { -1, -0.3, 0, 0.6, 1 } do
+			if WheelRules.segmentAt(WheelRules.restingAngle(index, 5, jitter)) ~= index then
+				stops = false
+			end
+		end
+	end
+	expect("The spin animation always stops on the segment the server rolled", stops)
+
+	local c = ProfileTemplate.new(0)
+	local cosmeticIndex = 0
+	for i, segment in Config.Wheel.Segments do
+		if segment.Kind == "Cosmetic" then
+			cosmeticIndex = i
+		end
+	end
+	local before = 0
+	for _, count in c.OwnedItems do
+		before += count
+	end
+	-- Force the cosmetic segment: rng that lands inside its weight band.
+	local cum = 0
+	for i = 1, cosmeticIndex - 1 do
+		cum += Config.Wheel.Segments[i].Weight
+	end
+	local totalWeight = 0
+	for _, segment in Config.Wheel.Segments do
+		totalWeight += segment.Weight
+	end
+	local target = (cum + 0.5) / totalWeight
+	local cr = WheelRules.spin(c, t0, function(): number
+		return target
+	end)
+	local afterItems = 0
+	for _, count in c.OwnedItems do
+		afterItems += count
+	end
+	local item = if cr then ItemDatabase.get(cr.Reward.ItemId) else nil
+	expect("Cosmetic segments grant a real, non-default item of that rarity", cr ~= nil and cr.Reward.Kind == "Cosmetic" and item ~= nil and not item.Default and item.Rarity == Config.Wheel.Segments[cosmeticIndex].Rarity and afterItems == before + 1)
+
+	local junk = ProfileTemplate.new(0) :: any
+	junk.Wheel = { LastFreeSpinAt = -5, ExtraSpins = 9999, TotalSpins = "x", Receipts = { "ok", 5, {} } }
+	local fixed = ProfileTemplate.prepare(junk, 0)
+	expect("Profile repair clamps wheel data", fixed ~= nil and fixed.Wheel.ExtraSpins == Config.Wheel.MaxStoredSpins and fixed.Wheel.LastFreeSpinAt == 0 and #fixed.Wheel.Receipts == 1)
+	local old = ProfileTemplate.new(0) :: any
+	old.Wheel = nil
+	local filled = ProfileTemplate.prepare(old, 0)
+	expect("Profiles saved before the wheel existed get an empty Wheel section", filled ~= nil and filled.Wheel.ExtraSpins == 0 and filled.Wheel.LastFreeSpinAt == 0)
+end
+
+print("-- cosmetics data")
+do
+	local problems = CosmeticsData.validate()
+	for _, problem in problems do
+		print("  " .. problem)
+	end
+	expect("Every cosmetic resolves to a complete look", #problems == 0)
+	local gold = CosmeticsData.ball("ball_golden")
+	local none = CosmeticsData.ball(nil)
+	expect("Ball looks: material + glow per skin; unknown ids fall back to a plain white ball", gold.Material == "Foil" and gold.Glow and none.Material == "SmoothPlastic" and none.Color[1] == 240)
+	local nova = CosmeticsData.trail("trail_nova")
+	expect("Trails escalate from a streak to sparkles to a lagging Beam ribbon", CosmeticsData.trail("trail_chalk").Style == "Trail" and CosmeticsData.trail("trail_grass").Style == "Sparkle" and nova.Style == "Ribbon" and nova.ParticleRate > 0)
+	local club = CosmeticsData.club("skin_crimson_longiron", "LongIron")
+	local plain = CosmeticsData.club(nil, "Putter")
+	expect("Club looks: skin colours/material, the category's head shape, template lookup order", club.HeadColor[1] == 190 and club.Material == "Metal" and club.Shape == "Iron" and club.TemplateNames[1] == "skin_crimson_longiron" and club.TemplateNames[2] == "LongIron" and plain.Shape == "Putter" and #plain.TemplateNames == 1)
+	expect("Animations fall back to procedural poses until an AnimationId is set", CosmeticsData.animation("swing_samurai").AnimationId == "" and CosmeticsData.animation("swing_samurai").Pose == "Swing" and CosmeticsData.animation("emote_trophy").Pose == "Victory")
+	expect("Hole effects scale with rarity", CosmeticsData.holeEffect("hole_supernova").Count > CosmeticsData.holeEffect("hole_confetti").Count)
 end
 
 print("-- assets")

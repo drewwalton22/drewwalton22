@@ -145,7 +145,8 @@ local function confetti(at: Vector3, parent: Instance)
 end
 
 -- Builds the stage at `origin` (golfers face -Z, toward the camera).
-function PodiumStage.build(podium: PodiumView.Podium, origin: Vector3): Stage
+-- `emotes`: player id -> their equipped victory emote AnimationId (CosmeticsData).
+function PodiumStage.build(podium: PodiumView.Podium, origin: Vector3, emotes: { [string]: string }?): Stage
 	local folder = Instance.new("Folder")
 	folder.Name = "Podium"
 	folder.Parent = workspace
@@ -200,7 +201,8 @@ function PodiumStage.build(podium: PodiumView.Podium, origin: Vector3): Stage
 		local golfer = rig :: GolferRig.Rig
 		local top = base + Vector3.new(0, entry.StepHeight, 0)
 		golfer.standAt(CFrame.lookAt(top, top + Vector3.new(0, 0, -1)))
-		golfer.play(entry.Animation, nil, nil)
+		local emote = if entry.Outcome == "Winner" and emotes then emotes[entry.Id] else nil
+		golfer.play(entry.Animation, nil, nil, emote)
 		if not golfer.IsBot then
 			nameTag(golfer.Model, entry.Name, if entry.Outcome == "Winner" then Color3.fromRGB(255, 214, 90) else Color3.new(1, 1, 1))
 		end

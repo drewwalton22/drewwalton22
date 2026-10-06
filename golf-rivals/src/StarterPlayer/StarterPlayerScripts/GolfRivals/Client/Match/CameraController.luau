@@ -27,7 +27,7 @@ local CameraController = {}
 
 local BIND_NAME = "GolfRivalsMatchCamera"
 
-type Mode = "None" | "Intro" | "Address" | "Follow" | "Static"
+type Mode = "None" | "Intro" | "Address" | "Follow" | "Static" | "Aerial"
 
 local mode: Mode = "None"
 local previousType: Enum.CameraType? = nil
@@ -42,6 +42,10 @@ local getBall: (() -> Vector3?)? = nil
 local staticPose: CameraMath.Pose? = nil
 local staticFov = 60
 local addressFov = 60
+local aerialPose: CFrame? = nil
+local smoothCFrame: CFrame? = nil -- where the eased camera currently is
+local smoothFov = 60
+local EASE_RATE = 6 -- 1/s: higher = snappier tween
 
 local function toVec(v: Vector3): CameraMath.Vec3
 	return { X = v.X, Y = v.Y, Z = v.Z }
@@ -57,7 +61,41 @@ local function apply(pose: CameraMath.Pose, fov: number)
 	camera.CFrame = CFrame.lookAt(Vector3.new(pose.Pos.X, pose.Pos.Y, pose.Pos.Z), Vector3.new(pose.Look.X, pose.Look.Y, pose.Look.Z))
 end
 
+-- Ease toward a goal CFrame (address / aerial / static modes).
+local function applySmooth(goal: CFrame, fov: number, dt: number)
+	local camera = workspace.CurrentCamera
+	if camera == nil then
+		return
+	end
+	local alpha = 1 - math.exp(-EASE_RATE * math.min(dt, 0.1))
+	local current = smoothCFrame or camera.CFrame
+	local nextFrame = current:Lerp(goal, alpha)
+	smoothCFrame = nextFrame
+	smoothFov += (fov - smoothFov) * alpha
+	camera.CameraType = Enum.CameraType.Scriptable
+	camera.FieldOfView = smoothFov
+	camera.CFrame = nextFrame
+end
+
+local function poseCFrame(pose: CameraMath.Pose): CFrame
+	return CFrame.lookAt(Vector3.new(pose.Pos.X, pose.Pos.Y, pose.Pos.Z), Vector3.new(pose.Look.X, pose.Look.Y, pose.Look.Z))
+end
+
+-- Start a smooth tween from the camera's current pose.
+local function beginSmooth()
+	if smoothCFrame == nil then
+		local camera = workspace.CurrentCamera
+		if camera then
+			smoothCFrame = camera.CFrame
+			smoothFov = camera.FieldOfView
+		end
+	end
+end
+
 local function step(dt: number)
+	if mode ~= "Address" and mode ~= "Aerial" and mode ~= "Static" then
+		smoothCFrame = nil -- directly driven modes: the next tween starts from here
+	end
 	if mode == "Intro" and introTee and introPin then
 		local alpha = (os.clock() - introStart) / introSeconds
 		apply(CameraMath.introPose(toVec(introTee), toVec(introPin), alpha), 55)
@@ -70,9 +108,11 @@ local function step(dt: number)
 			end
 		end
 	elseif mode == "Address" and addressPose then
-		apply(addressPose, addressFov)
+		applySmooth(poseCFrame(addressPose), addressFov, dt)
+	elseif mode == "Aerial" and aerialPose then
+		applySmooth(aerialPose, 50, dt)
 	elseif mode == "Static" and staticPose then
-		apply(staticPose, staticFov)
+		applySmooth(poseCFrame(staticPose), staticFov, dt)
 	elseif mode == "Follow" and followState and getBall then
 		local ball = getBall()
 		if ball then
@@ -98,6 +138,7 @@ end
 
 function CameraController.address(ball: Vector3, aimX: number, aimZ: number)
 	ensureBound()
+	beginSmooth()
 	mode = "Address"
 	addressFov = 60
 	addressPose = CameraMath.addressPose(toVec(ball), aimX, aimZ)
@@ -114,13 +155,34 @@ function CameraController.golfer(ball: Vector3, aimX: number, aimZ: number, isPu
 	end
 	local position = ball - forward * back + right * side + Vector3.new(0, height, 0)
 	local look = ball + forward * ahead + Vector3.new(0, if isPutt then -1 else 2, 0)
+	beginSmooth()
 	mode = "Address"
 	addressFov = 62
 	addressPose = { Pos = toVec(position), Look = toVec(look) }
 end
 
+-- Overhead aiming view centred above `target`; `zoom` scales the height (mouse wheel).
+function CameraController.aerial(target: Vector3, ball: Vector3, zoom: number?)
+	ensureBound()
+	beginSmooth()
+	local flat = Vector3.new(target.X - ball.X, 0, target.Z - ball.Z)
+	local distance = flat.Magnitude
+	local forward = if distance > 1e-3 then flat / distance else Vector3.new(1, 0, 0)
+	local height = math.clamp(distance * 0.55 + 30, 30, 650) * math.clamp(zoom or 1, 0.4, 2.5)
+	-- A small tilt back toward the ball keeps the view readable and makes the
+	-- top of the screen the shot direction.
+	local position = target - forward * (height * 0.3) + Vector3.new(0, height, 0)
+	aerialPose = CFrame.lookAt(position, target, forward)
+	mode = "Aerial"
+end
+
+function CameraController.isAerial(): boolean
+	return mode == "Aerial"
+end
+
 function CameraController.static(position: Vector3, look: Vector3, fov: number?)
 	ensureBound()
+	beginSmooth()
 	mode = "Static"
 	staticFov = fov or 60
 	staticPose = { Pos = toVec(position), Look = toVec(look) }
@@ -144,6 +206,7 @@ function CameraController.release()
 		previousType = nil
 	end
 	mode, introDone, followState, getBall, addressPose, staticPose = "None", nil, nil, nil, nil, nil
+	aerialPose, smoothCFrame = nil, nil
 end
 
 return CameraController

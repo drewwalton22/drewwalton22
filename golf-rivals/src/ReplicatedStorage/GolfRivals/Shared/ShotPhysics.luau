@@ -54,6 +54,10 @@ export type Terrain = {
 	lieAt: (x: number, z: number) -> Types.LieId,
 	-- Surface gradient (dh/dx, dh/dz), dimensionless (0.03 = 3% slope).
 	slopeAt: (x: number, z: number) -> (number, number),
+	-- Optional per-surface physics (bounce, roll friction...) overriding the lie's
+	-- defaults - e.g. a raycast terrain returns the Smooth Terrain material's own
+	-- values (rock bounces more than grass). nil = Config.Lies[lie].
+	physicsAt: ((x: number, z: number) -> Config.LieDef?)?,
 }
 
 export type Wind = { X: number, Z: number } -- m/s the air moves toward (+X tailwind, +Z blows right)
@@ -117,6 +121,30 @@ function ShotPhysics.flatTerrain(lie: Types.LieId): Terrain
 			return 0, 0
 		end,
 	}
+end
+
+-- Lie and bounce/roll physics of the surface under (x, z).
+local function surfaceAt(terrain: Terrain, x: number, z: number): (Types.LieId, Config.LieDef)
+	local lie = terrain.lieAt(x, z)
+	local custom = if terrain.physicsAt then terrain.physicsAt(x, z) else nil
+	return lie, custom or Config.Lies[lie]
+end
+
+-- The cup's "magnet": a gentle pull toward the hole for a slow ball near the
+-- rim (forgiving putts and chips). Acceleration (m/s^2) toward the cup centre:
+--   a = MagnetAccel * (1 - d / MagnetRadius)   for d < MagnetRadius and
+--   ball speed < MagnetMaxSpeed; zero otherwise.
+function ShotPhysics.magnetAt(cup: Cup?, x: number, z: number, speed: number): (number, number)
+	if cup == nil or speed > P.MagnetMaxSpeed then
+		return 0, 0
+	end
+	local dx, dz = cup.X - x, cup.Z - z
+	local d = math.sqrt(dx * dx + dz * dz)
+	if d >= P.MagnetRadius or d < 1e-9 then
+		return 0, 0
+	end
+	local a = P.MagnetAccel * (1 - d / P.MagnetRadius)
+	return dx / d * a, dz / d * a
 end
 
 local function surfaceNormal(terrain: Terrain, x: number, z: number): (number, number, number)
@@ -254,8 +282,7 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 				break
 			end
 
-			local lie = terrain.lieAt(x, z)
-			local def = Config.Lies[lie]
+			local _, def = surfaceAt(terrain, x, z)
 			if def.Sinks then
 				outcome = "Water"
 				break
@@ -315,8 +342,7 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 		local rvx, rvz = vx, vz
 		local rollT = 0.0
 		while rollT < P.MaxRollSeconds do
-			local lie = terrain.lieAt(x, z)
-			local def = Config.Lies[lie]
+			local _, def = surfaceAt(terrain, x, z)
 			if def.Sinks then
 				outcome = "Water"
 				break
@@ -324,22 +350,25 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 
 			local mu = def.RollFriction
 			local gx, gz = terrain.slopeAt(x, z)
-			local gradMag = math.sqrt(gx * gx + gz * gz)
 			local speed = math.sqrt(rvx * rvx + rvz * rvz)
+			-- Driving force per unit mass: gravity down the slope + the cup magnet.
+			local mx, mz = ShotPhysics.magnetAt(cup, x, z, speed)
+			local fx, fz = -P.Gravity * gx + mx, -P.Gravity * gz + mz
+			local fMag = math.sqrt(fx * fx + fz * fz)
+			local grip = mu * P.Gravity
 
 			if speed <= 1e-6 then
-				-- At rest: static friction holds the ball unless the slope beats it.
-				if gradMag <= mu then
+				-- At rest: static friction holds the ball unless slope + magnet beat it.
+				if fMag <= grip then
 					break
 				end
-				-- Slide downhill: net acceleration g * (|grad| - mu) along -grad.
-				local a = P.Gravity * (gradMag - mu)
-				rvx = -gx / gradMag * a * rdt
-				rvz = -gz / gradMag * a * rdt
+				local a = fMag - grip
+				rvx = fx / fMag * a * rdt
+				rvz = fz / fMag * a * rdt
 			else
 				local dirX, dirZ = rvx / speed, rvz / speed
-				local nvx = rvx + (-P.Gravity * gx - mu * P.Gravity * dirX) * rdt
-				local nvz = rvz + (-P.Gravity * gz - mu * P.Gravity * dirZ) * rdt
+				local nvx = rvx + (fx - grip * dirX) * rdt
+				local nvz = rvz + (fz - grip * dirZ) * rdt
 				if nvx * dirX + nvz * dirZ <= 0 then
 					-- Friction reversed the motion: the ball has stopped.
 					nvx, nvz = 0, 0
@@ -356,7 +385,7 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 
 			if cup then
 				local dx, dz = x - cup.X, z - cup.Z
-				if math.sqrt(dx * dx + dz * dz) < P.CupRadius and math.sqrt(rvx * rvx + rvz * rvz) < P.CupCaptureSpeed then
+				if math.sqrt(dx * dx + dz * dz) < P.CupCaptureRadius and math.sqrt(rvx * rvx + rvz * rvz) < P.CupCaptureSpeed then
 					x, z = cup.X, cup.Z
 					outcome = "Holed"
 					break

@@ -2,25 +2,17 @@
 --[[
 	GaugeView.luau  (ReplicatedStorage.GolfRivals.Shared)
 
-	Maps the swing state machine's gauge onto a horizontal bar (0 = left, 1 = right)
-	so the UI only has to place a few frames:
+	Maps the 2-stage timing bar (SwingStateMachine) onto two horizontal tracks so
+	the UI only places a few frames. Every value is 0..1 across its track.
 
-	    |<- late zone ->|<-------------- power 0 .. 100% -------------->|
-	    x=0           ZeroX                                            x=1
+	    POWER     |██████████████▌               |  fill = live / locked power
+	                               ^ target tick (from the aim reticle, optional)
+	    ACCURACY  |      ░░░[SWEET]░░░           |  needle sweeps left -> right
+	              -1 (early/slice)  0   +1 (late/hook)
 
-	  * The bar's power axis starts at ZeroX (the "green zone centre"), where the
-	    falling marker must be when you click for a perfect shot. Left of ZeroX is
-	    the "too late" region the marker enters after the centre.
-	  * marker units -> bar: x = (marker + w) / (1 + w), with
-	        w = AccuracyWindowSeconds / FallSeconds   (marker units per offset 1)
-	  * The green zone is +/- greenHalfWidth (offset units) around ZeroX, which is
-	    +/- greenHalfWidth * w in marker units.
-
-	Phase behaviour:
-	  Idle             nothing moves
-	  PowerRising      fill grows from ZeroX to the marker
-	  AccuracyFalling  the locked power stays marked; the marker slides back to ZeroX
-	  Done             frozen
+	  needleX     = (offset + 1) / 2            (offset -1..1 -> 0..1)
+	  sweet spot  = needleX of +/- greenHalfWidth  (the "Perfect" zone, no curve)
+	  good band   = needleX of +/- GoodHalfWidth   (small curve)
 ]]
 
 local Config = require(script.Parent.Config)
@@ -28,46 +20,40 @@ local SwingStateMachine = require(script.Parent.SwingStateMachine)
 
 export type Layout = {
 	Phase: SwingStateMachine.Phase,
-	ZeroX: number,
-	GreenLeftX: number,
-	GreenRightX: number,
-	MarkerX: number,
-	LockedX: number?, -- locked power tick (after click 2)
-	FillFromX: number,
-	FillToX: number,
-	PowerPercent: number, -- what click 2 would lock right now (or did lock)
+	Mode: SwingStateMachine.Mode,
+	PowerFill: number, -- 0..1
+	PowerPercent: number, -- 0..100 (what click 1 would lock now, or did lock)
+	Locked: boolean, -- power stage finished
+	NeedleX: number?, -- 0..1 across the accuracy track (nil before stage 2)
+	SweetLeft: number,
+	SweetRight: number,
+	GoodLeft: number,
+	GoodRight: number,
+	TargetPower: number?, -- 0..1 power the aim reticle asks for (optional tick)
 }
 
 local GaugeView = {}
 
-local S = Config.Swing
-
--- Marker units per unit of accuracy offset.
-function GaugeView.window(): number
-	return S.AccuracyWindowSeconds / S.FallSeconds
+-- Accuracy offset (-1..1) -> position on the accuracy track (0..1).
+function GaugeView.toTrack(offset: number): number
+	return (math.clamp(offset, -1, 1) + 1) / 2
 end
 
-function GaugeView.toX(marker: number): number
-	local w = GaugeView.window()
-	return math.clamp((marker + w) / (1 + w), 0, 1)
-end
-
-function GaugeView.layout(gauge: SwingStateMachine.Gauge, greenHalfWidth: number): Layout
-	local w = GaugeView.window()
-	local zero = GaugeView.toX(0)
-	local marker = gauge.Marker
-	local locked = gauge.LockedPower
-	local power = if gauge.Phase == "PowerRising" then gauge.Marker elseif locked then locked else 0
+function GaugeView.layout(gauge: SwingStateMachine.Gauge, greenHalfWidth: number, targetPower: number?): Layout
+	local good = Config.Swing.GoodHalfWidth
+	local inAccuracy = gauge.Phase == "Accuracy" or gauge.Phase == "Done"
 	return {
 		Phase = gauge.Phase,
-		ZeroX = zero,
-		GreenLeftX = GaugeView.toX(-greenHalfWidth * w),
-		GreenRightX = GaugeView.toX(greenHalfWidth * w),
-		MarkerX = GaugeView.toX(marker),
-		LockedX = if locked then GaugeView.toX(locked) else nil,
-		FillFromX = zero,
-		FillToX = if gauge.Phase == "PowerRising" then GaugeView.toX(marker) elseif locked then GaugeView.toX(locked) else zero,
-		PowerPercent = math.clamp(power, 0, 1) * 100,
+		Mode = gauge.Mode,
+		PowerFill = math.clamp(gauge.Power, 0, 1),
+		PowerPercent = math.clamp(gauge.Power, 0, 1) * 100,
+		Locked = gauge.LockedPower ~= nil,
+		NeedleX = if inAccuracy then GaugeView.toTrack(gauge.Needle) else nil,
+		SweetLeft = GaugeView.toTrack(-greenHalfWidth),
+		SweetRight = GaugeView.toTrack(greenHalfWidth),
+		GoodLeft = GaugeView.toTrack(-good),
+		GoodRight = GaugeView.toTrack(good),
+		TargetPower = if targetPower then math.clamp(targetPower, 0, 1) else nil,
 	}
 end
 

@@ -284,6 +284,20 @@ function ProfileService.saveSoon(player: Player)
 	end)
 end
 
+-- Saves right now (yields). Used before acknowledging a Robux receipt, so a
+-- purchase is never granted in memory only. Returns true when the save landed.
+function ProfileService.saveNow(player: Player): boolean
+	local profile = profiles[player]
+	if profile == nil then
+		return false
+	end
+	local status = profile.save()
+	if status == "LostLock" then
+		player:Kick(KICK_MESSAGES.LostLock)
+	end
+	return status == "Saved"
+end
+
 function ProfileService.onLeaving(callback: (player: Player, data: ProfileTemplate.ProfileData) -> ())
 	table.insert(leavingCallbacks, callback)
 end

@@ -12,19 +12,26 @@
 	Signs are parts with a SurfaceGui on the Front face; LobbyLayout guarantees the
 	front faces the plaza.
 
+	The DAILY WHEEL is a cylinder (DailyWheel) whose face is a SurfaceGui drawn by
+	WheelArt, with a pointer and a "Spin the wheel" prompt; clients animate it
+	from the attributes WheelService sets after each spin. Neon parts are tagged
+	"GolfRivalsNeon" for the client's colour tweens (LobbyAmbience).
+
 	Driving-range mats get a ProximityPrompt ("Hit balls") carrying a BayId
 	attribute; the client's RangeController turns a trigger into a RangeJoin request
 	(the server re-checks the distance itself). The AFK lounge needs no prompt: the
 	server's ZoneService checks positions.
 ]]
 
-local Lighting = game:GetService("Lighting")
+local CollectionService = game:GetService("CollectionService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage.GolfRivals.Shared
 local Logger = require(Shared.Logger)
 local LobbyLayout = require(Shared.LobbyLayout)
 local PartFactory = require(Shared.PartFactory)
+local WheelArt = require(Shared.WheelArt)
+local LightingDirector = require(script.Parent.LightingDirector)
 
 local LobbyBuilder = {}
 
@@ -65,39 +72,61 @@ local function buildSign(sign: LobbyLayout.Sign, parent: Instance)
 	board.Parent = parent
 end
 
-local function setupLighting()
-	Lighting.ClockTime = 17.6 -- golden hour
-	Lighting.Brightness = 2.4
-	Lighting.GlobalShadows = true
-	Lighting.Ambient = Color3.fromRGB(86, 80, 96)
-	Lighting.OutdoorAmbient = Color3.fromRGB(120, 110, 124)
-	Lighting.ExposureCompensation = 0.2
 
-	local atmosphere = Instance.new("Atmosphere")
-	atmosphere.Density = 0.28
-	atmosphere.Offset = 0.2
-	atmosphere.Color = Color3.fromRGB(255, 214, 178)
-	atmosphere.Decay = Color3.fromRGB(255, 160, 120)
-	atmosphere.Glare = 0.2
-	atmosphere.Haze = 1.4
-	atmosphere.Parent = Lighting
+-- The daily wheel: a thin cylinder facing the plaza, its face drawn by WheelArt.
+local function buildWheel(parent: Instance)
+	local w = LobbyLayout.WHEEL
+	local yaw = math.rad(LobbyLayout.wheelYawDeg())
+	local facing = Vector3.new(-math.sin(yaw), 0, -math.cos(yaw)) -- toward the plaza
+	local hub = Vector3.new(w.X, w.HubY, w.Z)
 
-	local bloom = Instance.new("BloomEffect")
-	bloom.Intensity = 0.35
-	bloom.Size = 22
-	bloom.Threshold = 0.95
-	bloom.Parent = Lighting
+	local wheel = Instance.new("Part")
+	wheel.Name = "DailyWheel"
+	wheel.Shape = Enum.PartType.Cylinder -- axis = local X
+	wheel.Size = Vector3.new(1, w.Radius * 2, w.Radius * 2)
+	wheel.Anchored = true
+	wheel.CanCollide = false
+	wheel.Color = Color3.fromRGB(30, 34, 52)
+	wheel.Material = Enum.Material.SmoothPlastic
+	-- Local X faces the plaza, local Y is up: the Right face shows the art upright.
+	wheel.CFrame = CFrame.fromMatrix(hub, facing, Vector3.yAxis)
+	wheel:SetAttribute("BaseCFrame", wheel.CFrame)
+	wheel:SetAttribute("SpinTo", 0)
 
-	local rays = Instance.new("SunRaysEffect")
-	rays.Intensity = 0.1
-	rays.Spread = 0.8
-	rays.Parent = Lighting
+	local gui = Instance.new("SurfaceGui")
+	gui.Face = Enum.NormalId.Right
+	gui.SizingMode = Enum.SurfaceGuiSizingMode.PixelsPerStud
+	gui.PixelsPerStud = 40
+	gui.LightInfluence = 0.15
+	local canvas = Instance.new("Frame")
+	canvas.Size = UDim2.fromScale(1, 1)
+	canvas.BackgroundTransparency = 1
+	canvas.Parent = gui
+	WheelArt.draw(canvas)
+	gui.Parent = wheel
 
-	local color = Instance.new("ColorCorrectionEffect")
-	color.Saturation = 0.15
-	color.Contrast = 0.08
-	color.TintColor = Color3.fromRGB(255, 246, 236)
-	color.Parent = Lighting
+	local prompt = Instance.new("ProximityPrompt")
+	prompt.Name = "WheelPrompt"
+	prompt.ActionText = "Spin the wheel"
+	prompt.ObjectText = "Daily Spin"
+	prompt.KeyboardKeyCode = Enum.KeyCode.E
+	prompt.HoldDuration = 0
+	prompt.MaxActivationDistance = 16
+	prompt.RequiresLineOfSight = false
+	prompt.Parent = wheel
+	wheel.Parent = parent
+
+	-- Pointer above the wheel, pointing down at the winning segment.
+	local pointer = Instance.new("WedgePart")
+	pointer.Name = "WheelPointer"
+	pointer.Size = Vector3.new(0.6, 2.4, 2.2)
+	pointer.Anchored = true
+	pointer.CanCollide = false
+	pointer.Color = Color3.fromRGB(255, 70, 90)
+	pointer.Material = Enum.Material.Neon
+	pointer.CFrame = CFrame.lookAt(hub + Vector3.new(0, w.Radius + 0.9, 0) + facing * 0.8, hub + Vector3.new(0, w.Radius + 0.9, 0) + facing * 0.8 + facing)
+		* CFrame.Angles(math.rad(180), 0, 0)
+	pointer.Parent = parent
 end
 
 function LobbyBuilder.build()
@@ -107,6 +136,9 @@ function LobbyBuilder.build()
 
 	for _, spec in layout.Parts do
 		local part = PartFactory.create(spec, Vector3.zero)
+		if spec.Material == "Neon" then
+			CollectionService:AddTag(part, "GolfRivalsNeon")
+		end
 		local bayId = string.match(spec.Name, "^RangeMat_(%d+)$")
 		if bayId then
 			local prompt = Instance.new("ProximityPrompt")
@@ -154,8 +186,9 @@ function LobbyBuilder.build()
 	spawn.CFrame = CFrame.lookAt(spawnPosition, spawnPosition + Vector3.new(0, 0, -1))
 	spawn.Parent = workspace
 
+	buildWheel(folder)
 	folder.Parent = workspace
-	setupLighting()
+	LightingDirector.apply()
 	Logger.info("Lobby", `Lobby built: {#layout.Parts} parts, {#layout.Signs} signs, {#layout.Lights} lights.`)
 end
 

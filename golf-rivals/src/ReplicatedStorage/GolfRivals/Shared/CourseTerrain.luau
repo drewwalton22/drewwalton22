@@ -101,6 +101,28 @@ function CourseTerrain.forHole(hole: CourseDatabase.HoleDef): ShotPhysics.Terrai
 	}
 end
 
+-- Everything the match engine needs to know about a hole's ground: the terrain
+-- the physics runs on, the lie at a point, and whether a point is in bounds.
+-- `analytic` builds it from the hole's 2D shapes (offline tests, "Parts" mode);
+-- the server swaps in a raycast-backed one for Smooth Terrain courses.
+export type CourseSurface = {
+	Terrain: ShotPhysics.Terrain,
+	lieAt: (x: number, z: number) -> Types.LieId,
+	inBounds: (x: number, z: number) -> boolean,
+}
+
+function CourseTerrain.analytic(hole: CourseDatabase.HoleDef): CourseSurface
+	return {
+		Terrain = CourseTerrain.forHole(hole),
+		lieAt = function(x: number, z: number): Types.LieId
+			return CourseTerrain.lieAt(hole, x, z)
+		end,
+		inBounds = function(x: number, z: number): boolean
+			return CourseTerrain.inBounds(hole, x, z)
+		end,
+	}
+end
+
 -- The same terrain seen from a shot at (ox, oz) aimed along `headingRad`.
 function CourseTerrain.shotFrame(terrain: ShotPhysics.Terrain, ox: number, oz: number, headingRad: number): ShotPhysics.Terrain
 	local dx, dz = math.cos(headingRad), math.sin(headingRad)
@@ -116,6 +138,12 @@ function CourseTerrain.shotFrame(terrain: ShotPhysics.Terrain, ox: number, oz: n
 			local gx, gz = terrain.slopeAt(ox + xl * dx + zl * rx, oz + xl * dz + zl * rz)
 			return gx * dx + gz * dz, gx * rx + gz * rz
 		end,
+		-- Per-surface physics (raycast terrains) passes straight through.
+		physicsAt = if terrain.physicsAt
+			then function(xl: number, zl: number): any
+				return (terrain.physicsAt :: any)(ox + xl * dx + zl * rx, oz + xl * dz + zl * rz)
+			end
+			else nil,
 	}
 end
 

@@ -190,23 +190,24 @@ end
 -- ---------------------------------------------------------------------------
 
 -- Fastest a human could have produced (power, offset) from the moment the
--- gauge became available:
---   rise  = power/100 * RiseSeconds                  (click 1 -> click 2)
---   fall  = power/100 * FallSeconds + offset * Window (click 2 -> click 3)
--- Click 3 can't land before the marker has fallen that far.
--- offset == -1 is a CLAMP ("this early or earlier"), so it can be produced by
--- clicking immediately after click 2: no minimum fall time in that case.
-function SwingMath.minSwingSeconds(power: number, offset: number): number
+-- timing bar became available (2-stage bar, see SwingStateMachine):
+--   power stage    = power/100 * PowerSweep            (first rise of the marker)
+--   accuracy stage = (offset + 1) / 2 * AccuracySweep  (needle travel to `offset`)
+-- offset == -1 is a CLAMP ("this early or earlier"): it can be produced by
+-- clicking immediately after click 1, so it needs no accuracy time.
+-- Putts use the slower putting speeds.
+function SwingMath.minSwingSeconds(power: number, offset: number, isPutt: boolean?): number
 	local p = math.clamp(power, 0, 100) / 100
-	local rise = p * S.RiseSeconds
-	local fall = if offset <= -1 then 0 else p * S.FallSeconds + offset * S.AccuracyWindowSeconds
-	return rise + math.max(0, fall)
+	local powerSweep = if isPutt then S.PuttPowerSweepSeconds else S.PowerSweepSeconds
+	local accuracySweep = if isPutt then S.PuttAccuracySweepSeconds else S.AccuracySweepSeconds
+	local accuracy = if offset <= -1 then 0 else (math.clamp(offset, -1, 1) + 1) / 2 * accuracySweep
+	return p * powerSweep + accuracy
 end
 
--- Full server-side check of a SubmitSwing payload. `elapsedSeconds` is how long
--- the server has had the swing UI open for this player (measured on the SERVER).
+-- Full server-side check of a swing payload. `elapsedSeconds` is how long the
+-- server has had the timing bar open for this player (measured on the SERVER).
 -- Returns (true) or (false, reason).
-function SwingMath.validateSubmission(power: any, offset: any, elapsedSeconds: number): (boolean, string?)
+function SwingMath.validateSubmission(power: any, offset: any, elapsedSeconds: number, isPutt: boolean?): (boolean, string?)
 	if not Validate.numberInRange(power, 0, 100) then
 		return false, "bad_power"
 	end
@@ -216,7 +217,7 @@ function SwingMath.validateSubmission(power: any, offset: any, elapsedSeconds: n
 	if (power :: number) < S.MinPower then
 		return false, "power_too_low"
 	end
-	if elapsedSeconds + S.TimingToleranceSeconds < SwingMath.minSwingSeconds(power :: number, offset :: number) then
+	if elapsedSeconds + S.TimingToleranceSeconds < SwingMath.minSwingSeconds(power :: number, offset :: number, isPutt) then
 		return false, "too_fast"
 	end
 	return true, nil

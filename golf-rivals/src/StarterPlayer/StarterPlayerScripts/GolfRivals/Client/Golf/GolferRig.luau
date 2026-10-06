@@ -34,16 +34,21 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage.GolfRivals.Shared
 local Assets = require(Shared.Assets)
+local CosmeticsData = require(Shared.CosmeticsData)
 local SwingPose = require(Shared.SwingPose)
+
+local CosmeticBuilder = require(script.Parent.CosmeticBuilder)
 
 export type Rig = {
 	Model: Model,
 	IsBot: boolean,
-	play: (kind: SwingPose.Kind, power: number?, onImpact: (() -> ())?) -> (),
+	-- animationId: the player's equipped Swing / Emote animation (CosmeticsData);
+	-- nil or "" = the global Assets default, then the procedural pose.
+	play: (kind: SwingPose.Kind, power: number?, onImpact: (() -> ())?, animationId: string?) -> (),
 	stop: () -> (),
 	address: (ball: Vector3, aimDir: Vector3, isPutt: boolean) -> (),
 	standAt: (cframe: CFrame) -> (),
-	setClub: (color: Color3?, material: Enum.Material?, isPutter: boolean?) -> (),
+	setClub: (look: CosmeticsData.ClubLook, isPutter: boolean?) -> (),
 	removeClub: () -> (),
 	destroy: () -> (),
 }
@@ -160,8 +165,8 @@ local function wrap(model: Model, isBot: boolean): Rig
 	end
 
 	-- Plays an uploaded animation; returns false when none is configured/loadable.
-	local function playAsset(kind: SwingPose.Kind, onImpact: (() -> ())?): boolean
-		local id = Assets.animation(ASSET_KIND[kind] or "")
+	local function playAsset(kind: SwingPose.Kind, onImpact: (() -> ())?, override: string?): boolean
+		local id = if override and Assets.isSet(override) then override else Assets.animation(ASSET_KIND[kind] or "")
 		if id == nil or animatorHost == nil then
 			return false
 		end
@@ -199,12 +204,12 @@ local function wrap(model: Model, isBot: boolean): Rig
 		return true
 	end
 
-	local function play(kind: SwingPose.Kind, power: number?, onImpact: (() -> ())?)
+	local function play(kind: SwingPose.Kind, power: number?, onImpact: (() -> ())?, animationId: string?)
 		stop()
 		if kind == "Idle" then
 			return
 		end
-		if playAsset(kind, onImpact) then
+		if playAsset(kind, onImpact, animationId) then
 			return
 		end
 		-- Procedural fallback.
@@ -264,52 +269,26 @@ local function wrap(model: Model, isBot: boolean): Rig
 		end
 	end
 
-	-- A club in the right hand: shaft down and slightly forward, coloured by the
-	-- equipped skin. Putters get a short shaft and a flat head.
-	local function setClub(color: Color3?, material: Enum.Material?, isPutter: boolean?)
+	-- A club in the right hand (CosmeticBuilder: template / mesh / procedural),
+	-- its grip at the bottom of the hand, the shaft running down and slightly
+	-- forward so the head reaches the ball in front of the golfer.
+	local function setClub(look: CosmeticsData.ClubLook, isPutter: boolean?)
 		removeClub()
 		local hand = rightHand
 		if hand == nil then
 			return
 		end
-		local length = if isPutter then 3.0 else 4.2
-		local newClub = Instance.new("Model")
+		local newClub = CosmeticBuilder.club(look, isPutter == true)
 		newClub.Name = "GolfClub"
-		local shaft = Instance.new("Part")
-		shaft.Name = "Shaft"
-		shaft.Shape = Enum.PartType.Cylinder
-		shaft.Size = Vector3.new(length, 0.16, 0.16) -- cylinder axis = X
-		shaft.Color = Color3.fromRGB(205, 210, 220)
-		shaft.Material = Enum.Material.Metal
-		local head = Instance.new("Part")
-		head.Name = "Head"
-		head.Size = if isPutter then Vector3.new(0.3, 0.35, 0.9) else Vector3.new(0.45, 0.42, 0.7)
-		head.Color = color or Color3.fromRGB(30, 30, 36)
-		head.Material = material or Enum.Material.Metal
-		for _, part in { shaft, head } do
-			part.CanCollide = false
-			part.CanQuery = false
-			part.CanTouch = false
-			part.Massless = true
-			part.Anchored = false
-			part.Parent = newClub
-		end
-		-- Grip at the bottom of the hand; the shaft runs down the hand's -Y axis,
-		-- tilted forward (-Z) so the head reaches the ball in front of the golfer.
 		local gripOffset = CFrame.new(0, -hand.Size.Y / 2 + 0.1, 0) * CFrame.Angles(math.rad(25), 0, 0)
-		local shaftCf = gripOffset * CFrame.new(0, -length / 2, 0) * CFrame.Angles(0, 0, math.rad(90))
-		shaft.CFrame = hand.CFrame * shaftCf
-		local headCf = gripOffset * CFrame.new(0, -length, -0.18)
-		head.CFrame = hand.CFrame * headCf
-		local function attach(part: BasePart, offset: CFrame)
-			local weld = Instance.new("Weld")
+		newClub:PivotTo(hand.CFrame * gripOffset)
+		local grip = newClub.PrimaryPart
+		if grip then
+			local weld = Instance.new("WeldConstraint")
 			weld.Part0 = hand
-			weld.Part1 = part
-			weld.C0 = offset
-			weld.Parent = part
+			weld.Part1 = grip
+			weld.Parent = grip
 		end
-		attach(shaft, shaftCf)
-		attach(head, headCf)
 		newClub.Parent = model
 		club = newClub
 	end

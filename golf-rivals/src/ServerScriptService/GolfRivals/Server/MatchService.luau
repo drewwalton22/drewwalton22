@@ -30,6 +30,15 @@
 	LEAVING: ProfileService.onLeaving runs before the final save, so a player who
 	quits mid-queue is refunded and a player who quits mid-match forfeits, with the
 	result written to their profile and the opponent's.
+
+	COURSES: each hole is played on real ground. Hand-built holes (CourseRegistry,
+	Workspace.GolfCourses) are used when present; otherwise, in Config.Course.Mode
+	"Terrain", every hole is generated as Smooth Terrain at the match's own arena
+	(TerrainCourse) and decorated (MapDecorator). Either way the engine gets a
+	raycast surface (TerrainSurface), so lies, heights, slopes and bounce/roll all
+	come from the actual terrain materials. The previous hole is cleared when the
+	next one starts, and the arena is cleared when the match is cleaned up.
+	Clients learn where the course is from snapshot.Course.
 ]]
 
 local Players = game:GetService("Players")
@@ -40,18 +49,33 @@ local ClubDatabase = require(Shared.ClubDatabase)
 local ClubStats = require(Shared.ClubStats)
 local Config = require(Shared.Config)
 local CourseDatabase = require(Shared.CourseDatabase)
+local CourseTerrain = require(Shared.CourseTerrain)
+local TerrainPlan = require(Shared.TerrainPlan)
+local TerrainSurface = require(Shared.TerrainSurface)
 local Logger = require(Shared.Logger)
 local ProfileOps = require(Shared.ProfileOps)
 local ProfileTemplate = require(Shared.ProfileTemplate)
 local Remotes = require(Shared.Remotes)
 local Validate = require(Shared.Validate)
 local BotBrain = require(script.Parent.BotBrain)
+local CourseRegistry = require(script.Parent.CourseRegistry)
+local MapDecorator = require(script.Parent.MapDecorator)
+local TerrainCourse = require(script.Parent.TerrainCourse)
 local Matchmaker = require(script.Parent.Matchmaker)
 local MatchEngine = require(script.Parent.MatchEngine)
 local MatchSettlement = require(script.Parent.MatchSettlement)
 local ProfileService = require(script.Parent.ProfileService)
 
 type ProfileData = ProfileTemplate.ProfileData
+
+-- Where the current hole of a match physically is.
+type CourseState = {
+	Mode: string, -- "Terrain" | "Mapped" | "Parts"
+	Origin: Vector3,
+	HoleId: number,
+	Built: TerrainCourse.Built?, -- generated terrain hole (cleared on the next hole / cleanup)
+	Decor: Folder?,
+}
 
 type Match = {
 	Id: number,
@@ -65,6 +89,7 @@ type Match = {
 	BotActAt: number?, -- when the bot's "thinking" pause ends
 	Settled: boolean,
 	CleanupAt: number?,
+	Course: CourseState,
 }
 
 local MatchService = {}
@@ -129,9 +154,75 @@ end
 -- Broadcasting
 -- ---------------------------------------------------------------------------
 
+local function arenaOrigin(matchId: number): Vector3
+	local base = Config.Course.ArenaBase
+	return Vector3.new(base.X + matchId * Config.Course.ArenaSpacing, base.Y, base.Z)
+end
+
+local function clearCourse(state: CourseState)
+	if state.Decor then
+		state.Decor:Destroy()
+		state.Decor = nil
+	end
+	if state.Built then
+		state.Built.destroy()
+		state.Built = nil
+	end
+end
+
+-- The engine's per-hole ground: builds / locates the hole, returns a raycast surface.
+local function surfaceProvider(state: CourseState, matchId: number): (hole: CourseDatabase.HoleDef) -> CourseTerrain.CourseSurface
+	return function(hole: CourseDatabase.HoleDef): CourseTerrain.CourseSurface
+		clearCourse(state)
+		local analytic = CourseTerrain.analytic(hole)
+		local include: { Instance } = {}
+		local mapped = CourseRegistry.get(hole.Id)
+		if mapped then
+			state.Mode, state.Origin = "Mapped", mapped.Origin
+			table.insert(include, mapped.Container)
+		elseif Config.Course.Mode == "Terrain" then
+			local origin = arenaOrigin(matchId)
+			local built = TerrainCourse.build(TerrainPlan.build(hole), origin, `Match{matchId}_Hole{hole.Id}`)
+			state.Mode, state.Origin, state.Built = "Terrain", origin, built
+			table.insert(include, built.Folder)
+		else
+			state.Mode, state.Origin = "Parts", arenaOrigin(matchId)
+			state.HoleId = hole.Id
+			return analytic -- flat client-built parts: analytic shapes are the truth
+		end
+		state.HoleId = hole.Id
+		if Config.Course.DecorateHoles then
+			local ok, folder = pcall(function(): any
+				return MapDecorator.decorate(hole, state.Origin, hole.Id * 7919 + matchId, if state.Built then state.Built.Folder else workspace)
+			end)
+			if ok and typeof(folder) == "Instance" then
+				state.Decor = folder :: Folder
+			else
+				Logger.info("Matches", `decoration failed: {tostring(folder)}`)
+			end
+		end
+		local surface = TerrainSurface.new({ Origin = state.Origin, Include = include, Fallback = analytic.Terrain })
+		return {
+			Terrain = surface,
+			lieAt = surface.lieAt,
+			inBounds = analytic.inBounds, -- bounds rectangle in the hole frame
+		}
+	end
+end
+
 local function broadcastState(match: Match)
 	local snapshot = match.Engine.snapshot(os.clock())
-	snapshot.MatchId = match.Id -- clients render each match at its own arena offset
+	snapshot.MatchId = match.Id
+	-- Where (and how) this hole exists in the world, for the clients.
+	local origin = match.Course.Origin
+	local mapped = CourseRegistry.get(match.Course.HoleId)
+	snapshot.Course = {
+		Mode = match.Course.Mode,
+		Origin = { X = origin.X, Y = origin.Y, Z = origin.Z },
+		Bounds = if mapped then mapped.Hole.Bounds else nil, -- hand-built holes aren't in CourseDatabase
+		-- The replicated course parts (greens / tees) so client raycasts can hit them.
+		Container = if match.Course.Built then match.Course.Built.Folder elseif mapped then mapped.Container else nil,
+	}
 	for _, player in match.Humans do
 		if player.Parent == Players then
 			Remotes.fireClient("MatchState", player, snapshot)
@@ -214,6 +305,7 @@ end
 
 local function cleanup(match: Match)
 	matches[match.Id] = nil
+	clearCourse(match.Course)
 	for _, player in match.Humans do
 		if playerMatch[player] == match then
 			playerMatch[player] = nil
@@ -255,16 +347,29 @@ local function createMatch(mode: MatchSettlement.Mode, humans: { Player }, leagu
 	end
 
 	nextMatchId += 1
-	local startHole = random:NextInteger(1, #CourseDatabase.Holes)
-	local engine = MatchEngine.new({
-		Players = specs,
-		Holes = CourseDatabase.sequence(startHole, Config.Match.HolesPerMatch),
-		Seed = random:NextInteger(1, 2147483646),
-		Now = os.clock(),
-	})
+	local matchId = nextMatchId
+	local holes = CourseRegistry.sequence(random:NextInteger(1, math.max(1, CourseRegistry.count())), Config.Match.HolesPerMatch)
+		or CourseDatabase.sequence(random:NextInteger(1, #CourseDatabase.Holes), Config.Match.HolesPerMatch)
+	local course: CourseState = { Mode = "Parts", Origin = arenaOrigin(matchId), HoleId = 0, Built = nil, Decor = nil }
+	local ok, engineOrError = pcall(function(): any
+		return MatchEngine.new({
+			Players = specs,
+			Holes = holes,
+			Seed = random:NextInteger(1, 2147483646),
+			Now = os.clock(),
+			Surface = surfaceProvider(course, matchId),
+		})
+	end)
+	if not ok then
+		Logger.info("Matches", `could not start match {matchId}: {tostring(engineOrError)}`)
+		clearCourse(course)
+		return nil
+	end
+	local engine = engineOrError :: MatchEngine.Engine
 	local match: Match = {
-		Id = nextMatchId, Mode = mode, League = league, Difficulty = difficulty, Engine = engine,
+		Id = matchId, Mode = mode, League = league, Difficulty = difficulty, Engine = engine,
 		Humans = humans, PlayStats = playStats, BotId = botId, BotActAt = nil, Settled = false, CleanupAt = nil,
+		Course = course,
 	}
 	matches[match.Id] = match
 	for _, player in humans do

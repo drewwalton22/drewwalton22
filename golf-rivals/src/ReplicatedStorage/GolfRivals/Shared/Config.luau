@@ -36,6 +36,16 @@ export type LieDef = {
 	Sinks: boolean, -- true = ball is lost on contact (water)
 }
 
+export type WheelSegment = {
+	Id: string,
+	Label: string,
+	Kind: "Coins" | "Gems" | "Cosmetic",
+	Amount: number?, -- Coins / Gems
+	Rarity: Types.RarityId?, -- Cosmetic: a random non-default item of this rarity
+	Weight: number,
+	Color: Types.RGB,
+}
+
 local Config = {}
 
 -- ECONOMY ---------------------------------------------------------------
@@ -110,19 +120,20 @@ Config.Clubs = {
 	OVRWeights = { Power = 0.4, Accuracy = 0.3, Spin = 0.3 },
 }
 
--- 3-CLICK SWING --------------------------------------------------------
--- Click 1 starts the gauge, click 2 locks power, click 3 locks accuracy.
---   power marker:   m(t) = (t - t1) / RiseSeconds                 (0 -> 1)
---   after click 2:  marker falls back to the green zone's centre, reaching it
---                   at  tCenter = t2 + power * FallSeconds
---   accuracy:       offset = clamp((t3 - tCenter) / AccuracyWindowSeconds, -1, 1)
---                   offset < 0 = clicked EARLY = slice (curves right)
---                   offset > 0 = clicked LATE  = hook  (curves left)
+-- 2-STAGE SWING (timing bar) -----------------------------------------
+-- Stage 1: the power marker sweeps 0 -> 100% -> 0 ... ; click 1 locks power.
+-- Stage 2: a needle crosses the accuracy track left -> right; click 2 on the
+--          centre SWEET SPOT hits it straight:
+--            offset = -1 + 2 * (t - t1) / AccuracySweepSeconds   (-1..1)
+--            offset < 0 = clicked EARLY = slice (curves right)
+--            offset > 0 = clicked LATE  = hook  (curves left)
+-- All four speeds are designer knobs: bigger = slower = easier to time.
 -- Skill only: no random numbers anywhere in shot resolution.
 Config.Swing = {
-	RiseSeconds = 1.1, -- 0% -> 100% power takes this long
-	FallSeconds = 0.9, -- 100% -> centre takes this long (scaled by locked power)
-	AccuracyWindowSeconds = 0.30, -- |offset| = 1 at this many seconds from the centre
+	PowerSweepSeconds = 1.8, -- full swings: 0% -> 100% takes this long (then back down)
+	AccuracySweepSeconds = 1.6, -- full swings: needle crosses the whole track (sweet spot at half-way)
+	PuttPowerSweepSeconds = 3.2, -- putts: much slower for fine pace control
+	PuttAccuracySweepSeconds = 2.6,
 	MinPower = 1, -- percent; below this the swing is a whiff and is rejected
 
 	-- Green zone (zero curve). Half-width in offset units, widened by Accuracy:
@@ -185,8 +196,18 @@ Config.Physics = {
 	SpinReferenceRpm = 8000,
 	MinTangentRetain = -0.3,
 	SpinImpactLoss = 0.6, -- spin multiplier after each bounce
-	CupRadius = 0.054, -- metres (4.25 in hole)
-	CupCaptureSpeed = 1.6, -- m/s: faster than this and the ball lips over the cup
+	CupRadius = 0.054, -- metres (4.25 in hole) - the visual cup
+	-- Forgiving hole: a ball whose centre passes within CupCaptureRadius of the cup
+	-- centre (a little more than cup + ball radius) drops if it is slower than
+	-- CupCaptureSpeed; faster than that it lips over.
+	CupCaptureRadius = 0.11,
+	CupCaptureSpeed = 2.0,
+	-- Ball magnet: a slow ball within MagnetRadius of the cup is pulled toward it,
+	-- MagnetAccel (m/s^2) at the centre fading to 0 at the radius. Pull-in from rest
+	-- happens only very close to the cup (where it beats green friction ~0.55 m/s^2).
+	MagnetRadius = 0.35,
+	MagnetAccel = 1.6,
+	MagnetMaxSpeed = 2.4, -- m/s: faster balls ignore the magnet
 	YardsToMeters = 0.9144,
 	MphToMetersPerSec = 0.44704,
 	MetersToFeet = 3.28084,
@@ -252,6 +273,72 @@ Config.Afk = {
 	TickSeconds = 60, -- uninterrupted time inside the lounge per payout
 	DailyCoinCap = 1800, -- two hours of AFK per UTC day
 	CheckSeconds = 1, -- how often the server samples positions
+}
+
+-- DAILY WHEELSPIN ------------------------------------------------------
+-- One FREE spin every CooldownSeconds (the last free spin's time is saved in the
+-- player's profile, i.e. in the DataStore). Extra spins can be bought with gems
+-- or Robux (a Developer Product - create it in Creator Dashboard and paste its id
+-- into RobuxProductId; 0 hides the Robux button). Rewards are rolled on the
+-- SERVER by weight; the client only plays the animation.
+Config.Wheel = {
+	CooldownSeconds = 24 * 60 * 60,
+	GemSpinPrice = 25,
+	RobuxProductId = 0,
+	RobuxSpinsPerPurchase = 1,
+	MaxStoredSpins = 50,
+	Segments = {
+		{ Id = "coins_500", Label = "500", Kind = "Coins", Amount = 500, Weight = 28, Color = { 255, 196, 40 } },
+		{ Id = "gems_5", Label = "5", Kind = "Gems", Amount = 5, Weight = 14, Color = { 80, 200, 255 } },
+		{ Id = "coins_1500", Label = "1,500", Kind = "Coins", Amount = 1500, Weight = 18, Color = { 255, 150, 50 } },
+		{ Id = "item_rare", Label = "RARE", Kind = "Cosmetic", Rarity = "Rare", Weight = 10, Color = { 60, 140, 255 } },
+		{ Id = "coins_5000", Label = "5,000", Kind = "Coins", Amount = 5000, Weight = 8, Color = { 255, 214, 90 } },
+		{ Id = "gems_25", Label = "25", Kind = "Gems", Amount = 25, Weight = 5, Color = { 120, 230, 255 } },
+		{ Id = "item_unique", Label = "UNIQUE", Kind = "Cosmetic", Rarity = "Unique", Weight = 5, Color = { 170, 90, 255 } },
+		{ Id = "coins_25000", Label = "JACKPOT", Kind = "Coins", Amount = 25000, Weight = 1, Color = { 255, 80, 120 } },
+	} :: { WheelSegment },
+}
+
+-- COURSES (Smooth Terrain) ---------------------------------------------
+-- Mode "Terrain": every match hole is built as real Smooth Terrain (Grass
+--   fairways, LeafyGrass rough, Sand bunkers, Water) at the match's arena, and
+--   ALL ball physics reads the world through raycasts (TerrainSurface).
+-- Mode "Parts": the original flat-part courses with analytic lies (fallback).
+-- Mapped courses: holes you build by hand in Workspace.GolfCourses (see
+--   docs/STUDIO_SETUP.md) are used instead of the generated ones when present.
+Config.Course = {
+	Mode = "Terrain" :: "Terrain" | "Parts",
+	UseMappedCourses = true,
+	MappedFolder = "GolfCourses", -- Workspace folder holding hand-built holes
+	ArenaBase = { X = 30000, Y = 0, Z = 0 }, -- generated arenas start here (studs)
+	ArenaSpacing = 6000, -- studs between concurrent matches' arenas
+	DecorateHoles = true, -- run MapDecorator on generated / mapped holes
+}
+
+-- MAP DECORATION (MapDecorator) -----------------------------------------
+-- Decorative foliage, rocks and grass patches around course borders. Each kind
+-- is filled from, in order: templates in ServerStorage.GolfRivalsAssets.Decor.<Kind>
+-- (drag your MeshParts / Models there), then the MeshIds below (loaded with
+-- InsertService:CreateMeshPartAsync), then a simple procedural stand-in.
+Config.Decor = {
+	BandInsideMeters = 6, -- how far inside the bounds edge decoration may start
+	BandOutsideMeters = 45, -- and how far beyond it
+	ClearanceMeters = 8, -- keep this far from fairways, greens, tees, bunkers, water
+	Density = 0.0045, -- items per square metre of border band
+	MaxItems = 260,
+	Kinds = {
+		{ Kind = "Tree", Weight = 4, MinScale = 0.8, MaxScale = 1.35 },
+		{ Kind = "Bush", Weight = 4, MinScale = 0.7, MaxScale = 1.3 },
+		{ Kind = "Rock", Weight = 3, MinScale = 0.6, MaxScale = 1.6 },
+		{ Kind = "GrassPatch", Weight = 5, MinScale = 0.8, MaxScale = 1.6 },
+	},
+	-- Optional MeshPart asset ids per kind, e.g. Tree = { "rbxassetid://123" }.
+	MeshIds = {
+		Tree = {},
+		Bush = {},
+		Rock = {},
+		GrassPatch = {},
+	} :: { [string]: { string } },
 }
 
 -- RANKED MATCHMAKING ----------------------------------------------------

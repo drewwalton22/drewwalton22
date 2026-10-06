@@ -14,10 +14,12 @@
 	  top-centre    turn banner + turn timer
 	  left          scoreboard
 	  right         top-down mini map, yards-to-pin; live telemetry below it
-	  right-centre  the vertical POWER METER (your turn only)
 	  bottom-centre the six club chips (DR FW LI SI WG PT, reach under each, the
 	                recommended club starred) and aim controls; on the green the
 	                putter is locked in and a "PUTTING" tag shows
+	  above them    AIM stage: target distance + SWING button (or Space);
+	                SWING stage: the 2-stage TIMING BAR (power, then accuracy)
+	                and a "back to aim" button (or Tab)
 	  centre        shot feedback ("PERFECT!")
 	  end of match  a scoreboard panel docked on the left, so the 3D podium stays
 	                visible, with RETURN TO LOBBY
@@ -36,10 +38,11 @@ local Signal = require(Shared.Signal)
 local TelemetryView = require(Shared.TelemetryView)
 
 local Kit = require(script.Parent.Parent.UI.Kit)
-local PowerMeter = require(script.Parent.Parent.UI.PowerMeter)
 local Theme = require(script.Parent.Parent.UI.Theme)
+local TimingBar = require(script.Parent.Parent.UI.TimingBar)
 
 export type Dot = { X: number, Z: number, IsMe: boolean, Holed: boolean }
+export type AimStage = "Aim" | "Swing"
 
 export type Hud = {
 	Gui: ScreenGui,
@@ -49,6 +52,9 @@ export type Hud = {
 	onAimStep: Signal.Signal, -- fires (deltaDegrees: number)
 	onLeave: Signal.Signal,
 	onForfeit: Signal.Signal,
+	onConfirmAim: Signal.Signal, -- AIM stage -> SWING stage
+	onBackToAim: Signal.Signal, -- SWING stage -> AIM stage
+	setAimStage: (stage: AimStage?, info: string?) -> (), -- nil hides the panel
 	setTimer: (seconds: number, running: boolean) -> (),
 	update: (model: MatchView.HudModel) -> (),
 	setHole: (hole: CourseDatabase.HoleDef) -> (),
@@ -83,6 +89,7 @@ function MatchHud.new(): Hud
 	local safe = Kit.safeArea(gui)
 	local play = Kit.new("Frame", { Name = "Play", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = safe }) :: Frame
 	local clubPick, clubStep, clubAuto, aimStep, leave, forfeit = Signal.new(), Signal.new(), Signal.new(), Signal.new(), Signal.new(), Signal.new()
+	local confirmAim, backToAim = Signal.new(), Signal.new()
 
 	-- ---- hole card + wind (top-left) -------------------------------------------------
 	local holeCard = Kit.panel({ Size = UDim2.fromOffset(230, 100), Parent = play })
@@ -130,8 +137,41 @@ function MatchHud.new(): Hud
 		telemetryValues[row[2]] = text(line, "0", { Size = UDim2.new(1, 0, 0, 18), Position = UDim2.fromOffset(0, 12), TextSize = 17, Font = Theme.Fonts.Title })
 	end
 
-	-- ---- power meter (right-centre, left of the map column) ----------------------------------------
-	local meter = PowerMeter.new({ Position = UDim2.new(1, -(MAP_W + 16) - 104, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), Parent = play })
+	-- ---- timing bar + aim stage panel (bottom-centre, above the club row) ----------------------------
+	local bar = TimingBar.new({ Position = UDim2.new(0.5, 0, 1, -102), AnchorPoint = Vector2.new(0.5, 1), Parent = play })
+	local aimPanel = Kit.panel({ Size = UDim2.fromOffset(560, 58), Position = UDim2.new(0.5, 0, 1, -102), AnchorPoint = Vector2.new(0.5, 1), Visible = false, Parent = play })
+	local aimInfo = text(aimPanel, "", { Size = UDim2.new(1, -200, 1, 0), Position = UDim2.fromOffset(16, 0), TextSize = 16, Font = Theme.Fonts.Bold, TextWrapped = true })
+	local aimStage: AimStage? = nil
+	local stageButton = Kit.button("SWING ▶", "primary", function()
+		if aimStage == "Aim" then
+			confirmAim.fire()
+		elseif aimStage == "Swing" then
+			backToAim.fire()
+		end
+	end, { Size = UDim2.fromOffset(170, 42), Position = UDim2.new(1, -180, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), TextSize = 18, Parent = aimPanel })
+	-- In the swing stage the panel shrinks to a small "back to aim" chip beside the bar.
+	local function setAimStage(stage: AimStage?, info: string?)
+		aimStage = stage
+		aimPanel.Visible = stage ~= nil
+		if stage == "Aim" then
+			aimPanel.Size = UDim2.fromOffset(560, 58)
+			aimPanel.Position = UDim2.new(0.5, 0, 1, -102)
+			aimPanel.AnchorPoint = Vector2.new(0.5, 1)
+			aimInfo.Visible = true
+			aimInfo.Text = info or "DRAG THE TARGET  ·  SPACE TO SWING"
+			stageButton.Text = "SWING ▶"
+			stageButton.Size = UDim2.fromOffset(170, 42)
+			stageButton.Position = UDim2.new(1, -180, 0.5, 0)
+		elseif stage == "Swing" then
+			aimPanel.Size = UDim2.fromOffset(120, 50)
+			aimPanel.Position = UDim2.new(0.5, 290, 1, -102)
+			aimPanel.AnchorPoint = Vector2.new(0, 1)
+			aimInfo.Visible = false
+			stageButton.Text = "◀ AIM"
+			stageButton.Size = UDim2.fromOffset(104, 38)
+			stageButton.Position = UDim2.new(0, 8, 0.5, 0)
+		end
+	end
 
 	-- ---- clubs + aim (bottom-centre) --------------------------------------------------------------------
 	local controls = Kit.panel({ Size = UDim2.fromOffset(640, 92), Position = UDim2.fromScale(0.5, 1), AnchorPoint = Vector2.new(0.5, 1), Parent = play })
@@ -149,7 +189,7 @@ function MatchHud.new(): Hud
 	Kit.button("▶", "ghost", function()
 		aimStep.fire(2)
 	end, { Size = UDim2.fromOffset(36, 40), Position = UDim2.fromOffset(594, 26), Parent = controls })
-	text(controls, "Q / E club  ·  ← / → aim", { Size = UDim2.fromOffset(220, 14), Position = UDim2.fromOffset(414, 72), TextSize = 11, TextColor3 = C.TextDim })
+	text(controls, "Q/E club  ·  ←/→ aim  ·  TAB target", { Size = UDim2.fromOffset(220, 14), Position = UDim2.fromOffset(414, 72), TextSize = 11, TextColor3 = C.TextDim })
 
 	local forfeitButton = Kit.button("FORFEIT", "ghost", function()
 		forfeit.fire()
@@ -220,6 +260,9 @@ function MatchHud.new(): Hud
 		rebuildClubs(model)
 		aimText.Text = `AIM {if model.AimDeg > 0 then "+" else ""}{math.floor(model.AimDeg + 0.5)}°`
 		controls.Visible = model.IsMyTurn
+		if not model.IsMyTurn then
+			setAimStage(nil)
+		end
 	end
 
 	-- Cheap per-frame countdown (the full `update` rebuilds the scoreboard).
@@ -351,11 +394,14 @@ function MatchHud.new(): Hud
 		onAimStep = aimStep,
 		onLeave = leave,
 		onForfeit = forfeit,
+		onConfirmAim = confirmAim,
+		onBackToAim = backToAim,
+		setAimStage = setAimStage,
 		setTimer = setTimer,
 		update = update,
 		setHole = setHole,
 		setDots = setDots,
-		setGauge = meter.set,
+		setGauge = bar.set,
 		feedback = feedback,
 		showTelemetry = showTelemetry,
 		hideTelemetry = function()

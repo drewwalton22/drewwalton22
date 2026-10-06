@@ -16,6 +16,9 @@
 	  ClubUpgrades          clubId -> { Power, Accuracy, Spin } levels
 	  Earnings              today's lobby coin earnings (driving range / AFK zone),
 	                        for the daily caps; reset when Day changes
+	  Wheel                 daily wheelspin: last free spin time, bought spins,
+	                        recent Robux receipt ids (added without a schema bump:
+	                        fillMissing gives old profiles an empty Wheel)
 	  Stats                 lifetime counters (quests/leaderboards read these)
 	  Quests                owned by the quest system (filled in a later step)
 	  Shop                  today's purchases, so a rotation item can't be bought twice
@@ -85,6 +88,12 @@ export type ProfileData = {
 	Shop: {
 		Rotation: number, -- shop rotation index these purchases belong to
 		Purchased: { [string]: boolean },
+	},
+	Wheel: {
+		LastFreeSpinAt: number, -- os.time() of the last FREE spin (24 h cooldown)
+		ExtraSpins: number, -- bought with gems / Robux, used after the free one
+		TotalSpins: number,
+		Receipts: { string }, -- recent Robux PurchaseIds (makes grants idempotent)
 	},
 	Earnings: {
 		Day: number, -- floor(os.time() / 86400) the counters belong to
@@ -238,6 +247,7 @@ function ProfileTemplate.new(now: number): ProfileData
 		Quests = {},
 		Shop = { Rotation = 0, Purchased = {} },
 		Earnings = { Day = 0, Range = 0, Afk = 0 },
+		Wheel = { LastFreeSpinAt = 0, ExtraSpins = 0, TotalSpins = 0, Receipts = {} },
 		Meta = { CreatedAt = now, Sessions = 0 },
 	}
 	ProfileTemplate.ensureDefaults(data)
@@ -304,6 +314,19 @@ function ProfileTemplate.sanitize(data: ProfileData)
 		end
 	end
 
+	-- Wheel: non-negative whole counters, a bounded list of receipt ids.
+	local wheel = data.Wheel
+	wheel.ExtraSpins = math.clamp(math.floor(cleanBalance(wheel.ExtraSpins, Config.Wheel.MaxStoredSpins)), 0, Config.Wheel.MaxStoredSpins)
+	wheel.TotalSpins = cleanBalance(wheel.TotalSpins, 1e9)
+	wheel.LastFreeSpinAt = cleanBalance(wheel.LastFreeSpinAt, 1e12)
+	local receipts: { string } = {}
+	for _, id in wheel.Receipts :: { any } do
+		if type(id) == "string" and #receipts < 50 then
+			table.insert(receipts, id)
+		end
+	end
+	wheel.Receipts = receipts
+
 	-- Upgrade levels: whole numbers in [0, MaxUpgradeLevel], owned clubs only.
 	for clubId, levels in data.ClubUpgrades :: { [any]: any } do
 		if ClubDatabase.get(clubId) == nil or not data.OwnedClubs[clubId] or type(levels) ~= "table" then
@@ -329,7 +352,7 @@ local function fillMissing(raw: any, now: number)
 			raw[key] = TableUtil.deepCopy(defaultValue)
 		end
 	end
-	for _, section in { "Stats", "Shop", "Earnings", "Meta" } do
+	for _, section in { "Stats", "Shop", "Earnings", "Wheel", "Meta" } do
 		for key, defaultValue in template[section] do
 			if type(raw[section][key]) ~= type(defaultValue) then
 				raw[section][key] = TableUtil.deepCopy(defaultValue)

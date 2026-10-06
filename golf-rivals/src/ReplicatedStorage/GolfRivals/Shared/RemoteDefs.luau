@@ -48,7 +48,8 @@ local RemoteDefs = {}
 local UI_ACTION: RateLimit = { Capacity = 5, RefillPerSec = 1 } -- buttons: buy, equip, upgrade
 local UI_QUERY: RateLimit = { Capacity = 5, RefillPerSec = 2 } -- read-only fetches
 local HEAVY_ACTION: RateLimit = { Capacity = 3, RefillPerSec = 0.5 } -- case opens, trade-ups
-local SWING: RateLimit = { Capacity = 6, RefillPerSec = 2 } -- 3 clicks per shot, with slack
+local SWING: RateLimit = { Capacity = 6, RefillPerSec = 2 } -- 2 clicks per shot, with slack
+local AIM: RateLimit = { Capacity = 10, RefillPerSec = 5 } -- dragging the aerial reticle (client throttles to 4/s)
 
 RemoteDefs.List = {
 	-- ---- Gameplay ----------------------------------------------------------
@@ -56,7 +57,7 @@ RemoteDefs.List = {
 		Name = "SubmitSwing",
 		Kind = "Event",
 		Direction = "ClientToServer",
-		Doc = "(power: number 0-100, accuracyOffset: number -1..1) Click-2 locked power and the Click-3 timing offset from the green zone centre (negative = early = slice, positive = late = hook). The server recomputes the whole shot from these two numbers and rejects submissions faster than a human could click.",
+		Doc = "(power: number 0-100, accuracyOffset: number -1..1) Click-1 locked power and the Click-2 accuracy offset from the sweet spot (negative = early = slice, positive = late = hook). The server recomputes the whole shot from these two numbers and rejects submissions faster than a human could click.",
 		Limit = SWING,
 	},
 	{
@@ -70,8 +71,8 @@ RemoteDefs.List = {
 		Name = "SetAim",
 		Kind = "Event",
 		Direction = "ClientToServer",
-		Doc = "(aimDegrees: number, +/-Config.Match.MaxAimDegrees) Aim offset from the pin line (negative = left, positive = right).",
-		Limit = SWING,
+		Doc = "(aimDegrees: number, +/-Config.Match.MaxAimDegrees) Aim offset from the pin line (negative = left, positive = right); sent while dragging the aerial target reticle.",
+		Limit = AIM,
 	},
 	{
 		Name = "ShotResult",
@@ -245,6 +246,28 @@ RemoteDefs.List = {
 		Kind = "Event",
 		Direction = "ClientToServer",
 		Doc = "() Give the bay back.",
+		Limit = UI_ACTION,
+	},
+	-- ---- Daily wheelspin -------------------------------------------------------
+	{
+		Name = "GetWheel",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "() -> { ok, State = { FreeReady, SecondsUntilFree, ExtraSpins, CanSpin } } Wheel status for the wheel screen.",
+		Limit = UI_QUERY,
+	},
+	{
+		Name = "SpinWheel",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "() -> { ok, reason?, SegmentIndex?, Reward?, Angle?, State? } Spin (free spin first, then a bought one). The server rolls and grants the reward; Angle is where the wheel stops.",
+		Limit = HEAVY_ACTION,
+	},
+	{
+		Name = "BuyWheelSpin",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "() -> { ok, reason?, State? } Buy one extra spin with gems (Robux spins go through MarketplaceService + ProcessReceipt).",
 		Limit = UI_ACTION,
 	},
 	{
