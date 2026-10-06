@@ -130,6 +130,7 @@ end
 
 local function broadcastState(match: Match)
 	local snapshot = match.Engine.snapshot(os.clock())
+	snapshot.MatchId = match.Id -- clients render each match at its own arena offset
 	for _, player in match.Humans do
 		if player.Parent == Players then
 			Remotes.fireClient("MatchState", player, snapshot)
@@ -353,7 +354,10 @@ local function loop()
 			pairingTick()
 		end
 		for _, match in matches do
-			local ok, err = pcall(tickMatch, match, now)
+			local ok, err = pcall(function()
+				tickMatch(match, now)
+				return true
+			end)
 			if not ok then
 				Logger.info("Matches", `match {match.Id} tick error: {tostring(err)}`)
 			end

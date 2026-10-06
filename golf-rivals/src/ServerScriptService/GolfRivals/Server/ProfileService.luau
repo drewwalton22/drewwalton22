@@ -188,7 +188,10 @@ function ProfileService.start()
 			-- Leave hooks run synchronously BEFORE the profile is detached and
 			-- released, so their edits are included in the final save.
 			for _, callback in leavingCallbacks do
-				local ok, err = pcall(callback, player, profile.Data)
+				local ok, err = pcall(function()
+					callback(player, profile.Data)
+					return true
+				end)
 				if not ok then
 					Logger.info("Profiles", `leaving hook failed for {player.Name}: {tostring(err)}`)
 				end

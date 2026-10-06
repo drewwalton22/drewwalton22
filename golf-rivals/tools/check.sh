@@ -8,6 +8,14 @@
 #
 # Usage: LUAU_BIN=/path/to/dir/with/luau-and-luau-analyze tools/check.sh
 #        (or put `luau` and `luau-analyze` on PATH)
+#
+# OPTIONAL real-Roblox-API check: also set LUAU_LSP=/path/to/luau-lsp and
+# ROBLOX_TYPES=/path/to/globalTypes.d.luau (from the luau-lsp repo, scripts/).
+# Then every Roblox-only script (services, remotes, all client code) is
+# type-checked against the actual Roblox API (Instance, Players, RemoteEvent...).
+# Diagnostics are only reported for those files: the pure modules are already
+# covered by the stricter luau-analyze pass, and luau-lsp's newer solver is noisier
+# about literal-type widening there.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -50,10 +58,35 @@ fi
 echo "analyze: clean"
 
 echo "== syntax check on ${#ROBLOX_ONLY[@]} Roblox-only modules + client scripts =="
-for f in "${ROBLOX_ONLY[@]}" "$ROOT"/src/StarterPlayer/StarterPlayerScripts/GolfRivals/Client/*.luau; do
+for f in "${ROBLOX_ONLY[@]}" "$ROOT"/src/StarterPlayer/StarterPlayerScripts/GolfRivals/Client/*.luau "$ROOT"/src/StarterPlayer/StarterPlayerScripts/GolfRivals/Client/*/*.luau; do
 	"$COMPILE" "$f" > /dev/null
 	echo "  ok  $(basename "$f")"
 done
+
+if [ -n "${LUAU_LSP:-}" ] && [ -n "${ROBLOX_TYPES:-}" ]; then
+	echo "== Roblox API type check (luau-lsp) on Roblox-only scripts =="
+	python3 -I "$ROOT/tools/sourcemap.py" "$TMP/sourcemap.json" > /dev/null
+	TARGET_FILES=()
+	while IFS= read -r f; do
+		if grep -q "ROBLOX-ONLY" "$f"; then TARGET_FILES+=("$f"); fi
+	done < <(ls "$SHARED"/*.luau "$SERVER"/*.luau)
+	for f in "$ROOT"/src/StarterPlayer/StarterPlayerScripts/GolfRivals/Client/*.luau "$ROOT"/src/StarterPlayer/StarterPlayerScripts/GolfRivals/Client/*/*.luau; do
+		if [ -f "$f" ]; then TARGET_FILES+=("$f"); fi
+	done
+	TARGETS="$(printf '%s|' "${TARGET_FILES[@]}")"
+	LSP_OUT="$("$LUAU_LSP" analyze --sourcemap "$TMP/sourcemap.json" --definitions="$ROBLOX_TYPES" "${TARGET_FILES[@]}" 2>&1 \
+		| awk -v targets="$TARGETS" '
+			BEGIN { n = split(targets, a, "|"); for (i = 1; i <= n; i++) if (a[i] != "") t[a[i]] = 1 }
+			/^\[(INFO|WARN)\]/ { next }
+			/^\// { keep = 0; for (k in t) if (index($0, k) == 1) keep = 1 }
+			keep { print }' || true)"
+	if [ -n "$LSP_OUT" ]; then
+		echo "$LSP_OUT"
+		echo "roblox types: FAILED"
+		exit 1
+	fi
+	echo "roblox types: clean (${#TARGET_FILES[@]} scripts)"
+fi
 
 echo "== run verification =="
 "$LUAU" "$TMP/verify_shared.luau"

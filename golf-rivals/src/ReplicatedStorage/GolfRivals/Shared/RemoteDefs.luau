@@ -77,13 +77,13 @@ RemoteDefs.List = {
 		Name = "ShotResult",
 		Kind = "Event",
 		Direction = "ServerToClient",
-		Doc = "(shot: table) Authoritative shot from MatchEngine: PlayerId, ClubLabel, Quality, Start/End positions, Outcome, Penalty/Holed flags, Telemetry {CarryYds, TotalYds, RollYds, ApexFeet, SpinRpm, LateralYds...} and Samples {t,x,y,z} in the hole frame for the ball animation.",
+		Doc = "(shot: table) Authoritative shot from MatchEngine: PlayerId, ClubLabel, Quality, Start/End positions, Outcome, Penalty/Holed flags, Telemetry {CarryYds, TotalYds, RollYds, ApexFeet, SpinRpm, LateralYds...} and AirSeconds (touchdown), TotalSeconds, and Samples {t,x,y,z} in the hole frame for the ball animation.",
 	},
 	{
 		Name = "MatchState",
 		Kind = "Event",
 		Direction = "ServerToClient",
-		Doc = "(state: table) MatchEngine snapshot: Phase, HoleIndex/HoleCount, Hole {Par, Yards, Tee, Pin}, Wind, ActiveId, TurnSecondsLeft, Players {Position, YardsToPin, Lie, Strokes, Total, Cosmetics...}, Finished/Result. Sent on every change.",
+		Doc = "(state: table) MatchEngine snapshot + MatchId (arena index): Phase, HoleIndex/HoleCount, Hole {Par, Yards, Tee, Pin}, Wind, ActiveId, TurnSecondsLeft, Players {Position, YardsToPin, Lie, Strokes, Total, Cosmetics...}, Finished/Result. Sent on every change.",
 	},
 
 	-- ---- Profile / inventory ----------------------------------------------

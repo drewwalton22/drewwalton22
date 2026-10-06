@@ -44,6 +44,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage") -- OFFLINE-STRIP
 local Shared = ReplicatedStorage.GolfRivals.Shared -- OFFLINE-STRIP
 local Types = require(Shared.Types)
 local Config = require(Shared.Config)
+local ClubAdvisor = require(Shared.ClubAdvisor)
 local ClubDatabase = require(Shared.ClubDatabase)
 local CourseDatabase = require(Shared.CourseDatabase)
 local CourseTerrain = require(Shared.CourseTerrain)
@@ -118,42 +119,10 @@ export type Engine = {
 
 local MatchEngine = {}
 
--- ---------------------------------------------------------------------------
--- Club recommendation (also the player's default club each turn)
--- ---------------------------------------------------------------------------
-
-local NON_PUTTERS: { ClubDatabase.BagSlot } = {}
-for _, slot in ClubDatabase.BagSlots do
-	if slot.Class ~= "Putter" then
-		table.insert(NON_PUTTERS, slot)
-	end
-end
-table.sort(NON_PUTTERS, function(a: ClubDatabase.BagSlot, b: ClubDatabase.BagSlot)
-	return a.BaseCarryYds < b.BaseCarryYds
-end)
-MatchEngine.ClubsByReach = NON_PUTTERS
-
--- Rough full-power reach (carry) of a slot for given stats and lie. Carry grows a
--- little faster than speed (~speed^1.1), so scale the speed factor accordingly.
-function MatchEngine.estimateCarry(slot: ClubDatabase.BagSlot, stats: ClubDatabase.Stats, lie: Types.LieId): number
-	local S = Config.Swing
-	local speedFactor = (1 + S.DistanceSpeedPerPoint * (stats.Distance - S.DistanceStatBaseline)) * Config.Lies[lie].SpeedMult
-	return slot.BaseCarryYds * speedFactor ^ 1.1
-end
-
--- Shortest club that reaches `distanceYds` (4% margin for roll), the putter on
--- the green when a putt can cover it, else the longest club.
-function MatchEngine.recommendClub(distanceYds: number, lie: Types.LieId, statsFor: (string) -> ClubDatabase.Stats): string
-	if lie == "Green" and distanceYds <= Config.Swing.PuttFullPowerYards * 0.95 then
-		return "PT"
-	end
-	for _, slot in NON_PUTTERS do
-		if MatchEngine.estimateCarry(slot, statsFor(slot.Label), lie) * 1.04 >= distanceYds then
-			return slot.Label
-		end
-	end
-	return NON_PUTTERS[#NON_PUTTERS].Label
-end
+-- Club advice lives in Shared/ClubAdvisor (the client's club picker uses it too).
+MatchEngine.ClubsByReach = ClubAdvisor.ClubsByReach
+MatchEngine.estimateCarry = ClubAdvisor.estimateCarry
+MatchEngine.recommendClub = ClubAdvisor.recommendClub
 
 -- ---------------------------------------------------------------------------
 -- Engine
@@ -477,7 +446,8 @@ function MatchEngine.new(config: EngineConfig): Engine
 				LateralYds = result.LateralYds,
 			},
 			Samples = samples, -- { t, x, y, z } in the hole frame
-			FlightSeconds = result.TotalSeconds,
+			AirSeconds = result.FlightSeconds, -- time until first touchdown (carry ends here)
+			TotalSeconds = result.TotalSeconds, -- until the ball stops
 		})
 	end
 

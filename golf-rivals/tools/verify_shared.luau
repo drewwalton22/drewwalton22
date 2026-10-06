@@ -30,6 +30,15 @@ local MatchEngine = require("./MatchEngine")
 local BotBrain = require("./BotBrain")
 local Matchmaker = require("./Matchmaker")
 local MatchSettlement = require("./MatchSettlement")
+local Format = require("./Format")
+local Signal = require("./Signal")
+local ClubAdvisor = require("./ClubAdvisor")
+local TelemetryView = require("./TelemetryView")
+local CameraMath = require("./CameraMath")
+local CourseLayout = require("./CourseLayout")
+local GaugeView = require("./GaugeView")
+local MiniMap = require("./MiniMap")
+local MatchView = require("./MatchView")
 
 local Types = require("./Types")
 local P_YD = Config.Physics.YardsToMeters -- metres per yard
@@ -2047,6 +2056,460 @@ do
 		return true
 	end
 	expect("Bot planning (dozens of previews) leaves the match state untouched", same(beforeProbe, afterProbe) and #probe.drainEvents() > 0 and probe.activeId() == probeId)
+end
+
+
+-- Client logic: format, signal, advisor ---------------------------------------------
+print("-- client basics")
+do
+	expect("Format.commas", Format.commas(0) == "0" and Format.commas(999) == "999" and Format.commas(1000) == "1,000" and Format.commas(12450) == "12,450" and Format.commas(-1234567) == "-1,234,567" and Format.commas(1234567.9) == "1,234,567")
+	expect("Format yards / feet / rpm / mph round and label", Format.yards(277.6) == "278 YDS" and Format.feet(111.5) == "112 FT" and Format.rpm(2450) == "2,450 RPM" and Format.mph(8.2) == "8 MPH")
+	expect("Format.clock and countdown", Format.clock(75) == "1:15" and Format.clock(-5) == "0:00" and Format.countdown(8109) == "02:15:09" and Format.countdown(0) == "00:00:00")
+	expect("Format.relative: E / -2 / +3", Format.relative(4, 4) == "E" and Format.relative(2, 4) == "-2" and Format.relative(7, 4) == "+3")
+	expect("Format.scoreName", Format.scoreName(1, 3) == "Hole in One!" and Format.scoreName(3, 5) == "Eagle" and Format.scoreName(3, 4) == "Birdie" and Format.scoreName(4, 4) == "Par" and Format.scoreName(5, 4) == "Bogey" and Format.scoreName(6, 4) == "Double Bogey" and Format.scoreName(8, 4) == "+4")
+	expect("Format.ordinal", Format.ordinal(1) == "1st" and Format.ordinal(2) == "2nd" and Format.ordinal(3) == "3rd" and Format.ordinal(4) == "4th" and Format.ordinal(11) == "11th" and Format.ordinal(12) == "12th" and Format.ordinal(21) == "21st" and Format.ordinal(113) == "113th")
+
+	local signal = Signal.new()
+	local calls: { string } = {}
+	local c1 = signal.connect(function(v: any)
+		table.insert(calls, "a" .. tostring(v))
+	end)
+	local c2: Signal.Connection
+	c2 = signal.connect(function(v: any)
+		table.insert(calls, "b" .. tostring(v))
+		c2.disconnect() -- disconnecting yourself mid-fire is safe
+	end)
+	signal.connect(function(_v: any)
+		error("a failing listener")
+	end)
+	signal.connect(function(v: any)
+		table.insert(calls, "d" .. tostring(v))
+	end)
+	signal.fire(1)
+	signal.fire(2)
+	expect("Signal: listeners run in connect order; a failing one doesn't stop the rest", table.concat(calls, ",") == "a1,b1,d1,a2,d2")
+	c1.disconnect()
+	signal.fire(3)
+	expect("Signal: disconnect stops delivery; count tracks listeners", calls[#calls] == "d3" and calls[#calls - 1] == "d2" and signal.count() == 2)
+
+	local mid: ClubDatabase.Stats = { Distance = 60, Accuracy = 60, Forgiveness = 60 }
+	local function midStats(_label: string): ClubDatabase.Stats
+		return mid
+	end
+	expect("ClubAdvisor: 15 yards on the green -> putter; 60 yards on the green -> a wedge", ClubAdvisor.recommendClub(15, "Green", midStats) == "PT" and ClubAdvisor.recommendClub(60, "Green", midStats) ~= "PT")
+	expect("ClubAdvisor: a 320-yard tee shot takes the driver (longest club)", ClubAdvisor.recommendClub(320, "Tee", midStats) == "D")
+	local last, mono = 0, true
+	for yardsAway = 20, 300, 10 do
+		local label = ClubAdvisor.recommendClub(yardsAway, "Fairway", midStats)
+		local reach = ClubAdvisor.estimateCarry(ClubDatabase.getSlot(label) :: ClubDatabase.BagSlot, mid, "Fairway")
+		if reach < last - 1e-9 then
+			mono = false
+		end
+		last = reach
+	end
+	expect("ClubAdvisor: the recommended club's reach never shrinks as the distance grows", mono)
+	local roughReach = ClubAdvisor.estimateCarry(ClubDatabase.getSlot("7i") :: ClubDatabase.BagSlot, mid, "Rough")
+	local fairReach = ClubAdvisor.estimateCarry(ClubDatabase.getSlot("7i") :: ClubDatabase.BagSlot, mid, "Fairway")
+	expect("ClubAdvisor: the rough shortens a club's reach", roughReach < fairReach)
+end
+
+-- Shots to drive the telemetry / camera tests ----------------------------------------------
+local clientShots: { { [string]: any } } = {}
+do
+	local rngS = Prng.new(5)
+	local specs: { MatchEngine.PlayerSpec } = {
+		{ Id = "A", Name = "A", IsBot = true, StatsFor = BotBrain.statsFor("Hard") },
+		{ Id = "B", Name = "B", IsBot = true, StatsFor = BotBrain.statsFor("Easy") },
+	}
+	local e = MatchEngine.new({ Players = specs, Holes = CourseDatabase.sequence(1, 3), Seed = 3, Now = 0 })
+	local tS = 0.0
+	for _ = 1, 2000 do
+		if e.isFinished() then
+			break
+		end
+		tS += 0.5
+		e.tick(tS)
+		local id = e.activeId()
+		if id and e.phase() == "Swing" then
+			BotBrain.play(e, id, if id == "A" then "Hard" else "Easy", rngS.next, tS)
+		end
+		for _, ev in e.drainEvents() do
+			if ev.Type == "Shot" then
+				table.insert(clientShots, ev.Data)
+			end
+		end
+	end
+end
+
+-- Telemetry overlay -------------------------------------------------------------------------
+print("-- telemetry view")
+do
+	expect(`Collected {#clientShots} real shots (drives, wedges, putts) from a bot match`, #clientShots >= 15)
+	local okStart, okMono, okFreeze, okEnd, okLanded, okRoll = true, true, true, true, true, true
+	local kinds = { drive = 0, putt = 0 }
+	for _, shot in clientShots do
+		local s0 = TelemetryView.at(shot :: any, 0)
+		if not (s0.CarryYds == 0 or shot.AirSeconds == 0) or s0.TotalYds > 0.001 or s0.ApexFeet > 0.001 or s0.Done then
+			okStart = false
+		end
+		local duration = TelemetryView.duration(shot :: any)
+		local prevTotal, prevApex, prevCarry = 0, 0, 0
+		local t = 0.0
+		while t <= duration + 0.5 do
+			local live = TelemetryView.at(shot :: any, t)
+			if t < shot.AirSeconds then
+				if live.TotalYds < prevTotal - 0.05 or live.CarryYds < prevCarry - 0.05 or live.Landed then
+					okMono = false
+				end
+				prevTotal, prevCarry = live.TotalYds, live.CarryYds
+			end
+			if live.ApexFeet < prevApex - 1e-6 then
+				okMono = false
+			end
+			prevApex = live.ApexFeet
+			if t >= shot.AirSeconds and math.abs(live.CarryYds - shot.Telemetry.CarryYds) > 1e-6 then
+				okFreeze = false
+			end
+			if live.Landed ~= (t >= shot.AirSeconds) then
+				okLanded = false
+			end
+			if live.RollYds < -1e-9 then
+				okRoll = false
+			end
+			t += 0.05
+		end
+		local final = TelemetryView.at(shot :: any, duration + 10)
+		local tel: any = shot.Telemetry
+		if not (final.Done and final.CarryYds == tel.CarryYds and final.TotalYds == tel.TotalYds and final.RollYds == tel.RollYds and final.ApexFeet == tel.ApexFeet and final.SpinRpm == tel.SpinRpm) then
+			okEnd = false
+		end
+		if shot.ClubLabel == "PT" then
+			kinds.putt += 1
+		elseif shot.ClubLabel == "D" then
+			kinds.drive += 1
+		end
+	end
+	expect("At t=0 every shot reads zero carry/total/apex and is not done", okStart)
+	expect("During flight carry, total and apex only grow", okMono)
+	expect("Carry freezes at the server's final carry from touchdown on", okFreeze)
+	expect("Landed flips exactly at AirSeconds; roll is never negative", okLanded and okRoll)
+	expect("When the ball stops, the overlay shows the server's exact final numbers", okEnd)
+	expect("The sample covers both drives and putts", kinds.drive >= 2 and kinds.putt >= 3)
+	local drive: any = nil
+	for _, shot in clientShots do
+		if shot.ClubLabel == "D" and drive == nil then
+			drive = shot
+		end
+	end
+	local halfTime = drive.AirSeconds / 2
+	local half = TelemetryView.at(drive :: any, halfTime)
+	expect("Mid-flight on a drive: airborne, apex already substantial, carry about half-ish", not half.Landed and half.ApexFeet > 0.5 * drive.Telemetry.ApexFeet and half.CarryYds > 20 and half.CarryYds < drive.Telemetry.CarryYds)
+	local samples = { { 0, 0, 0, 0 }, { 2, 10, 4, 6 } }
+	local mx, my, mz = TelemetryView.positionAt(samples, 1)
+	local lx, _, _ = TelemetryView.positionAt(samples, -5)
+	local rx, _, _ = TelemetryView.positionAt(samples, 99)
+	expect("positionAt interpolates linearly and clamps outside the samples", mx == 5 and my == 2 and mz == 3 and lx == 0 and rx == 10)
+	local ex, ey, ez = TelemetryView.positionAt({}, 1)
+	expect("positionAt of an empty trajectory is the origin", ex == 0 and ey == 0 and ez == 0)
+end
+
+-- Chase camera ---------------------------------------------------------------------------------
+print("-- camera")
+do
+	local SPM = CourseLayout.STUDS_PER_METER
+	local T = CameraMath.Tuning
+	local allOk = true
+	local minSeen: number, maxSeen: number, maxStepSeen: number, finalMax: number = 1e9, 0.0, 0.0, 0.0
+	local lookOk, groundOk, finiteOk = true, true, true
+	for _, shot in clientShots do
+		local samples = shot.Samples :: { { number } }
+		local duration = TelemetryView.duration(shot :: any)
+		local first = samples[1]
+		local ball0: CameraMath.Vec3 = { X = first[2] * SPM, Y = first[3] * SPM, Z = first[4] * SPM }
+		local aimX, aimZ = shot.End.X - shot.Start.X, shot.End.Z - shot.Start.Z
+		if math.abs(aimX) + math.abs(aimZ) < 1e-6 then
+			aimX, aimZ = 1, 0
+		end
+		local state = CameraMath.startFollow(ball0, aimX, aimZ)
+		local prevPos = state.Pos
+		local dt = 1 / 60
+		local t = 0.0
+		local lastDist = 0.0
+		while t < duration + 3 do
+			t += dt
+			local x, y, z = TelemetryView.positionAt(samples, t)
+			local ball: CameraMath.Vec3 = { X = x * SPM, Y = y * SPM, Z = z * SPM }
+			local pose
+			state, pose = CameraMath.follow(state, ball, dt)
+			local dist = math.sqrt((pose.Pos.X - ball.X) ^ 2 + (pose.Pos.Y - ball.Y) ^ 2 + (pose.Pos.Z - ball.Z) ^ 2)
+			local step = math.sqrt((pose.Pos.X - prevPos.X) ^ 2 + (pose.Pos.Y - prevPos.Y) ^ 2 + (pose.Pos.Z - prevPos.Z) ^ 2)
+			minSeen = math.min(minSeen, dist)
+			maxSeen = math.max(maxSeen, dist)
+			maxStepSeen = math.max(maxStepSeen, step)
+			if math.abs(pose.Look.X - ball.X) > 1e-9 or math.abs(pose.Look.Z - ball.Z) > 1e-9 then
+				lookOk = false
+			end
+			if pose.Pos.Y < T.GroundY + T.MinGroundClearance - 1e-9 then
+				groundOk = false
+			end
+			if not (dist == dist and step == step and pose.Pos.X == pose.Pos.X) then
+				finiteOk = false
+			end
+			prevPos = pose.Pos
+			lastDist = dist
+		end
+		finalMax = math.max(finalMax, lastDist)
+		if lastDist > 14 then
+			allOk = false
+		end
+	end
+	print(`  camera over {#clientShots} shots: distance {math.floor(minSeen * 10) / 10}-{math.floor(maxSeen * 10) / 10} studs, max {math.floor(maxStepSeen * 100) / 100} studs/frame, final {math.floor(finalMax * 10) / 10}`)
+	expect("Camera always looks directly at the ball (the ball can never leave the frame)", lookOk)
+	expect("Camera never dips below the ground clearance and never produces NaN", groundOk and finiteOk)
+	expect("Camera stays between 11 and 90 studs from the ball through every shot", minSeen > 11 and maxSeen < 90)
+	expect("Camera motion is smooth (<= 5 studs per frame at 60 fps)", maxStepSeen <= 5)
+	expect("Camera settles into a close-up (<= 14 studs) once the ball is at rest, for every shot", allOk)
+
+	local ball: CameraMath.Vec3 = { X = 100, Y = 0, Z = 50 }
+	local address = CameraMath.addressPose(ball, 3, 4)
+	local back = (address.Pos.X - ball.X) * 0.6 + (address.Pos.Z - ball.Z) * 0.8
+	local ahead = (address.Look.X - ball.X) * 0.6 + (address.Look.Z - ball.Z) * 0.8
+	expect("Address camera sits behind the ball and looks down the aim line", back < -15 and ahead > 20 and address.Pos.Y > 3)
+	local tee: CameraMath.Vec3 = { X = 0, Y = 0, Z = 0 }
+	local pin: CameraMath.Vec3 = { X = 1000, Y = 0, Z = 300 }
+	local overview = CameraMath.overviewPose(tee, pin)
+	local intro1 = CameraMath.introPose(tee, pin, 1)
+	local intro0 = CameraMath.introPose(tee, pin, 0)
+	expect("Intro flyover ends exactly on the overview and starts near the green", math.abs(intro1.Pos.X - overview.Pos.X) < 1e-9 and math.abs(intro1.Look.Z - overview.Look.Z) < 1e-9 and math.abs(intro0.Look.X - pin.X) < 1e-9 and intro0.Pos.Y > 30)
+	local smooth, prevI = true, CameraMath.introPose(tee, pin, 0)
+	for i = 1, 60 do
+		local cur = CameraMath.introPose(tee, pin, i / 60)
+		if math.sqrt((cur.Pos.X - prevI.Pos.X) ^ 2 + (cur.Pos.Z - prevI.Pos.Z) ^ 2) > 60 then
+			smooth = false
+		end
+		prevI = cur
+	end
+	expect("Flyover moves in small, continuous steps", smooth)
+end
+
+-- Course layout ---------------------------------------------------------------------------------
+print("-- course layout")
+do
+	local SPM = CourseLayout.STUDS_PER_METER
+	local allFinite, allSized, countsOk, treesOk, coverOk = true, true, true, true, true
+	for _, hole in CourseDatabase.Holes do
+		local layout = CourseLayout.build(hole)
+		local parts = layout.Parts
+		if #parts < 20 or #parts > 700 then
+			countsOk = false
+		end
+		local minX: number, maxX: number, minZ: number, maxZ: number = 1e18, -1e18, 1e18, -1e18
+		for _, part in parts do
+			for _, v in { part.X, part.Y, part.Z, part.SX, part.SY, part.SZ, part.YawDeg } do
+				if v ~= v or math.abs(v) == math.huge then
+					allFinite = false
+				end
+			end
+			if part.SX <= 0 or part.SY <= 0 or part.SZ <= 0 or part.SX > 2048 or part.SY > 2048 or part.SZ > 2048 then
+				allSized = false
+			end
+			if string.sub(part.Name, 1, 5) == "Rough" then
+				minX = math.min(minX, part.X - part.SX / 2)
+				maxX = math.max(maxX, part.X + part.SX / 2)
+				minZ = math.min(minZ, part.Z - part.SZ / 2)
+				maxZ = math.max(maxZ, part.Z + part.SZ / 2)
+			end
+			if string.sub(part.Name, 1, 9) == "TreeTrunk" then
+				local lie = CourseTerrain.lieAt(hole, part.X / SPM, part.Z / SPM)
+				if lie ~= "Rough" then
+					treesOk = false
+				end
+			end
+		end
+		local b = hole.Bounds
+		if math.abs(minX - b.MinX * SPM) > 1e-6 or math.abs(maxX - b.MaxX * SPM) > 1e-6 or math.abs(minZ - b.MinZ * SPM) > 1e-6 or math.abs(maxZ - b.MaxZ * SPM) > 1e-6 then
+			coverOk = false
+		end
+		if math.abs(layout.Pin.X - hole.Pin.X * SPM) > 1e-9 or math.abs(layout.Pin.Z - hole.Pin.Z * SPM) > 1e-9 or math.abs(layout.Tee.X - hole.Tee.X * SPM) > 1e-9 then
+			allFinite = false
+		end
+	end
+	expect("Every hole lays out to a sensible number of parts, all finite", countsOk and allFinite)
+	expect("No part exceeds Roblox's 2048-stud limit (big areas are tiled)", allSized)
+	expect("The rough tiles cover exactly the playable bounds", coverOk)
+	expect("Trees only stand in rough or outside the bounds, never on the playing surfaces", treesOk)
+
+	local h3 = CourseDatabase.hole(3)
+	local layout3 = CourseLayout.build(h3)
+	local byName: { [string]: CourseLayout.PartSpec } = {}
+	for _, part in layout3.Parts do
+		byName[part.Name] = part
+	end
+	local seg = byName["Fairway_2"]
+	local fw = h3.Fairway[2]
+	local dx, dz = fw.BX - fw.AX, fw.BZ - fw.AZ
+	local len = math.sqrt(dx * dx + dz * dz)
+	local yaw = math.rad(seg.YawDeg)
+	expect("Fairway box runs along its segment (local +X maps to the segment direction)", math.abs(math.cos(yaw) - dx / len) < 1e-9 and math.abs(-math.sin(yaw) - dz / len) < 1e-9 and math.abs(seg.SX - len * SPM) < 1e-6 and math.abs(seg.SZ - fw.HalfWidth * 2 * SPM) < 1e-6)
+	-- Top surface of a part: discs are thin along SX, blocks along SY.
+	local function topOf(part: CourseLayout.PartSpec): number
+		return part.Y + (if part.Shape == "Disc" then part.SX else part.SY) / 2
+	end
+	local fairTop = topOf(byName["Fairway_1"])
+	local sandTop = topOf(byName["Bunker_1"])
+	local greenTop = topOf(byName["Green_1"])
+	local waterTop = topOf(byName["Water_1"])
+	local roughTop = topOf(byName["Rough_0_0"])
+	expect("Surface layers stack in lie-priority order: rough < fairway < sand < green < water", roughTop < fairTop and fairTop < sandTop and sandTop < greenTop and greenTop < waterTop)
+	expect("The pond is a translucent disc the size of the hole data", byName["Water_1"].Shape == "Disc" and math.abs(byName["Water_1"].SY - h3.Water[1].R * 2 * SPM) < 1e-6 and byName["Water_1"].Transparency > 0)
+	expect("Pin pole stands on the green at the pin", math.abs(byName["PinPole"].X - h3.Pin.X * SPM) < 1e-9 and topOf(byName["PinPole"]) > greenTop + 5)
+	local again = CourseLayout.build(h3)
+	local identical = #again.Parts == #layout3.Parts
+	for i, part in layout3.Parts do
+		if identical and (again.Parts[i].X ~= part.X or again.Parts[i].Name ~= part.Name) then
+			identical = false
+		end
+	end
+	expect("Layout is deterministic (same trees every build, on every client)", identical)
+	local tileHole = CourseDatabase.hole(3)
+	local widest = 0.0
+	for _, part in CourseLayout.build(tileHole).Parts do
+		widest = math.max(widest, part.SX, part.SZ)
+	end
+	expect("The out-of-bounds apron is tiled below the part-size cap", widest <= CourseLayout.MAX_PART_SIZE + 1e-6)
+end
+
+-- Swing gauge layout --------------------------------------------------------------------------------
+print("-- gauge view")
+do
+	local w = GaugeView.window()
+	expect("Gauge window = AccuracyWindow / Fall = 1/3 marker unit", math.abs(w - 0.3 / 0.9) < 1e-12)
+	expect("toX maps -w -> 0 and 1 -> 1, monotonic", GaugeView.toX(-w) == 0 and GaugeView.toX(1) == 1 and GaugeView.toX(0.5) > GaugeView.toX(0.1) and GaugeView.toX(-1) == 0)
+	local sm = SwingStateMachine.new()
+	local green = 0.09
+	local idle = GaugeView.layout(sm.gauge(0), green)
+	expect("Idle: marker rests at the zero line, green zone is symmetric around it", math.abs(idle.MarkerX - idle.ZeroX) < 1e-12 and math.abs((idle.ZeroX - idle.GreenLeftX) - (idle.GreenRightX - idle.ZeroX)) < 1e-12 and idle.GreenLeftX < idle.ZeroX)
+	sm.click(10)
+	local rising = GaugeView.layout(sm.gauge(10.55), green)
+	expect("Rising: the fill grows from the zero line to the marker; 0.55 s = 50% power", rising.Phase == "PowerRising" and rising.FillFromX == rising.ZeroX and math.abs(rising.PowerPercent - 50) < 1e-9 and rising.FillToX > rising.ZeroX and rising.LockedX == nil)
+	local fullRise = GaugeView.layout(sm.gauge(10.99), green)
+	expect("Rising later means a longer fill", fullRise.FillToX > rising.FillToX)
+	sm.click(10.55)
+	local falling = GaugeView.layout(sm.gauge(10.7), green)
+	expect("After click 2 the locked power is marked and the marker slides back", falling.Phase == "AccuracyFalling" and falling.LockedX ~= nil and math.abs((falling.LockedX :: number) - GaugeView.toX(0.5)) < 1e-9 and falling.MarkerX < (falling.LockedX :: number) and math.abs(falling.PowerPercent - 50) < 1e-9)
+	local atCenter = GaugeView.layout(sm.gauge(11.0), green)
+	expect("The marker is on the zero line exactly at the perfect-click time", math.abs(atCenter.MarkerX - atCenter.ZeroX) < 1e-9)
+	local pastCenter = GaugeView.layout(sm.gauge(11.2), green)
+	expect("Past the centre the marker enters the late zone left of the line", pastCenter.MarkerX < pastCenter.ZeroX and pastCenter.MarkerX >= 0)
+	-- Green-zone edge = the click time whose offset equals the half-width.
+	local edge = GaugeView.layout(sm.gauge(11.0 + green * 0.3), green)
+	expect("A click at the green-zone edge puts the marker exactly on the zone's edge", math.abs(edge.MarkerX - edge.GreenLeftX) < 1e-9)
+	sm.click(11.0)
+	local done = GaugeView.layout(sm.gauge(11.5), green)
+	expect("Done: frozen", done.Phase == "Done")
+end
+
+-- Mini map -------------------------------------------------------------------------------------------
+print("-- mini map")
+do
+	local allIn, orient, scaleOk = true, true, true
+	for _, hole in CourseDatabase.Holes do
+		local map = MiniMap.layout(hole, 120, 260, 6)
+		for _, corner in map.Outline do
+			if corner[1] < -0.001 or corner[1] > 120.001 or corner[2] < -0.001 or corner[2] > 260.001 then
+				allIn = false
+			end
+		end
+		for _, shape in map.Shapes do
+			local cx, cy = if shape.Kind == "Circle" then shape.X else (shape.X1 + shape.X2) / 2, if shape.Kind == "Circle" then shape.Y else (shape.Y1 + shape.Y2) / 2
+			if cx < 0 or cx > 120 or cy < 0 or cy > 260 then
+				allIn = false
+			end
+		end
+		if not (map.Tee[2] > map.Pin[2] and math.abs(map.Tee[1] - map.Pin[1]) < 1e-6) then
+			orient = false
+		end
+		local px, py = map.project(hole.Pin.X, hole.Pin.Z)
+		if math.abs(px - map.Pin[1]) > 1e-9 or math.abs(py - map.Pin[2]) > 1e-9 then
+			orient = false
+		end
+		local pixelsPerMetre = (map.Tee[2] - map.Pin[2]) / math.sqrt((hole.Pin.X - hole.Tee.X) ^ 2 + (hole.Pin.Z - hole.Tee.Z) ^ 2)
+		local greenCircle: MiniMap.Circle? = nil
+		for _, shape in map.Shapes do
+			if shape.Kind == "Circle" and shape.Lie == "Green" then
+				greenCircle = shape
+			end
+		end
+		if not (greenCircle and math.abs(greenCircle.R - hole.Greens[1].R * pixelsPerMetre) < 1e-6) then
+			scaleOk = false
+		end
+	end
+	expect("Every hole's map fits its box (outline, fairways, hazards all inside)", allIn)
+	expect("Tee is at the bottom and the pin straight above it, for dogleg holes too", orient)
+	expect("Map scale is uniform (a green's drawn radius matches the tee-to-pin scale)", scaleOk)
+	local map = MiniMap.layout(CourseDatabase.hole(2), 100, 200)
+	local lakes = 0
+	for _, shape in map.Shapes do
+		if shape.Kind == "Circle" and shape.Lie == "Water" then
+			lakes += 1
+		end
+	end
+	expect("The par 3's pond appears on its map", lakes == 1)
+end
+
+-- HUD view model --------------------------------------------------------------------------------------
+print("-- match view")
+do
+	local mid: ClubDatabase.Stats = { Distance = 70, Accuracy = 70, Forgiveness = 70 }
+	local function statsFor(_label: string): ClubDatabase.Stats
+		return mid
+	end
+	local specs: { MatchEngine.PlayerSpec } = {
+		{ Id = "me", Name = "Drew", IsBot = false, StatsFor = statsFor },
+		{ Id = "rival", Name = "Rival", IsBot = false, StatsFor = statsFor },
+	}
+	local engine = MatchEngine.new({ Players = specs, Holes = CourseDatabase.sequence(1, 3), Seed = 42, Now = 0 })
+	local snap = engine.snapshot(12)
+	local hud = MatchView.hud(snap, "me", statsFor)
+	local active = engine.activeId()
+	expect("HUD: hole / par / yards / progress text", hud.HoleText == "HOLE 1" and hud.ParText == "PAR 4" and hud.YardsText == "380 YDS" and hud.ProgressText == "1 / 3")
+	expect("HUD: my-turn flag and banner follow the active player", hud.IsMyTurn == (active == "me") and (hud.Banner == "YOUR SHOT" or hud.Banner == "RIVAL'S SHOT"))
+	expect("HUD: timer counts down from the snapshot", hud.TimerSeconds == Config.Match.TurnSeconds - 12 and hud.TimerText == "0:28")
+	local selected, recommended = 0, 0
+	for _, option in hud.ClubOptions do
+		if option.Selected then
+			selected += 1
+		end
+		if option.Recommended then
+			recommended += 1
+		end
+	end
+	expect("HUD: 14 club options, exactly one selected and one recommended; putter has no reach", #hud.ClubOptions == 14 and selected == 1 and recommended == 1 and hud.ClubOptions[14].Label == "PT" and hud.ClubOptions[14].ReachYds == 0 and hud.ClubOptions[1].ReachYds > 200)
+	expect("HUD: score rows for both players with me flagged", #hud.Rows == 2 and hud.Me ~= nil and (hud.Me :: MatchView.Row).Id == "me" and hud.Rows[1].IsMe ~= hud.Rows[2].IsMe)
+	expect("HUD: wind text and a normalised arrow angle", hud.WindText == Format.mph(snap.Wind.Mph) and hud.WindRotationDeg > -180 and hud.WindRotationDeg <= 180)
+	expect("windRotation: tailwind 0, from-the-left 90, headwind 180, aim offset shifts it", math.abs(MatchView.windRotation(0, 0, 100, 0, 0, 0)) < 1e-9 and math.abs(MatchView.windRotation(0, 0, 100, 0, 0, 90) - 90) < 1e-9 and math.abs(MatchView.windRotation(0, 0, 100, 0, 0, 180) - 180) < 1e-9 and math.abs(MatchView.windRotation(0, 0, 100, 0, 0, -90) + 90) < 1e-9 and math.abs(MatchView.windRotation(0, 0, 100, 0, 20, 90) - 70) < 1e-9)
+	expect("windRotation follows the pin direction (pin straight +Z, wind +Z = tailwind)", math.abs(MatchView.windRotation(0, 0, 0, 100, 0, 90)) < 1e-9)
+	expect("windRotation wraps into (-180, 180]", math.abs(MatchView.windRotation(0, 0, 100, 0, 0, 270) + 90) < 1e-9 and math.abs(MatchView.windRotation(0, 0, 100, 0, 0, 359) + 1) < 1e-9)
+
+	local forfeiter = if active == "me" then "rival" else "me"
+	engine.forfeit(forfeiter, 20)
+	local finalSnap = engine.snapshot(20)
+	local hudDone = MatchView.hud(finalSnap, "me", statsFor)
+	expect("HUD after the match: banner says complete and it is nobody's turn", hudDone.Banner == "MATCH COMPLETE" and not hudDone.IsMyTurn)
+	local summaryMe = MatchView.summary(finalSnap, "me")
+	local summaryRival = MatchView.summary(finalSnap, "rival")
+	expect("Summary: the player who didn't forfeit sees VICTORY, the other DEFEAT", (forfeiter == "rival") == summaryMe.Won and summaryMe.Won ~= summaryRival.Won and ((summaryMe.Won and summaryMe.Title == "VICTORY") or (not summaryMe.Won and summaryMe.Title == "DEFEAT")))
+	expect("Summary lists forfeiters last", summaryMe.Rows[#summaryMe.Rows].Forfeited and summaryMe.Reason == "forfeit")
+	local drawEngine = MatchEngine.new({ Players = specs, Holes = { CourseDatabase.hole(5) }, Seed = 1, Now = 0 })
+	local tD = 0.0
+	local guardD = 0
+	while not drawEngine.isFinished() and guardD < 400 do
+		guardD += 1
+		tD += 30
+		drawEngine.tick(tD) -- both players only ever time out
+	end
+	local timeoutSummary = MatchView.summary(drawEngine.snapshot(tD), "me")
+	expect("Summary of a finished match always has a title and rows", timeoutSummary.Title ~= "" and #timeoutSummary.Rows == 2)
 end
 
 for _, caseId in CaseDatabase.Order do
