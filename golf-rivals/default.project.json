@@ -1,0 +1,27 @@
+{
+  "name": "GolfRivals",
+  "tree": {
+    "$className": "DataModel",
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "GolfRivals": {
+        "$path": "src/ReplicatedStorage/GolfRivals"
+      }
+    },
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "GolfRivals": {
+        "$path": "src/ServerScriptService/GolfRivals"
+      }
+    },
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "GolfRivals": {
+          "$path": "src/StarterPlayer/StarterPlayerScripts/GolfRivals"
+        }
+      }
+    }
+  }
+}
