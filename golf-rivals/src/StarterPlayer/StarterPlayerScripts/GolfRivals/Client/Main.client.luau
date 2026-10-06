@@ -7,7 +7,7 @@
 	  2. connect to the server's remotes and fetch / subscribe to the player's profile
 	  3. toasts for server notifications
 	  4. the in-match experience (listens for MatchState / ShotResult)
-	  5. the lobby UI (built in the lobby step)
+	  5. the lobby: HUD, screens (Shop, Play, Cases, Loadout, Trade-Up, Quests, Leaderboard)
 ]]
 
 if not game:IsLoaded() then
@@ -21,6 +21,7 @@ local Logger = require(Shared.Logger)
 local Remotes = require(Shared.Remotes)
 
 local ClientState = require(script.Parent.ClientState)
+local LobbyController = require(script.Parent.Lobby.LobbyController)
 local MatchController = require(script.Parent.Match.MatchController)
 local Toast = require(script.Parent.UI.Toast)
 
@@ -33,5 +34,6 @@ Remotes.onClientEvent("Notify", function(message: any, kind: any)
 end)
 
 MatchController.start()
+LobbyController.start()
 
 Logger.info("Client", "Client ready.")

@@ -19,7 +19,7 @@ Competitive 3-click-swing golf with ranked leagues, loot cases, a daily shop and
 - [x] 5. Economy: daily shop rotation, server-rolled cases, sell, trade-up, club upgrades (atomic, fuzz-tested)
 - [x] 6. Matchmaking, AI bots, match orchestration (course data, stroke-play engine, ranked queues, 3 bot levels)
 - [x] 7a. Client: match HUD, 3-click gauge, chase camera, live telemetry, course builder (Roblox API type-checked)
-- [ ] 7b. Lobby: 3D hub, loadout, shop, cases, trade-up, matchmaking screens, quests, leaderboard
+- [x] 7b. Lobby: 3D hub, loadout, shop, cases (roulette), trade-up, play/matchmaking, quests, leaderboard
 
 ## Offline checks (no Studio needed)
 
@@ -44,3 +44,20 @@ This strict-type-checks the pure `Shared/` and `Server/` modules (server files m
 ```sh
 rojo serve   # then connect from the Rojo Studio plugin
 ```
+
+## First run in Roblox Studio
+
+Everything is verified offline (pure logic + real-API type checks), but nothing has been
+played in Studio yet. Suggested first pass:
+
+1. `rojo serve` and connect. In **Game Settings > Security** enable *Studio Access to API Services*
+   (otherwise profiles run on an in-memory fallback and the leaderboard shows only this server).
+2. Play (F5). Output should show the boot log through "Server ready." and "Client ready.".
+3. Lobby: the plaza, fountain and clubhouse sign appear; Shop / Cases / Quests / Leaderboard,
+   Play, Loadout and Trade-Up all open.
+4. Play > a bot (Easy): fly-over, gauge, 3 clicks, ball flight with chase camera + telemetry,
+   results screen, Return to Lobby.
+5. Test with 2 players (Test > Local Server, 2 players): both queue Rookie League, play, and the
+   winner is paid. Quit one player mid-match to check forfeit + payout.
+6. Known unknowns worth watching: UI sizing at different resolutions, the emoji glyphs rendering in
+   your chosen fonts, arena offsets for simultaneous matches, and DataStore budgets under load.
