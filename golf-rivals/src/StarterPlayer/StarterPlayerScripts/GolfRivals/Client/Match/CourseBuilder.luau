@@ -16,6 +16,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage.GolfRivals.Shared
 local CourseLayout = require(Shared.CourseLayout)
 local CourseDatabase = require(Shared.CourseDatabase)
+local PartFactory = require(Shared.PartFactory)
 
 export type Course = {
 	Folder: Folder,
@@ -30,42 +31,14 @@ local CourseBuilder = {}
 
 local SPM = CourseLayout.STUDS_PER_METER
 
-local function materialFor(name: string): Enum.Material
-	local material = (Enum.Material :: any)[name]
-	return material or Enum.Material.SmoothPlastic
-end
-
 function CourseBuilder.build(hole: CourseDatabase.HoleDef, origin: Vector3): Course
 	local layout = CourseLayout.build(hole)
 	local folder = Instance.new("Folder")
 	folder.Name = `Hole{hole.Id}`
 
 	for _, spec in layout.Parts do
-		local part = Instance.new("Part")
-		part.Name = spec.Name
-		part.Anchored = true
-		part.CanCollide = spec.CanCollide
-		part.CanTouch = false
+		local part = PartFactory.create(spec, origin)
 		part.CanQuery = false
-		part.CastShadow = spec.Shape ~= "Disc"
-		part.TopSurface = Enum.SurfaceType.Smooth
-		part.BottomSurface = Enum.SurfaceType.Smooth
-		part.Color = Color3.fromRGB(spec.Color[1], spec.Color[2], spec.Color[3])
-		part.Material = materialFor(spec.Material)
-		part.Transparency = spec.Transparency
-		part.Size = Vector3.new(spec.SX, spec.SY, spec.SZ)
-
-		local position = origin + Vector3.new(spec.X, spec.Y, spec.Z)
-		if spec.Shape == "Disc" then
-			-- A Roblox cylinder's axis is its local X; roll it so the axis points up.
-			part.Shape = Enum.PartType.Cylinder
-			part.CFrame = CFrame.new(position) * CFrame.Angles(0, math.rad(spec.YawDeg), math.pi / 2)
-		elseif spec.Shape == "Ball" then
-			part.Shape = Enum.PartType.Ball
-			part.CFrame = CFrame.new(position)
-		else
-			part.CFrame = CFrame.new(position) * CFrame.Angles(0, math.rad(spec.YawDeg), 0)
-		end
 		part.Parent = folder
 	end
 	folder.Parent = workspace

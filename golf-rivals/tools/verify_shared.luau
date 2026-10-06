@@ -39,6 +39,14 @@ local CourseLayout = require("./CourseLayout")
 local GaugeView = require("./GaugeView")
 local MiniMap = require("./MiniMap")
 local MatchView = require("./MatchView")
+local QuestDatabase = require("./QuestDatabase")
+local QuestEngine = require("./QuestEngine")
+local ShopView = require("./ShopView")
+local LoadoutView = require("./LoadoutView")
+local CasesView = require("./CasesView")
+local TradeUpView = require("./TradeUpView")
+local ModeView = require("./ModeView")
+local LobbyLayout = require("./LobbyLayout")
 
 local Types = require("./Types")
 local P_YD = Config.Physics.YardsToMeters -- metres per yard
@@ -1635,7 +1643,7 @@ do
 	local function resultFor(winner: string?, draw: boolean): MatchEngine.MatchResult
 		return { Finished = true, WinnerId = winner, Draw = draw, Reason = "complete", Totals = {}, HoleScores = {}, ForfeitedIds = {} }
 	end
-	local noPlay: MatchSettlement.PlayStats = { HolesPlayed = 3, HolesInOne = 0, LongestDriveYds = 0 }
+	local noPlay: MatchSettlement.PlayStats = { HolesPlayed = 3, HolesInOne = 0, LongestDriveYds = 0, FairwaysHit = 0 }
 	local zeroSum = true
 	for _, league in Config.Leagues do
 		local outcomes = MatchSettlement.settle(resultFor("A", false), "Ranked", league, { "A", "B" })
@@ -1661,7 +1669,7 @@ do
 	local d = ProfileTemplate.new(0)
 	d.Coins = 0
 	local winOutcome = MatchSettlement.settle(resultFor("A", false), "Ranked", pro, { "A", "B" }).A
-	local credited = MatchSettlement.applyToProfile(d, winOutcome, { HolesPlayed = 3, HolesInOne = 1, LongestDriveYds = 301.7 })
+	local credited = MatchSettlement.applyToProfile(d, winOutcome, { HolesPlayed = 3, HolesInOne = 1, LongestDriveYds = 301.7, FairwaysHit = 2 })
 	expect("applyToProfile: payout, ranked win, holes, hole-in-one, longest drive", credited == pro.WinPayout and d.Coins == pro.WinPayout and d.Stats.Wins == 1 and d.Stats.MatchesPlayed == 1 and d.Stats.HolesPlayed == 3 and d.Stats.HolesInOne == 1 and d.Stats.LongestDriveYds == 301 and d.Stats.TotalCoinsEarned == pro.WinPayout)
 	local d2 = ProfileTemplate.new(0)
 	MatchSettlement.applyToProfile(d2, MatchSettlement.settle(resultFor(nil, true), "Ranked", pro, { "A", "B" }).A, noPlay)
@@ -1671,7 +1679,7 @@ do
 	expect("Ranked loss recorded, no coins", d3.Stats.Losses == 1 and d3.Coins == Config.Economy.StartingCoins)
 	local d4 = ProfileTemplate.new(0)
 	d4.Stats.LongestDriveYds = 320
-	MatchSettlement.applyToProfile(d4, MatchSettlement.settle(resultFor("A", false), "Bot", nil, { "A" }).A, { HolesPlayed = 3, HolesInOne = 0, LongestDriveYds = 250 })
+	MatchSettlement.applyToProfile(d4, MatchSettlement.settle(resultFor("A", false), "Bot", nil, { "A" }).A, { HolesPlayed = 3, HolesInOne = 0, LongestDriveYds = 250, FairwaysHit = 0 })
 	expect("Bot match counts as played but not as a ranked win; longest drive keeps the max", d4.Stats.MatchesPlayed == 1 and d4.Stats.Wins == 0 and d4.Stats.LongestDriveYds == 320)
 	local refundable = ProfileTemplate.new(0)
 	refundable.Coins = 50
@@ -2510,6 +2518,557 @@ do
 	end
 	local timeoutSummary = MatchView.summary(drawEngine.snapshot(tD), "me")
 	expect("Summary of a finished match always has a title and rows", timeoutSummary.Title ~= "" and #timeoutSummary.Rows == 2)
+end
+
+
+-- Quests ------------------------------------------------------------------------------------
+print("-- quests")
+do
+	local DAY = 86400
+	-- Known dates: 2026-01-05 00:00 UTC is a Monday (unix 1767571200).
+	local monday = 1767571200
+	expect("dayIndex is whole days since the epoch", QuestEngine.dayIndex(DAY * 100) == 100 and QuestEngine.dayIndex(DAY * 100 - 1) == 99)
+	expect("Weeks start on Monday: the index changes exactly at Monday 00:00 UTC", QuestEngine.weekIndex(monday) == QuestEngine.weekIndex(monday - 1) + 1 and QuestEngine.weekIndex(monday + 6 * DAY + 86399) == QuestEngine.weekIndex(monday))
+	local wed = monday + 2 * DAY + 5000
+	local weeklyReset = QuestEngine.resetsAt("Weekly", wed) :: number
+	expect("Weekly reset is the next Monday midnight; daily reset is the next UTC midnight", (weeklyReset / DAY + 3) % 7 == 0 and weeklyReset > wed and weeklyReset - wed <= 7 * DAY and QuestEngine.resetsAt("Daily", wed) == (QuestEngine.dayIndex(wed) + 1) * DAY and QuestEngine.resetsAt("Lifetime", wed) == nil)
+
+	local ids: { [string]: boolean } = {}
+	local dupFree = true
+	for _, def in QuestDatabase.All do
+		if ids[def.Id] then
+			dupFree = false
+		end
+		ids[def.Id] = true
+	end
+	expect("Quest ids are unique; pools are big enough to rotate", dupFree and #QuestDatabase.Pools.Daily >= 10 and #QuestDatabase.Pools.Weekly >= 6 and #QuestDatabase.Pools.Lifetime >= 8)
+	expect("QuestDatabase.get rejects bad ids", QuestDatabase.get("d_holes_10") ~= nil and QuestDatabase.get("nope") == nil and QuestDatabase.get(5) == nil)
+
+	local a = ProfileTemplate.new(0)
+	local b = ProfileTemplate.new(0)
+	local viewsA = QuestEngine.list(a, wed)
+	QuestEngine.list(b, wed + 3000) -- later the same day
+	local function idList(data: ProfileTemplate.ProfileData, period: string): string
+		local state = (data.Quests :: any)[period]
+		return table.concat(state.Ids, ",")
+	end
+	local dailyIds = (a.Quests :: any).Daily.Ids
+	local distinct = {}
+	for _, id in dailyIds do
+		distinct[id] = true
+	end
+	local distinctCount = 0
+	for _ in distinct do
+		distinctCount += 1
+	end
+	expect("A day has 5 distinct daily quests and a week 3 weekly quests", #dailyIds == 5 and distinctCount == 5 and #(a.Quests :: any).Weekly.Ids == 3 and #viewsA == 3 and viewsA[1].Period == "Daily" and viewsA[2].Period == "Weekly" and viewsA[3].Period == "Lifetime")
+	expect("Everyone gets the same quests on the same day (and rejoining can't reroll them)", idList(a, "Daily") == idList(b, "Daily") and idList(a, "Weekly") == idList(b, "Weekly"))
+	local before = idList(a, "Daily")
+	QuestEngine.list(a, wed + 100)
+	expect("Quests stay put while the day lasts", idList(a, "Daily") == before)
+	local differs = false
+	for offset = 1, 10 do
+		local other = ProfileTemplate.new(0)
+		QuestEngine.list(other, wed + offset * DAY)
+		if idList(other, "Daily") ~= before then
+			differs = true
+		end
+	end
+	expect("Different days draw different daily sets", differs)
+	expect("Lifetime quests are all listed", #viewsA[3].Quests == #QuestDatabase.Pools.Lifetime and #viewsA[1].Quests == 5)
+
+	-- Progress, claiming ---------------------------------------------------------------------------
+	local p = ProfileTemplate.new(0)
+	p.Coins = 0
+	local periods = QuestEngine.list(p, wed)
+	local daily = periods[1].Quests[1]
+	local def = QuestDatabase.get(daily.Id) :: QuestDatabase.QuestDef
+	expect("A fresh quest starts at 0 progress, incomplete, unclaimed", daily.Progress == 0 and not daily.Complete and not daily.Claimed)
+	local _, whyEarly = QuestEngine.claim(p, daily.Id, wed)
+	expect("Claiming an unfinished quest is refused", whyEarly == "not_complete")
+	;(p.Stats :: any)[def.Stat] += def.Target - 1
+	local almost = QuestEngine.list(p, wed)[1].Quests[1]
+	expect("Progress follows the stat counter, one short is not complete", almost.Progress == def.Target - 1 and not almost.Complete)
+	;(p.Stats :: any)[def.Stat] += 5
+	local done = QuestEngine.list(p, wed)[1].Quests[1]
+	expect("Progress is capped at the target for display; quest is complete", done.Progress == done.Target and done.Complete)
+	expect("claimable() counts finished unclaimed quests (>=1)", QuestEngine.claimable(p, wed) >= 1)
+	local coinsBefore, gemsBefore, earnedBefore = p.Coins, p.Gems, p.Stats.TotalCoinsEarned
+	local okClaim, _, reward = QuestEngine.claim(p, daily.Id, wed)
+	expect("Claiming pays exactly the quest's reward", okClaim and reward ~= nil and p.Coins - coinsBefore == (def.Reward.Coins or 0) and p.Gems - gemsBefore == (def.Reward.Gems or 0))
+	expect("Quest rewards do not count as 'coins earned' (no quest feedback loop)", p.Stats.TotalCoinsEarned == earnedBefore)
+	local _, whyTwice = QuestEngine.claim(p, daily.Id, wed)
+	expect("A quest can only be claimed once", whyTwice == "already_claimed" and QuestEngine.list(p, wed)[1].Quests[1].Claimed)
+	local _, whyUnknown = QuestEngine.claim(p, "nope", wed)
+	local _, whyNil = QuestEngine.claim(p, nil, wed)
+	expect("Unknown / nil quest ids are refused", whyUnknown == "unknown_quest" and whyNil == "unknown_quest")
+	local inactive: string? = nil
+	for _, candidate in QuestDatabase.Pools.Daily do
+		if table.find((p.Quests :: any).Daily.Ids, candidate.Id) == nil and inactive == nil then
+			inactive = candidate.Id
+		end
+	end
+	local snapshotInactive = TableUtil.deepCopy(p)
+	local _, whyInactive = QuestEngine.claim(p, inactive, wed)
+	expect("A daily quest that isn't today's can't be claimed, and nothing changes", whyInactive == "not_active" and p.Coins == snapshotInactive.Coins)
+
+	-- Rollover: new day -> new quests, nothing claimed, progress restarts from the new baseline.
+	local carry = ProfileTemplate.new(0)
+	QuestEngine.list(carry, wed)
+	local carryDef = QuestDatabase.get((carry.Quests :: any).Daily.Ids[1]) :: QuestDatabase.QuestDef
+	;(carry.Stats :: any)[carryDef.Stat] += carryDef.Target
+	QuestEngine.claim(carry, carryDef.Id, wed)
+	local statBefore = (carry.Stats :: any)[carryDef.Stat]
+	local nextDay = QuestEngine.list(carry, wed + DAY)
+	local anyClaimed, anyProgressFromYesterday = false, false
+	for _, view in nextDay[1].Quests do
+		if view.Claimed then
+			anyClaimed = true
+		end
+		local viewDef = QuestDatabase.get(view.Id) :: QuestDatabase.QuestDef
+		if view.Progress > 0 and (carry.Stats :: any)[viewDef.Stat] == statBefore then
+			anyProgressFromYesterday = true
+		end
+	end
+	expect("Next day: claims are cleared and yesterday's progress doesn't carry over", not anyClaimed and not anyProgressFromYesterday and (carry.Quests :: any).Daily.Index == QuestEngine.dayIndex(wed + DAY))
+
+	-- Lifetime and Value quests ---------------------------------------------------------------------
+	local lt = ProfileTemplate.new(0)
+	lt.Coins = 0
+	local ace = QuestDatabase.get("l_ace") :: QuestDatabase.QuestDef
+	lt.Stats.HolesInOne = 1
+	local okAce, _, aceReward = QuestEngine.claim(lt, "l_ace", wed)
+	expect("Lifetime quest: uses the lifetime counter and pays gems", okAce and aceReward ~= nil and lt.Gems == (ace.Reward.Gems or 0))
+	expect("Lifetime quests stay claimed across days", select(2, QuestEngine.claim(lt, "l_ace", wed + 40 * DAY)) == "already_claimed")
+	local drive = ProfileTemplate.new(0)
+	drive.Stats.LongestDriveYds = 299
+	local notYet = select(2, QuestEngine.claim(drive, "l_drive_300", wed))
+	drive.Stats.LongestDriveYds = 310
+	local nowOk = QuestEngine.claim(drive, "l_drive_300", wed)
+	expect("Value quest (longest drive) compares the absolute stat", notYet == "not_complete" and nowOk)
+	local early = ProfileTemplate.new(0)
+	early.Stats.Wins = 5 -- wins earned BEFORE the first quest listing today
+	local winComplete = false
+	for _, view in QuestEngine.list(early, wed)[3].Quests do
+		if view.Id == "l_first_win" then
+			winComplete = view.Complete
+		end
+	end
+	expect("Lifetime Delta quests count from zero, not from a baseline", winComplete)
+	local grants = ProfileTemplate.new(0)
+	grants.Coins = Config.Economy.MaxCoins
+	grants.Stats.HolesPlayed = 100
+	expect("A reward at the coin cap still claims without error", QuestEngine.claim(grants, "l_holes_100", wed))
+	expect("Quest rewards clamp at MaxCoins", grants.Coins == Config.Economy.MaxCoins)
+end
+
+-- Shop view -------------------------------------------------------------------------------------
+print("-- lobby views")
+local viewNow = 1_750_000_000
+do
+	local profile = ProfileTemplate.new(0)
+	profile.Coins = 100000
+	profile.Gems = 5000
+	local offers: { ShopView.Offer } = {}
+	for _, offer in ShopRotation.offersFor(ShopRotation.indexAt(viewNow)) do
+		table.insert(offers, { ItemId = offer.ItemId, Rarity = offer.Rarity, Price = offer.Price, Purchased = false })
+	end
+	local counts = ShopView.tabCounts(offers)
+	local total = 0
+	for _, tab in ShopView.Tabs do
+		total += counts[tab.Id] or 0
+	end
+	expect("Shop tabs partition today's offers exactly (counts add up to the offer count)", total == #offers)
+	local tabsOk, sortedOk = true, true
+	for _, tab in ShopView.Tabs do
+		local cards = ShopView.cards(offers, profile, tab.Id, nil)
+		if #cards ~= (counts[tab.Id] or 0) then
+			tabsOk = false
+		end
+		for i, card in cards do
+			local item = ItemDatabase.get(card.ItemId) :: ItemDatabase.Item
+			if ShopView.tabOf(item) ~= tab.Id then
+				tabsOk = false
+			end
+			if i > 1 and Rarity.Info[cards[i - 1].Rarity].Tier > Rarity.Info[card.Rarity].Tier then
+				sortedOk = false
+			end
+		end
+	end
+	expect("Each tab shows only its own items, sorted common -> mythical", tabsOk and sortedOk)
+	local skinCards = ShopView.cards(offers, profile, "ClubSkin", "All")
+	local allSkinCount = #skinCards
+	local filteredTotal = 0
+	local filterOk = true
+	for _, filter in ShopView.ClassFilters do
+		if filter.Id ~= "All" then
+			local filtered = ShopView.cards(offers, profile, "ClubSkin", filter.Id)
+			filteredTotal += #filtered
+			for _, card in filtered do
+				if (ItemDatabase.get(card.ItemId) :: ItemDatabase.Item).Slot ~= filter.Id then
+					filterOk = false
+				end
+			end
+		end
+	end
+	expect("Club-class filters partition the skin tab", filterOk and filteredTotal == allSkinCount)
+	local broke = ProfileTemplate.new(0)
+	broke.Coins, broke.Gems = 0, 0
+	local anyBuyable = false
+	for _, tab in ShopView.Tabs do
+		for _, card in ShopView.cards(offers, broke, tab.Id, nil) do
+			if card.Buyable then
+				anyBuyable = true
+			end
+		end
+	end
+	expect("With no coins or gems nothing is buyable", not anyBuyable)
+	local coinsOnly = ProfileTemplate.new(0)
+	coinsOnly.Coins, coinsOnly.Gems = 1e9, 0
+	local mythicBuyable, mythicSeen = false, false
+	for _, tab in ShopView.Tabs do
+		for _, card in ShopView.cards(offers, coinsOnly, tab.Id, nil) do
+			if card.Rarity == "Mythical" then
+				mythicSeen = true
+				if card.Buyable or card.Currency ~= "Gems" then
+					mythicBuyable = true
+				end
+			end
+		end
+	end
+	expect("Mythical cards are priced in gems and aren't buyable with coins alone", mythicSeen and not mythicBuyable)
+	local purchasedOffers = table.clone(offers)
+	purchasedOffers[1] = { ItemId = offers[1].ItemId, Rarity = offers[1].Rarity, Price = offers[1].Price, Purchased = true }
+	local firstItem = ItemDatabase.get(offers[1].ItemId) :: ItemDatabase.Item
+	local boughtCards = ShopView.cards(purchasedOffers, profile, ShopView.tabOf(firstItem), nil)
+	local flagged = false
+	for _, card in boughtCards do
+		if card.ItemId == offers[1].ItemId and card.Purchased and not card.Buyable and card.CanAfford then
+			flagged = true
+		end
+	end
+	expect("A purchased offer is flagged and no longer buyable even if affordable", flagged)
+	expect("Countdown text", ShopView.countdown(1000 + 8109, 1000) == "REFRESHES IN 02:15:09")
+	expect("Slot labels are readable", ShopView.slotLabel(ItemDatabase.get("skin_crimson_driver") :: ItemDatabase.Item) == "Driver Skin" and ShopView.slotLabel(ItemDatabase.get("emote_trophy") :: ItemDatabase.Item) == "Victory Emote")
+end
+
+-- Loadout view ------------------------------------------------------------------------------------
+do
+	local profile = ProfileTemplate.new(0)
+	profile.Coins = 2500
+	local rows = LoadoutView.slots(profile, "7i")
+	local selectedCount, ovrOk = 0, true
+	for _, row in rows do
+		if row.Selected then
+			selectedCount += 1
+		end
+		if row.Ovr ~= ClubDatabase.overall({ Distance = 55, Accuracy = 60, Forgiveness = 65 }) then
+			ovrOk = false
+		end
+	end
+	expect("Loadout: 14 bag rows, exactly one selected, starter OVR everywhere", #rows == 14 and selectedCount == 1 and ovrOk and rows[1].Label == "D" and rows[14].Label == "PT")
+	local detail = LoadoutView.detail(profile, "tatermade_swift_d") :: LoadoutView.Detail
+	expect("Detail: three stat rows, first upgrade costs 500 and is allowed", #detail.Stats == 3 and detail.Stats[1].Stat == "Distance" and detail.Stats[1].UpgradeCost == 500 and detail.Stats[1].CanUpgrade and detail.Stats[1].Value == 55 and detail.Stats[1].MaxValue == 75)
+	profile.Coins = 100
+	local poor = (LoadoutView.detail(profile, "tatermade_swift_d") :: LoadoutView.Detail).Stats[1]
+	expect("Detail: when short, the button explains how many coins are missing", not poor.CanUpgrade and poor.Reason == "Need 400 more coins")
+	profile.Coins = 1e9
+	for _ = 1, Config.Clubs.MaxUpgradeLevel do
+		ProfileOps.upgradeClub(profile, "tatermade_swift_d", "Distance")
+	end
+	local maxed = (LoadoutView.detail(profile, "tatermade_swift_d") :: LoadoutView.Detail).Stats[1]
+	expect("Detail: a maxed stat shows Max level and no cost", maxed.Reason == "Max level" and maxed.UpgradeCost == nil and not maxed.CanUpgrade and maxed.Level == Config.Clubs.MaxUpgradeLevel and maxed.Value == 75)
+	expect("Detail agrees with the server's stats (Distance 75 after 10 upgrades)", (ProfileOps.clubStats(profile, "tatermade_swift_d") :: ClubDatabase.Stats).Distance == 75)
+	expect("Detail of an unknown club is nil", LoadoutView.detail(profile, "ghost") == nil)
+
+	local fresh = ProfileTemplate.new(0)
+	fresh.Coins = 20000
+	local ownedDrivers = LoadoutView.ownedFor(fresh, "D")
+	expect("ownedFor: only the starter driver at first, flagged equipped", #ownedDrivers == 1 and ownedDrivers[1].ClubId == "tatermade_swift_d" and ownedDrivers[1].Equipped)
+	local shopDrivers = LoadoutView.shopFor(fresh, "D")
+	local priceSorted, noStarters = true, true
+	for i, club in shopDrivers do
+		if i > 1 and shopDrivers[i - 1].Price > club.Price then
+			priceSorted = false
+		end
+		if (ClubDatabase.get(club.ClubId) :: ClubDatabase.Club).Starter then
+			noStarters = false
+		end
+	end
+	expect("shopFor: unowned non-starter drivers, cheapest first, with affordability", #shopDrivers == 4 and priceSorted and noStarters and shopDrivers[1].CanAfford and not shopDrivers[4].CanAfford)
+	ProfileOps.buyClub(fresh, shopDrivers[1].ClubId)
+	expect("Buying a club moves it from the shop list to the owned list", #LoadoutView.shopFor(fresh, "D") == 3 and #LoadoutView.ownedFor(fresh, "D") == 2)
+	local skins = LoadoutView.skinsFor(fresh, "Driver")
+	local lockedCount, equippedCount, ownedCount = 0, 0, 0
+	for _, skin in skins do
+		if not skin.Owned then
+			lockedCount += 1
+		end
+		if skin.Equipped then
+			equippedCount += 1
+		end
+		if skin.Owned then
+			ownedCount += 1
+		end
+	end
+	expect("skinsFor: all 13 driver skins listed; only the starter is owned and equipped", #skins == 13 and ownedCount == 1 and equippedCount == 1 and lockedCount == 12)
+	ProfileOps.grantItem(fresh, "skin_crimson_driver", 1)
+	ProfileOps.equipItem(fresh, "skin_crimson_driver")
+	local after = LoadoutView.skinsFor(fresh, "Driver")
+	local crimsonOk = false
+	for _, skin in after do
+		if skin.ItemId == "skin_crimson_driver" and skin.Owned and skin.Equipped then
+			crimsonOk = true
+		end
+	end
+	expect("A newly equipped skin shows owned + equipped", crimsonOk)
+	expect("Player OVR is shown from the profile", LoadoutView.playerOvr(fresh) == ProfileOps.playerOvr(fresh))
+end
+
+-- Cases view ----------------------------------------------------------------------------------------
+do
+	local profile = ProfileTemplate.new(0)
+	profile.Coins = 12000
+	local cards = CasesView.cards(profile)
+	local oddsOk = true
+	for _, card in cards do
+		local sum = 0
+		for _, odds in card.Odds do
+			sum += odds.Percent
+		end
+		if math.abs(sum - 100) > 1e-9 or #card.Odds ~= 6 then
+			oddsOk = false
+		end
+	end
+	expect("Three case cards; each odds table has six rarities summing to 100%", #cards == 3 and oddsOk and cards[1].Odds[1].Percent == 45 and cards[1].Odds[6].Percent == 1)
+	expect("maxAffordable = floor(coins / price), capped at 10 per opening", cards[1].MaxAffordable == 2 and cards[3].MaxAffordable == 4)
+	profile.Coins = 1e9
+	expect("maxAffordable is capped at the per-opening limit", CasesView.maxAffordable(profile, "club_skins_case") == Config.Economy.MaxCasesPerOpen)
+	profile.Coins = 9999
+	local okTwo = CasesView.canOpen(profile, "club_skins_case", 1)
+	local noTwo, whyTwo = CasesView.canOpen(profile, "club_skins_case", 2)
+	local zero, whyZero = CasesView.canOpen(profile, "club_skins_case", 0)
+	local eleven = CasesView.canOpen(profile, "club_skins_case", 11)
+	expect("canOpen: affordability and count limits", okTwo and not noTwo and whyTwo == "Not enough coins" and not zero and whyZero == "Pick 1 to 10 cases" and not eleven)
+	expect("total() multiplies the price", CasesView.total("animations_case", 3).Amount == 12000)
+
+	-- Results of a real opening, and what Sell All does.
+	local player = ProfileTemplate.new(0)
+	player.Coins = 1e8
+	local rngC = Prng.new(99)
+	local reply = Economy.openCases(player, "club_skins_case", 10, { Now = viewNow, Rng = rngC.next })
+	local drops = reply.Drops :: { Economy.Drop }
+	local results = CasesView.results(drops, player)
+	expect("Results: one card per drop, in drop order", #results.Cards == #drops and results.Cards[1].ItemId == drops[1].ItemId)
+	local expectedValue = 0
+	local expectedIds = 0
+	local perId: { [string]: number } = {}
+	for _, drop in drops do
+		perId[drop.ItemId] = (perId[drop.ItemId] or 0) + 1
+	end
+	for id, n in perId do
+		local spare = math.min(n, ProfileOps.spareCount(player, id))
+		expectedIds += spare
+		expectedValue += spare * Rarity.Info[(ItemDatabase.get(id) :: ItemDatabase.Item).Rarity].SellValue
+	end
+	expect("Sell All covers exactly the spare copies, at the rarity sell values", #results.SellIds == expectedIds and results.SellValue == expectedValue)
+	local sold = Economy.sellItems(player, results.SellIds, { Now = viewNow, Rng = rngC.next })
+	expect("The server accepts the client's Sell All list and pays the previewed amount", (#results.SellIds == 0 or sold.ok) and (#results.SellIds == 0 or sold.CoinsGained == results.SellValue))
+	local starterOnly = CasesView.results({ { ItemId = "skin_midnight_driver", Rarity = "Common", IsNew = false } }, ProfileTemplate.new(0))
+	expect("A starter item is never offered for sale", #starterOnly.SellIds == 0 and starterOnly.SellValue == 0)
+	local noItem = CasesView.results({ { ItemId = "ghost", Rarity = "Common", IsNew = false } }, ProfileTemplate.new(0))
+	expect("Unknown drops are skipped safely", #noItem.Cards == 0)
+
+	-- Roulette strip
+	local final = "skin_nebula_driver"
+	local strip = CasesView.strip("club_skins_case", final, 40, 33, 1234)
+	local stripOk = #strip == 40 and strip[33] == final
+	for i, id in strip do
+		local item = ItemDatabase.get(id)
+		if item == nil or (i ~= 33 and item.Category ~= "ClubSkin") then
+			stripOk = false
+		end
+	end
+	local again = CasesView.strip("club_skins_case", final, 40, 33, 1234)
+	local sameStrip = true
+	for i, id in strip do
+		if again[i] ~= id then
+			sameStrip = false
+		end
+	end
+	local common = 0
+	for i, id in strip do
+		if i ~= 33 and (ItemDatabase.get(id) :: ItemDatabase.Item).Rarity == "Common" then
+			common += 1
+		end
+	end
+	expect("Roulette strip: right length, real item at the stop index, only the case's items, deterministic", stripOk and sameStrip)
+	expect("Roulette filler mostly looks like the real odds (commons are the biggest group)", common >= 8)
+end
+
+-- Trade-up view ----------------------------------------------------------------------------------------
+do
+	local profile = ProfileTemplate.new(0)
+	ProfileOps.grantItem(profile, "skin_crimson_driver", 6) -- Rare skins
+	ProfileOps.grantItem(profile, "skin_ocean_iron", 2) -- Rare skins, another slot
+	ProfileOps.grantItem(profile, "skin_slate_wood", 1) -- Common skin
+	ProfileOps.grantItem(profile, "skin_nebula_driver", 3) -- Mythical (can't trade up)
+	ProfileOps.grantItem(profile, "swing_windup", 5) -- Rare animation
+	ProfileOps.equipItem(profile, "skin_crimson_driver") -- one copy is locked in
+	local inventory = TradeUpView.inventory(profile, {})
+	local byId: { [string]: TradeUpView.Entry } = {}
+	local sorted = true
+	for i, entry in inventory do
+		byId[entry.ItemId] = entry
+		if i > 1 and Rarity.Info[inventory[i - 1].Rarity].Tier < Rarity.Info[entry.Rarity].Tier then
+			sorted = false
+		end
+	end
+	expect("Inventory: spare copies only (equipped copy held back), no Mythical, no starters, highest rarity first", byId.skin_crimson_driver.Spare == 5 and byId.skin_nebula_driver == nil and byId.skin_midnight_driver == nil and sorted)
+
+	local sel: { string } = {}
+	local okAdd = TradeUpView.canAdd(profile, sel, "skin_crimson_driver")
+	sel = TradeUpView.add(profile, sel, "skin_crimson_driver")
+	local _, whyRarity = TradeUpView.canAdd(profile, sel, "skin_slate_wood")
+	local _, whyCategory = TradeUpView.canAdd(profile, sel, "swing_windup")
+	local _, whyMythic = TradeUpView.canAdd(profile, {}, "skin_nebula_driver")
+	local _, whyUnknown = TradeUpView.canAdd(profile, sel, "ghost")
+	expect("canAdd: first pick ok; other rarity, other category, Mythical and unknown ids are refused with reasons", okAdd and whyRarity == "Add Rare items only" and string.find(whyCategory or "", "one item type") ~= nil and string.find(whyMythic or "", "Mythical") ~= nil and whyUnknown == "Unknown item")
+	for _ = 1, 4 do
+		sel = TradeUpView.add(profile, sel, "skin_crimson_driver")
+	end
+	expect("Five spare copies fill the contract", #sel == 5)
+	local _, whyFull = TradeUpView.canAdd(profile, sel, "skin_crimson_driver")
+	local overfilled = TradeUpView.add(profile, sel, "skin_crimson_driver")
+	expect("A full contract refuses more and add() leaves it unchanged", whyFull == "The contract is full" and #overfilled == 5)
+	local noSpare = { "skin_ocean_iron", "skin_ocean_iron" }
+	local _, whySpare = TradeUpView.canAdd(profile, noSpare, "skin_ocean_iron")
+	expect("You can't add more copies than you have spare", whySpare == "The contract is full" or whySpare == "No spare copies left")
+	local trimmed = TradeUpView.remove(sel, 5)
+	expect("remove() returns a new, shorter selection; bad indexes change nothing", #trimmed == 4 and #sel == 5 and #TradeUpView.remove(sel, 9) == 5 and #TradeUpView.remove(sel, 0) == 5)
+	local empty = TradeUpView.state({})
+	local partial = TradeUpView.state({ "skin_crimson_driver", "skin_crimson_driver" })
+	local ready = TradeUpView.state(sel)
+	expect("State: empty prompt, partial progress with remaining count, ready summary naming the next rarity", not empty.Valid and string.find(empty.Message, "Pick 5") ~= nil and not partial.Valid and string.find(partial.Message, "2 / 5") ~= nil and string.find(partial.Message, "add 3 more Rare items") ~= nil and ready.Valid and ready.NextRarity == "Unique" and string.find(ready.Message, "1 Unique") ~= nil)
+
+	-- The UI's notion of "valid" must match the server's: every selection the view calls valid
+	-- must be accepted by Economy.tradeUp, for every tradable rarity.
+	local agree = true
+	local tested = 0
+	local starters: { [string]: string } = { Common = "skin_slate_driver", Uncommon = "skin_fairway_driver", Rare = "skin_crimson_driver", Unique = "skin_volt_driver", Legendary = "skin_gold_rush_driver" }
+	for _, id in starters do
+		local p = ProfileTemplate.new(0)
+		ProfileOps.grantItem(p, id, 6)
+		ProfileOps.equipItem(p, id)
+		local pick: { string } = {}
+		for _ = 1, 5 do
+			pick = TradeUpView.add(p, pick, id)
+		end
+		local viewValid = TradeUpView.state(pick).Valid
+		local serverReply = Economy.tradeUp(p, pick, { Now = viewNow, Rng = Prng.new(5).next })
+		tested += 1
+		if viewValid ~= serverReply.ok then
+			agree = false
+		end
+	end
+	expect(`UI trade-up validity matches the server for all {tested} tradable rarities`, agree and tested == 5)
+	-- ...and the view must refuse exactly what the server refuses (equipped copy).
+	local p2 = ProfileTemplate.new(0)
+	ProfileOps.grantItem(p2, "skin_crimson_driver", 5)
+	ProfileOps.equipItem(p2, "skin_crimson_driver")
+	local greedy: { string } = {}
+	for _ = 1, 5 do
+		greedy = TradeUpView.add(p2, greedy, "skin_crimson_driver")
+	end
+	expect("With the equipped copy held back, the view only lets you add 4 (the server would refuse 5)", #greedy == 4 and not TradeUpView.state(greedy).Valid and not Economy.tradeUp(p2, { "skin_crimson_driver", "skin_crimson_driver", "skin_crimson_driver", "skin_crimson_driver", "skin_crimson_driver" }, { Now = viewNow, Rng = Prng.new(1).next }).ok)
+end
+
+-- Mode view ---------------------------------------------------------------------------------------------
+do
+	local profile = ProfileTemplate.new(0)
+	profile.Coins = 600
+	local leagues = ModeView.leagues(profile)
+	expect("Four leagues in order with fee / payout text", #leagues == 4 and leagues[1].Id == "Rookie" and leagues[4].Id == "Champion" and leagues[4].FeeText == "10,000" and leagues[4].PayoutText == "25,000")
+	expect("Affordability and shortfall follow the balance (600 coins: Rookie + Amateur yes, Pro no)", leagues[1].CanAfford and leagues[2].CanAfford and not leagues[3].CanAfford and leagues[3].Shortfall == 1900 and leagues[1].Shortfall == 0)
+	local bots = ModeView.bots()
+	expect("Three bot levels with rising OVR", #bots == 3 and bots[1].Difficulty == "Easy" and bots[3].Difficulty == "Hard" and bots[1].Ovr < bots[2].Ovr and bots[2].Ovr < bots[3].Ovr and bots[1].Blurb ~= "")
+	expect("Queue text shows the wait", ModeView.queueText(75) == "SEARCHING FOR AN OPPONENT  1:15")
+end
+
+-- Lobby layout ----------------------------------------------------------------------------------------------
+print("-- lobby layout")
+do
+	local layout = LobbyLayout.build()
+	local finite, uniqueNames, names = true, true, {}
+	for _, part in layout.Parts do
+		for _, v in { part.X, part.Y, part.Z, part.SX, part.SY, part.SZ, part.YawDeg } do
+			if v ~= v or math.abs(v) == math.huge then
+				finite = false
+			end
+		end
+		if part.SX <= 0 or part.SY <= 0 or part.SZ <= 0 or part.SX > 2048 or part.SZ > 2048 then
+			finite = false
+		end
+		if names[part.Name] then
+			uniqueNames = false
+		end
+		names[part.Name] = true
+	end
+	expect("Lobby parts are finite, sized within limits, and uniquely named", finite and uniqueNames and #layout.Parts > 100 and #layout.Parts < 800)
+	-- Signs face the plaza centre (0, 40): front = (-sin yaw, -cos yaw).
+	local facing = true
+	for _, sign in layout.Signs do
+		local yaw = math.rad(sign.YawDeg)
+		local frontX, frontZ = -math.sin(yaw), -math.cos(yaw)
+		if frontX * (0 - sign.X) + frontZ * (40 - sign.Z) <= 0 then
+			facing = false
+		end
+	end
+	expect("Every sign's front face looks toward the plaza", facing and #layout.Signs == 2 and layout.Signs[1].Lines[1] == "PLAY" and layout.Signs[1].Lines[4] == "CUSTOMIZE" and layout.Signs[2].Lines[1] == "THE LINKS")
+	-- The spawn must be standing room: above the ground, not inside any solid part.
+	local spawn = layout.Spawn
+	local blocked = false
+	for _, part in layout.Parts do
+		if part.CanCollide and part.Shape == "Block" and part.Name ~= "Ground" and math.abs(part.YawDeg) % 90 < 1e-6 then
+			local yawQuarter = math.floor(math.abs(part.YawDeg) / 90 + 0.5) % 2 == 1
+			local halfX, halfZ = (if yawQuarter then part.SZ else part.SX) / 2, (if yawQuarter then part.SX else part.SZ) / 2
+			if math.abs(spawn.X - part.X) <= halfX and math.abs(spawn.Z - part.Z) <= halfZ and spawn.Y >= part.Y - part.SY / 2 and spawn.Y <= part.Y + part.SY / 2 + 6 then
+				blocked = true
+			end
+		end
+	end
+	expect("The spawn point is standing room above the plaza, clear of solid parts", not blocked and spawn.Y > 0 and math.sqrt(spawn.X ^ 2 + (spawn.Z - 40) ^ 2) < LobbyLayout.PLAZA_RADIUS)
+	local lamps = 0
+	for _, part in layout.Parts do
+		if string.sub(part.Name, 1, 9) == "LampGlobe" then
+			lamps += 1
+		end
+	end
+	expect("Each lamp globe has a real light", lamps == #layout.Lights and lamps == 8)
+	local treesClear = true
+	for _, part in layout.Parts do
+		if string.sub(part.Name, 1, 9) == "TreeTrunk" then
+			if (part.Z < -70 and math.abs(part.X) < 110) or math.sqrt((part.X - 150) ^ 2 + (part.Z - 70) ^ 2) < 45 then
+				treesClear = false
+			end
+		end
+	end
+	expect("Trees keep clear of the clubhouse frontage and the practice green", treesClear)
+	local again = LobbyLayout.build()
+	local same = #again.Parts == #layout.Parts
+	for i, part in layout.Parts do
+		if same and (again.Parts[i].X ~= part.X or again.Parts[i].Name ~= part.Name) then
+			same = false
+		end
+	end
+	expect("The lobby is built identically every time", same)
+	local inBounds = true
+	for _, part in layout.Parts do
+		if math.abs(part.X) > 460 or math.abs(part.Z) > 460 then
+			inBounds = false
+		end
+	end
+	expect("Everything sits on the ground plate", inBounds)
 end
 
 for _, caseId in CaseDatabase.Order do

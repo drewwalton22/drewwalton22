@@ -210,6 +210,7 @@ function Economy.buyShopItem(data: ProfileData, itemId: any, ctx: Context): Resu
 			data.Shop = { Rotation = index, Purchased = {} } -- new day: forget yesterday's
 		end
 		data.Shop.Purchased[item.Id] = true
+		data.Stats.ShopPurchases += 1
 		return true, nil
 	end)
 	if not ok then
@@ -362,6 +363,7 @@ function Economy.upgradeClub(data: ProfileData, clubId: any, stat: any): Result
 	if not ok then
 		return fail(reason or "failed")
 	end
+	data.Stats.ClubUpgrades += 1
 	return { ok = true, NewLevel = newLevel, Cost = before - data.Coins }
 end
 

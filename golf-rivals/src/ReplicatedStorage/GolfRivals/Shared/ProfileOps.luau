@@ -86,6 +86,12 @@ function ProfileOps.refund(data: ProfileData, currency: Types.CurrencyId, amount
 	return true, nil
 end
 
+-- Hand over a reward (quest payout) without counting it as earnings, so rewards
+-- can't feed "earn N coins" quests in a loop.
+function ProfileOps.grant(data: ProfileData, currency: Types.CurrencyId, amount: number): (boolean, string?)
+	return ProfileOps.refund(data, currency, amount)
+end
+
 function ProfileOps.spend(data: ProfileData, price: Types.Price): (boolean, string?)
 	if not isPositiveInteger(price.Amount) then
 		return false, "bad_amount"

@@ -9,7 +9,7 @@
 	  3. Player profiles (session-locked DataStore saves, autosave, GetProfile remote)
 	  4. Economy service: shop rotation, cases, sell, trade-up, upgrades, equip
 	  5. Match service: ranked queues, AI bots, match orchestration
-	  6. Quests
+	  6. Quests, leaderboard, and the lobby world
 
 	If validation fails the error aborts this script on purpose: a server with
 	broken economy data must not accept players.
@@ -27,6 +27,9 @@ local Remotes = require(Shared:WaitForChild("Remotes"))
 local ProfileService = require(script.Parent:WaitForChild("ProfileService"))
 local EconomyService = require(script.Parent:WaitForChild("EconomyService"))
 local MatchService = require(script.Parent:WaitForChild("MatchService"))
+local QuestService = require(script.Parent:WaitForChild("QuestService"))
+local LeaderboardService = require(script.Parent:WaitForChild("LeaderboardService"))
+local LobbyBuilder = require(script.Parent:WaitForChild("LobbyBuilder"))
 
 Logger.info("Server", "Booting Golf Rivals server...")
 Logger.info("Server", "Step 1: validating item / club / case databases (economy exploit checks included)")
@@ -54,4 +57,9 @@ EconomyService.start()
 Logger.info("Server", "Step 5: starting match service (ranked queues, bot practice, turn loop)")
 MatchService.start()
 
-Logger.info("Server", "Next build step: quests, then the lobby/HUD UI, camera and telemetry overlay.")
+Logger.info("Server", "Step 6: quests, leaderboard and the lobby world")
+QuestService.start()
+LeaderboardService.start()
+LobbyBuilder.build()
+
+Logger.info("Server", "Server ready.")

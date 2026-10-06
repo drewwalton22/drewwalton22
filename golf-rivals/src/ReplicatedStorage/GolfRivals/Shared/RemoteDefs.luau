@@ -198,17 +198,24 @@ RemoteDefs.List = {
 		Limit = UI_ACTION,
 	},
 	{
+		Name = "GetQuests",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "() -> { ok, Periods = { {Period, Quests = { {Id, Name, Progress, Target, Complete, Claimed, Reward} }, ResetsAt} }, Now } Daily / Weekly / Lifetime quests with live progress.",
+		Limit = UI_QUERY,
+	},
+	{
 		Name = "ClaimQuest",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(questId: string) -> { ok, reason? } Claim a completed quest's coin/gem reward once.",
+		Doc = "(questId: string) -> { ok, reason?, Reward? } Claim a completed quest's coin/gem reward once.",
 		Limit = UI_ACTION,
 	},
 	{
 		Name = "GetLeaderboard",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "() -> { {rank, name, ovr}... } Top players for the lobby board.",
+		Doc = "() -> { ok, Entries = { {Rank, UserId, Name, Ovr} }, YourOvr } Top players by OVR for the lobby board.",
 		Limit = UI_QUERY,
 	},
 	{

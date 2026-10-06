@@ -237,6 +237,15 @@ function ProfileService.get(player: Player): ProfileTemplate.ProfileData?
 end
 
 -- Yields until the player's profile is loaded; nil if they leave or time runs out.
+-- Every player on this server whose profile is loaded.
+function ProfileService.online(): { { Player: Player, Data: ProfileTemplate.ProfileData } }
+	local list: { { Player: Player, Data: ProfileTemplate.ProfileData } } = {}
+	for player, profile in profiles do
+		table.insert(list, { Player = player, Data = profile.Data })
+	end
+	return list
+end
+
 function ProfileService.waitFor(player: Player, timeoutSeconds: number?): ProfileTemplate.ProfileData?
 	local deadline = os.clock() + (timeoutSeconds or 30)
 	while os.clock() < deadline do

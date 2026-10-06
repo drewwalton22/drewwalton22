@@ -157,6 +157,10 @@ local function flush(match: Match)
 				if data.HoleInOne then
 					stats.HolesInOne += 1
 				end
+				-- A fairway hit: the tee shot of a par 4/5 that finishes on the fairway.
+				if data.StartLie == "Tee" and data.EndLie == "Fairway" and not data.Penalty and match.Engine.snapshot(os.clock()).Hole.Par >= 4 then
+					stats.FairwaysHit += 1
+				end
 				-- Longest drive: a real driver shot that finished in play.
 				if data.ClubLabel == "D" and not data.Penalty and data.Telemetry.CarryYds > stats.LongestDriveYds then
 					stats.LongestDriveYds = data.Telemetry.CarryYds
@@ -235,7 +239,7 @@ local function createMatch(mode: MatchSettlement.Mode, humans: { Player }, leagu
 			StatsFor = frozenBag(data),
 			Cosmetics = table.clone(data.EquippedItems),
 		})
-		playStats[idOf(player)] = { HolesPlayed = 0, HolesInOne = 0, LongestDriveYds = 0 }
+		playStats[idOf(player)] = { HolesPlayed = 0, HolesInOne = 0, LongestDriveYds = 0, FairwaysHit = 0 }
 	end
 
 	local botId: string? = nil

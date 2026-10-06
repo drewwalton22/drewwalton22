@@ -38,6 +38,7 @@ export type Outcome = {
 	Winnings: number, -- coins earned (counts toward TotalCoinsEarned)
 	Refund: number, -- coins returned (entry fee on a draw)
 	Ranked: boolean,
+	LeagueId: string?, -- the league played (ranked only)
 }
 
 -- What the engine/service observed for one player, beyond win/loss.
@@ -45,6 +46,7 @@ export type PlayStats = {
 	HolesPlayed: number,
 	HolesInOne: number,
 	LongestDriveYds: number,
+	FairwaysHit: number,
 }
 
 local MatchSettlement = {}
@@ -63,6 +65,7 @@ function MatchSettlement.settle(result: MatchEngine.MatchResult, mode: Mode, lea
 			Winnings = 0,
 			Refund = 0,
 			Ranked = ranked,
+			LeagueId = if ranked and league then league.Id else nil,
 		}
 		if ranked and league then
 			if won then
@@ -83,10 +86,17 @@ function MatchSettlement.applyToProfile(data: ProfileTemplate.ProfileData, outco
 	stats.MatchesPlayed += 1
 	stats.HolesPlayed += play.HolesPlayed
 	stats.HolesInOne += play.HolesInOne
+	stats.FairwaysHit += play.FairwaysHit
 	stats.LongestDriveYds = math.max(stats.LongestDriveYds, math.floor(play.LongestDriveYds))
 	if outcome.Ranked then
 		if outcome.Won then
 			stats.Wins += 1
+			-- Per-league win counters ("Win 3 matches in the Pro League" quests).
+			local key = (outcome.LeagueId or "") .. "Wins"
+			local counters = stats :: any
+			if type(counters[key]) == "number" then
+				counters[key] += 1
+			end
 		elseif outcome.Lost then
 			stats.Losses += 1
 		end
