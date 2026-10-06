@@ -34,6 +34,26 @@ Config.Economy = {
 	StartingGems = 0,
 	-- Cap on cases opened in one request (the "Open x3" UI + anti-spam).
 	MaxCasesPerOpen = 10,
+	-- Hard caps keep balances exact (doubles are exact below 2^53) and bound
+	-- the damage of any future duplication bug.
+	MaxCoins = 1e12,
+	MaxGems = 1e9,
+}
+
+-- PLAYER DATA (DataStore) -----------------------------------------------
+-- Session locking: a server writes its JobId + a timestamp into the record when
+-- it loads a profile and refreshes the timestamp on every autosave. Another
+-- server sees a lock younger than LockTimeoutSeconds and refuses to load (the
+-- player is retried, then told to rejoin). A lock older than the timeout is
+-- treated as a crashed server and may be taken over.
+Config.Data = {
+	StoreName = "GolfRivalsProfiles",
+	KeyPrefix = "Player_",
+	AutosaveSeconds = 60, -- must be well below LockTimeoutSeconds
+	LockTimeoutSeconds = 600,
+	LoadAttempts = 6, -- tries when the profile is locked or the DataStore errors
+	LoadRetrySeconds = 3,
+	ReleaseAttempts = 3,
 }
 
 -- DAILY ROTATING SHOP ---------------------------------------------------

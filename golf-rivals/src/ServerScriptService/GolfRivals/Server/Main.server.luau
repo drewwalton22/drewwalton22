@@ -1,11 +1,12 @@
 --!strict
+-- ROBLOX-ONLY: entry script (game services); syntax-checked only by tools/check.sh.
 --[[
 	Main.server.luau  (ServerScriptService.GolfRivals.Server)
 
 	Server entry point. Boot order (each step is added as its system is built):
 	  1. Validate the static databases.
 	  2. Create the network remotes (Remotes.init).
-	  3. DataStore + player profiles
+	  3. Player profiles (session-locked DataStore saves, autosave, GetProfile remote)
 	  4. Economy: shop rotation, cases, trade-up, upgrades
 	  5. Matchmaking, AI bots, match orchestration
 	  6. Quests
@@ -23,6 +24,7 @@ local ItemDatabase = require(Shared:WaitForChild("ItemDatabase"))
 local ClubDatabase = require(Shared:WaitForChild("ClubDatabase"))
 local CaseDatabase = require(Shared:WaitForChild("CaseDatabase"))
 local Remotes = require(Shared:WaitForChild("Remotes"))
+local ProfileService = require(script.Parent:WaitForChild("ProfileService"))
 
 Logger.info("Server", "Booting Golf Rivals server...")
 Logger.info("Server", "Step 1: validating item / club / case databases (economy exploit checks included)")
@@ -41,4 +43,7 @@ Logger.info(
 Logger.info("Server", "Step 2: creating network remotes (all client->server calls are rate limited + validated)")
 Remotes.init()
 
-Logger.info("Server", "Next build step: swing physics (3-click swing, wind, slope, lie).")
+Logger.info("Server", "Step 3: starting player profile service (session-locked DataStore saves)")
+ProfileService.start()
+
+Logger.info("Server", "Next build step: economy services (shop rotation, cases, trade-up, upgrades).")

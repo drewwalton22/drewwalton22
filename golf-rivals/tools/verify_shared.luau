@@ -15,6 +15,11 @@ local RateLimiter = require("./RateLimiter")
 local ShotPhysics = require("./ShotPhysics")
 local SwingMath = require("./SwingMath")
 local SwingStateMachine = require("./SwingStateMachine")
+local TableUtil = require("./TableUtil")
+local ProfileTemplate = require("./ProfileTemplate")
+local ProfileOps = require("./ProfileOps")
+local ProfileStore = require("./ProfileStore")
+local MemoryBackend = require("./MemoryBackend")
 
 local Types = require("./Types")
 local P_YD = Config.Physics.YardsToMeters -- metres per yard
@@ -415,6 +420,354 @@ do
 
 	-- Apex heights for the telemetry overlay.
 	print(`  apex heights (ft): D {math.floor(straight.ApexFeet)} | 7i {math.floor(shot("7i", baseStats, 100, 0).Result.ApexFeet)} | LW {math.floor(shot("LW", baseStats, 100, 0).Result.ApexFeet)}`)
+end
+
+
+-- Profile template / repair ---------------------------------------------------
+print("-- profile template")
+do
+	local fresh = ProfileTemplate.new(1000)
+	expect("New profile: starting coins/gems from Config", fresh.Coins == Config.Economy.StartingCoins and fresh.Gems == Config.Economy.StartingGems)
+	local everySlotEquipped = true
+	for _, category in ItemDatabase.Categories do
+		for _, slot in ItemDatabase.CategorySlots[category] do
+			local equipped = fresh.EquippedItems[slot]
+			local item = ItemDatabase.get(equipped)
+			if not (item and item.Slot == slot and fresh.OwnedItems[item.Id] == 1) then
+				everySlotEquipped = false
+			end
+		end
+	end
+	expect("New profile: every cosmetic slot has an owned, equipped default", everySlotEquipped)
+	local bagFull = true
+	for _, slot in ClubDatabase.BagSlots do
+		local club = ClubDatabase.get(fresh.EquippedClubs[slot.Label])
+		if not (club and club.SlotLabel == slot.Label and fresh.OwnedClubs[club.Id]) then
+			bagFull = false
+		end
+	end
+	expect("New profile: all 14 bag slots hold an owned starter club", bagFull)
+	local prepared = ProfileTemplate.prepare(TableUtil.deepCopy(fresh), 2000)
+	expect("A fresh profile survives prepare() unchanged", prepared ~= nil and prepared.Coins == fresh.Coins and prepared.Meta.CreatedAt == 1000)
+
+	-- Repair: garbage in every field.
+	local dirty: any = TableUtil.deepCopy(fresh)
+	dirty.Coins = -50
+	dirty.Gems = 0 / 0
+	dirty.OwnedItems["skin_that_was_removed"] = 3
+	dirty.OwnedItems["skin_crimson_driver"] = 2.9
+	dirty.OwnedItems["skin_nebula_driver"] = -1
+	dirty.EquippedItems["Driver"] = "skin_gold_rush_driver" -- not owned
+	dirty.EquippedItems["Iron"] = "skin_crimson_driver" -- wrong slot
+	dirty.EquippedClubs["D"] = "ghost_club"
+	dirty.OwnedClubs["ghost_club"] = true
+	dirty.ClubUpgrades["tatermade_swift_d"] = { Distance = 99, Accuracy = -4, Forgiveness = "x" }
+	dirty.ClubUpgrades["pong_gale_d"] = { Distance = 3, Accuracy = 3, Forgiveness = 3 } -- not owned
+	dirty.Stats = nil
+	local repaired = ProfileTemplate.prepare(dirty, 3000)
+	expect("prepare() repairs a badly damaged profile instead of rejecting it", repaired ~= nil)
+	if repaired then
+		expect("Repair: negative/NaN balances become 0", repaired.Coins == 0 and repaired.Gems == 0)
+		expect("Repair: removed items dropped, fractional counts floored, negatives dropped", repaired.OwnedItems["skin_that_was_removed"] == nil and repaired.OwnedItems["skin_crimson_driver"] == 2 and repaired.OwnedItems["skin_nebula_driver"] == nil)
+		expect("Repair: unowned / wrong-slot equips reset to defaults", repaired.EquippedItems["Driver"] == "skin_midnight_driver" and repaired.EquippedItems["Iron"] == "skin_midnight_iron")
+		expect("Repair: unknown clubs removed, bag refilled with starters", repaired.OwnedClubs["ghost_club"] == nil and repaired.EquippedClubs["D"] == "tatermade_swift_d")
+		local lv = repaired.ClubUpgrades["tatermade_swift_d"]
+		expect("Repair: upgrade levels clamped to 0..Max, unowned club upgrades dropped", lv ~= nil and lv.Distance == Config.Clubs.MaxUpgradeLevel and lv.Accuracy == 0 and lv.Forgiveness == 0 and repaired.ClubUpgrades["pong_gale_d"] == nil)
+		expect("Repair: missing Stats section rebuilt", repaired.Stats.Wins == 0 and repaired.Stats.CasesOpened == 0)
+	end
+
+	local _, reasonText = ProfileTemplate.prepare("not a table", 0)
+	local _, reasonNoVersion = ProfileTemplate.prepare({ Coins = 5 }, 0)
+	local _, reasonNew = ProfileTemplate.prepare({ SchemaVersion = ProfileTemplate.CURRENT_VERSION + 1 }, 0)
+	expect("Non-table / versionless data is 'corrupt'; newer schema is 'too_new'", reasonText == "corrupt" and reasonNoVersion == "corrupt" and reasonNew == "too_new")
+
+	-- Migrations run in order, in place, and fill fields the new version added.
+	local old: any = TableUtil.deepCopy(fresh)
+	old.SchemaVersion = 1
+	local ran: { number } = {}
+	local migrated = ProfileTemplate.prepare(old, 0, {
+		CurrentVersion = 3,
+		Migrations = {
+			[1] = function(d: any)
+				table.insert(ran, 1)
+				d.Coins += 100
+			end,
+			[2] = function(d: any)
+				table.insert(ran, 2)
+				d.Gems += 7
+			end,
+		},
+	})
+	expect("Migrations 1->2->3 run in order and set the new version", migrated ~= nil and #ran == 2 and ran[1] == 1 and ran[2] == 2 and migrated.SchemaVersion == 3 and migrated.Coins == fresh.Coins + 100 and migrated.Gems == fresh.Gems + 7)
+	local noPath = ProfileTemplate.prepare(TableUtil.deepCopy(fresh), 0, { CurrentVersion = 3, Migrations = {} })
+	expect("A missing migration step is refused, not guessed", noPath == nil)
+
+	local view = ProfileTemplate.clientView(fresh)
+	expect("clientView is a detached copy without Meta", view.Meta == nil and view.Coins == fresh.Coins and view ~= (fresh :: any) and fresh.Meta.CreatedAt == 1000)
+end
+
+-- Profile operations ----------------------------------------------------------
+print("-- profile ops")
+do
+	local d = ProfileTemplate.new(0)
+	local coins0 = d.Coins
+
+	-- Currency
+	expect("add coins", ProfileOps.add(d, "Coins", 500) and d.Coins == coins0 + 500 and d.Stats.TotalCoinsEarned == 500)
+	local okSpend = ProfileOps.spend(d, { Currency = "Coins", Amount = 200 })
+	expect("spend coins", okSpend and d.Coins == coins0 + 300)
+	local _, whyBroke = ProfileOps.spend(d, { Currency = "Gems", Amount = 1 })
+	expect("spend with insufficient funds is refused and changes nothing", whyBroke == "insufficient_funds" and d.Gems == 0)
+	local before = d.Coins
+	local badAmounts = { -5, 0, 1.5, 0 / 0, math.huge }
+	local allBad = true
+	for _, amount in badAmounts do
+		local addOk = ProfileOps.add(d, "Coins", amount)
+		local spendOk = ProfileOps.spend(d, { Currency = "Coins", Amount = amount })
+		if addOk or spendOk then
+			allBad = false
+		end
+	end
+	expect("Negative / zero / fractional / NaN / infinite amounts are all rejected", allBad and d.Coins == before)
+	ProfileOps.add(d, "Coins", Config.Economy.MaxCoins * 2)
+	expect("Balances clamp at MaxCoins", d.Coins == Config.Economy.MaxCoins)
+	d.Coins = coins0
+
+	-- Items: stacks, reserved copies, equip
+	expect("grantItem stacks duplicates", ProfileOps.grantItem(d, "skin_crimson_driver", 3) and ProfileOps.ownedCount(d, "skin_crimson_driver") == 3)
+	local _, whyUnknown = ProfileOps.grantItem(d, "nope", 1)
+	local _, whyCount = ProfileOps.grantItem(d, "skin_crimson_driver", 0)
+	expect("grantItem rejects unknown ids and bad counts", whyUnknown == "unknown_item" and whyCount == "bad_count")
+	expect("Starter item: 1 copy is reserved, so nothing is spare", ProfileOps.reservedCount(d, "skin_midnight_driver") == 1 and ProfileOps.spareCount(d, "skin_midnight_driver") == 0)
+	local _, whyStarter = ProfileOps.removeItem(d, "skin_midnight_driver", 1)
+	expect("Can't sell the only copy of a starter item", whyStarter == "insufficient_spare" and ProfileOps.ownedCount(d, "skin_midnight_driver") == 1)
+	expect("Unequipped duplicates are all spare", ProfileOps.spareCount(d, "skin_crimson_driver") == 3)
+	expect("equipItem requires ownership", select(2, ProfileOps.equipItem(d, "skin_gold_rush_driver")) == "not_owned")
+	expect("equipItem puts the item in its slot", ProfileOps.equipItem(d, "skin_crimson_driver") and d.EquippedItems["Driver"] == "skin_crimson_driver")
+	expect("Equipped item keeps one reserved copy (3 owned -> 2 spare)", ProfileOps.spareCount(d, "skin_crimson_driver") == 2)
+	local _, whyTooMany = ProfileOps.removeItem(d, "skin_crimson_driver", 3)
+	expect("Can't remove the equipped copy", whyTooMany == "insufficient_spare" and ProfileOps.ownedCount(d, "skin_crimson_driver") == 3)
+	expect("removeItem of spare copies works and deletes empty stacks", ProfileOps.removeItem(d, "skin_crimson_driver", 2) and ProfileOps.ownedCount(d, "skin_crimson_driver") == 1)
+	local _, whyNotOwned = ProfileOps.removeItem(d, "skin_gold_rush_driver", 1)
+	expect("removeItem of an unowned item is refused", whyNotOwned == "not_owned")
+	ProfileOps.equipItem(d, "skin_midnight_driver")
+	expect("After switching away, the old skin's last copy becomes spare", ProfileOps.removeItem(d, "skin_crimson_driver", 1) and d.OwnedItems["skin_crimson_driver"] == nil)
+
+	-- Clubs
+	local gale = "pong_gale_d"
+	expect("Can't equip an unowned club", select(2, ProfileOps.equipClub(d, gale)) == "not_owned")
+	local _, whyBrokeClub = ProfileOps.buyClub(d, gale)
+	expect("Can't buy a club you can't afford (nothing taken)", whyBrokeClub == "insufficient_funds" and d.Coins == coins0 and not d.OwnedClubs[gale])
+	d.Coins = 20000
+	expect("buyClub charges the price and grants the club", ProfileOps.buyClub(d, gale) and d.Coins == 20000 - 12000 and d.OwnedClubs[gale] == true)
+	expect("Can't buy a club twice", select(2, ProfileOps.buyClub(d, gale)) == "already_owned")
+	expect("Starter clubs aren't for sale", select(2, ProfileOps.buyClub(d, "tatermade_swift_3w")) == "already_owned")
+	expect("equipClub fills the club's bag slot", ProfileOps.equipClub(d, gale) and d.EquippedClubs["D"] == gale)
+
+	-- Upgrades
+	d.Coins = 100000
+	local stats0 = ProfileOps.clubStats(d, gale) :: ClubDatabase.Stats
+	expect("Unupgraded stats equal base stats", stats0.Distance == 78 and stats0.Accuracy == 72 and stats0.Forgiveness == 75)
+	local ok1, _, lvl1 = ProfileOps.upgradeClub(d, gale, "Distance")
+	local afterFirst = d.Coins
+	expect("First upgrade costs 500 and gives +2 stat points", ok1 and lvl1 == 1 and afterFirst == 100000 - 500 and (ProfileOps.clubStats(d, gale) :: ClubDatabase.Stats).Distance == 80)
+	local ok2, _, lvl2 = ProfileOps.upgradeClub(d, gale, "Distance")
+	expect("Second upgrade costs 700", ok2 and lvl2 == 2 and d.Coins == afterFirst - 700)
+	expect("Other stats are untouched", (ProfileOps.clubStats(d, gale) :: ClubDatabase.Stats).Accuracy == 72)
+	expect("Unknown stat / unknown club / unowned club rejected", select(2, ProfileOps.upgradeClub(d, gale, "Power")) == "bad_stat" and select(2, ProfileOps.upgradeClub(d, "ghost", "Distance")) == "unknown_club" and select(2, ProfileOps.upgradeClub(d, "pong_gale_3w", "Distance")) == "not_owned")
+	local broke = ProfileTemplate.new(0)
+	broke.Coins = 100
+	local okBroke, whyBrokeUp = ProfileOps.upgradeClub(broke, "tatermade_swift_d", "Distance")
+	expect("Upgrade without enough coins is refused and free", not okBroke and whyBrokeUp == "insufficient_funds" and broke.Coins == 100 and broke.ClubUpgrades["tatermade_swift_d"] == nil)
+	-- Spend every coin and max a stat: cost sequence and the cap.
+	local rich = ProfileTemplate.new(0)
+	rich.Coins = 1e9
+	local paid, lastReason = 0, ""
+	for _ = 1, Config.Clubs.MaxUpgradeLevel + 2 do
+		local start = rich.Coins
+		local ok, why = ProfileOps.upgradeClub(rich, "tatermade_swift_d", "Distance")
+		if ok then
+			paid += start - rich.Coins
+		else
+			lastReason = why :: string
+			break
+		end
+	end
+	expect("Maxing one stat costs the full table (sum 27,350) then reports max_level", paid == 27350 and lastReason == "max_level")
+	expect("Upgrade levels are stored in the profile", rich.ClubUpgrades["tatermade_swift_d"].Distance == Config.Clubs.MaxUpgradeLevel)
+	-- StatCap: a 98-Distance club caps at 100 after one upgrade and then refuses.
+	local capped = ProfileTemplate.new(0)
+	capped.Coins = 1e6
+	ProfileOps.grantClub(capped, "callaway_phoenix_d")
+	local c1 = ProfileOps.upgradeClub(capped, "callaway_phoenix_d", "Distance")
+	local c2, whyCap = ProfileOps.upgradeClub(capped, "callaway_phoenix_d", "Distance")
+	expect("Stat caps at 100 and further upgrades are refused (stat_capped)", c1 and not c2 and whyCap == "stat_capped" and (ProfileOps.clubStats(capped, "callaway_phoenix_d") :: ClubDatabase.Stats).Distance == 100)
+
+	-- OVR
+	local starterOvr = ProfileOps.playerOvr(ProfileTemplate.new(0))
+	expect("Starter bag OVR is the starter line's OVR (60)", starterOvr == ClubDatabase.overall({ Distance = 55, Accuracy = 60, Forgiveness = 65 }))
+	local withDriver = ProfileTemplate.new(0)
+	withDriver.Coins = 1e6
+	ProfileOps.buyClub(withDriver, "tatermade_shadow_d")
+	ProfileOps.equipClub(withDriver, "tatermade_shadow_d")
+	expect("A better driver raises player OVR", ProfileOps.playerOvr(withDriver) > starterOvr)
+end
+
+-- Session-locked persistence ----------------------------------------------------
+print("-- profile store")
+do
+	local storeNow = 1000
+	local function clock(): number
+		return storeNow
+	end
+	local waits: { number } = {}
+	local function wait(seconds: number)
+		table.insert(waits, seconds)
+		storeNow += seconds -- time passes while "waiting"
+	end
+	local function storeFor(backend: MemoryBackend.MemoryBackend, jobId: string): ProfileStore.Store
+		return ProfileStore.new(backend, {
+			JobId = jobId, Clock = clock, Wait = wait,
+			LockTimeoutSeconds = 600, LoadAttempts = 3, RetrySeconds = 2, ReleaseAttempts = 3,
+		})
+	end
+
+	-- First load creates a profile and takes the lock.
+	local backend = MemoryBackend.new()
+	local serverA = storeFor(backend, "job-A")
+	local first = serverA.loadOnce("Player_1")
+	expect("First load creates a new profile", first.Status == "Loaded" and first.Profile ~= nil)
+	local profileA = first.Profile :: ProfileStore.Profile
+	local rec = backend.peek("Player_1") :: ProfileStore.StoredRecord
+	expect("First load writes the record with our lock", rec.Lock ~= nil and (rec.Lock :: ProfileStore.Lock).JobId == "job-A" and rec.Revision == 0)
+	expect("Session counter incremented on load", profileA.Data.Meta.Sessions == 1)
+
+	-- Edits only reach the store on save, as a detached snapshot.
+	ProfileOps.add(profileA.Data, "Coins", 777)
+	expect("Unsaved edits are not in the store yet", (backend.peek("Player_1") :: ProfileStore.StoredRecord).Data.Coins == Config.Economy.StartingCoins)
+	storeNow = 1100
+	expect("save() succeeds", profileA.save() == "Saved")
+	local saved = backend.peek("Player_1") :: ProfileStore.StoredRecord
+	expect("save() persists data, bumps revision, refreshes lock time", saved.Data.Coins == Config.Economy.StartingCoins + 777 and saved.Revision == 1 and (saved.Lock :: ProfileStore.Lock).Time == 1100)
+	ProfileOps.add(profileA.Data, "Coins", 1)
+	expect("Edits after save don't leak into the stored snapshot", (backend.peek("Player_1") :: ProfileStore.StoredRecord).Data.Coins == Config.Economy.StartingCoins + 777)
+
+	-- A second live server is locked out.
+	local serverB = storeFor(backend, "job-B")
+	storeNow = 1200
+	expect("Second server is refused while the lock is fresh", serverB.loadOnce("Player_1").Status == "Locked")
+	expect("Refused load wrote nothing and left our lock intact", (backend.peek("Player_1") :: ProfileStore.StoredRecord).Revision == 1 and ((backend.peek("Player_1") :: ProfileStore.StoredRecord).Lock :: ProfileStore.Lock).JobId == "job-A")
+	-- ...and after we release, it gets the final data.
+	expect("release() saves and unlocks", profileA.release() == "Saved" and not profileA.isActive())
+	expect("Released record has no lock", (backend.peek("Player_1") :: ProfileStore.StoredRecord).Lock == nil)
+	expect("save() after release is inert", profileA.save() == "Inactive")
+	local handoff = serverB.loadOnce("Player_1")
+	expect("Second server loads after release with all coins (starting + 777 + 1)", handoff.Status == "Loaded" and (handoff.Profile :: ProfileStore.Profile).Data.Coins == Config.Economy.StartingCoins + 778)
+
+	-- Same server reloading its own lock is fine (e.g. quick re-join to same server).
+	expect("Same server can re-acquire its own lock", serverB.loadOnce("Player_1").Status == "Loaded")
+
+	-- Lock takeover after timeout (crashed server), and the stale server can't clobber.
+	local crashedBackend = MemoryBackend.new()
+	local crashed = storeFor(crashedBackend, "job-X")
+	local crashedProfile = (crashed.loadOnce("Player_2")).Profile :: ProfileStore.Profile
+	ProfileOps.add(crashedProfile.Data, "Coins", 5000)
+	crashedProfile.save()
+	local rescuer = storeFor(crashedBackend, "job-Y")
+	storeNow += 599
+	expect("Lock younger than the timeout still blocks", rescuer.loadOnce("Player_2").Status == "Locked")
+	storeNow += 2
+	local taken = rescuer.loadOnce("Player_2")
+	expect("Lock older than the timeout is taken over", taken.Status == "Loaded")
+	ProfileOps.add((taken.Profile :: ProfileStore.Profile).Data, "Coins", 1)
+	expect("New owner saves fine", (taken.Profile :: ProfileStore.Profile).save() == "Saved")
+	local revBefore = (crashedBackend.peek("Player_2") :: ProfileStore.StoredRecord).Revision
+	ProfileOps.add(crashedProfile.Data, "Coins", 999999) -- the "crashed" server wakes up and tries to save
+	expect("Stale server's save is rejected as LostLock", crashedProfile.save() == "LostLock" and not crashedProfile.isActive())
+	local after = crashedBackend.peek("Player_2") :: ProfileStore.StoredRecord
+	expect("Stale server did NOT overwrite the new owner's data", after.Revision == revBefore and after.Data.Coins == Config.Economy.StartingCoins + 5001)
+	expect("A LostLock profile never writes again (even release)", crashedProfile.release() == "Inactive" and (crashedBackend.peek("Player_2") :: ProfileStore.StoredRecord).Revision == revBefore)
+
+	-- Backend failures & retries.
+	local flaky = MemoryBackend.new()
+	local flakyStore = storeFor(flaky, "job-F")
+	flaky.failNext(2)
+	waits = {}
+	local retried = flakyStore.load("Player_3")
+	expect("load() retries through 2 backend errors then succeeds", retried.Status == "Loaded" and flaky.calls() == 3 and #waits == 2 and waits[1] == 2)
+	flaky.failNext(10)
+	local gaveUp = flakyStore.load("Player_4")
+	expect("load() gives up with Error after LoadAttempts", gaveUp.Status == "Error" and gaveUp.Profile == nil)
+	flaky.failNext(0)
+	local p3 = retried.Profile :: ProfileStore.Profile
+	flaky.failNext(1)
+	expect("save() reports Error on backend failure but stays active", p3.save() == "Error" and p3.isActive())
+	expect("...and succeeds on the next attempt (autosave retry)", p3.save() == "Saved")
+	flaky.failNext(2)
+	expect("release() retries through errors and still unlocks", p3.release() == "Saved" and (flaky.peek("Player_3") :: ProfileStore.StoredRecord).Lock == nil)
+
+	-- load() waits out a lock that is released mid-retry.
+	local race = MemoryBackend.new()
+	local holder = storeFor(race, "job-H")
+	local heldProfile = (holder.loadOnce("Player_5")).Profile :: ProfileStore.Profile
+	local waiter = ProfileStore.new(race, {
+		JobId = "job-W", Clock = clock,
+		Wait = function(seconds: number)
+			storeNow += seconds
+			heldProfile.release() -- the old server finishes saving while the new one waits
+		end,
+		LockTimeoutSeconds = 600, LoadAttempts = 3, RetrySeconds = 2,
+	})
+	expect("load() succeeds once the previous server releases during the retry wait", waiter.load("Player_5").Status == "Loaded")
+	local stuck = storeFor(race, "job-Z").load("Player_5")
+	expect("load() reports Locked when the lock never clears", stuck.Status == "Locked")
+
+	-- Newer / corrupt data is never loaded or overwritten.
+	local futureBackend = MemoryBackend.new()
+	futureBackend.update("Player_6", function(_old: ProfileStore.StoredRecord?): ProfileStore.StoredRecord?
+		return { Data = { SchemaVersion = 99, Coins = 5, FutureField = "keep me" }, Lock = nil, Revision = 7 }
+	end)
+	local futureStore = storeFor(futureBackend, "job-N")
+	expect("Newer-schema data -> TooNew", futureStore.loadOnce("Player_6").Status == "TooNew")
+	local futureRec = futureBackend.peek("Player_6") :: ProfileStore.StoredRecord
+	expect("TooNew leaves the record untouched and unlocked", futureRec.Data.FutureField == "keep me" and futureRec.Lock == nil and futureRec.Revision == 7)
+	expect("TooNew is final, load() does not retry it", (function()
+		waits = {}
+		local result = futureStore.load("Player_6")
+		return result.Status == "TooNew" and #waits == 0
+	end)())
+	local junkBackend = MemoryBackend.new()
+	junkBackend.update("Player_7", function(_old: ProfileStore.StoredRecord?): ProfileStore.StoredRecord?
+		return { Data = "garbage", Lock = nil, Revision = 3 }
+	end)
+	local junkStore = storeFor(junkBackend, "job-J")
+	expect("Corrupt data -> Corrupt, record preserved and lock released", junkStore.loadOnce("Player_7").Status == "Corrupt" and (junkBackend.peek("Player_7") :: ProfileStore.StoredRecord).Data == "garbage" and (junkBackend.peek("Player_7") :: ProfileStore.StoredRecord).Lock == nil)
+
+	-- A damaged-but-recoverable stored profile is repaired on load and saved back repaired.
+	local damagedBackend = MemoryBackend.new()
+	damagedBackend.update("Player_8", function(_old: ProfileStore.StoredRecord?): ProfileStore.StoredRecord?
+		local d: any = ProfileTemplate.new(5)
+		d.Coins = -999
+		d.OwnedItems["removed_item"] = 4
+		return { Data = d, Lock = nil, Revision = 1 }
+	end)
+	local healed = storeFor(damagedBackend, "job-R").loadOnce("Player_8")
+	local healedProfile = healed.Profile :: ProfileStore.Profile
+	expect("Load repairs damaged data before handing it out", healed.Status == "Loaded" and healedProfile.Data.Coins == 0 and healedProfile.Data.OwnedItems["removed_item"] == nil)
+	healedProfile.release()
+	local healedRec = damagedBackend.peek("Player_8") :: ProfileStore.StoredRecord
+	expect("The repaired version is what gets saved back", healedRec.Data.Coins == 0 and healedRec.Data.OwnedItems["removed_item"] == nil)
+
+	-- End to end: a purchase survives release -> reload.
+	local e2e = MemoryBackend.new()
+	local s1 = storeFor(e2e, "job-1")
+	local pr = (s1.load("Player_9")).Profile :: ProfileStore.Profile
+	pr.Data.Coins = 50000
+	local bought = ProfileOps.buyClub(pr.Data, "titleless_tour_7i") and ProfileOps.equipClub(pr.Data, "titleless_tour_7i")
+	local upgraded = ProfileOps.upgradeClub(pr.Data, "titleless_tour_7i", "Accuracy")
+	pr.release()
+	local again = (storeFor(e2e, "job-2").load("Player_9")).Profile :: ProfileStore.Profile
+	expect("Purchase + equip + upgrade survive release and reload", bought and upgraded and again.Data.Coins == 50000 - 20000 - 500 and again.Data.EquippedClubs["7i"] == "titleless_tour_7i" and again.Data.ClubUpgrades["titleless_tour_7i"].Accuracy == 1 and again.Data.Meta.Sessions == 2)
 end
 
 for _, caseId in CaseDatabase.Order do

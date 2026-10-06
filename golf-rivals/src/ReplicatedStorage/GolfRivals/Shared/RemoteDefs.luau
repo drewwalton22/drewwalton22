@@ -77,7 +77,7 @@ RemoteDefs.List = {
 		Name = "GetProfile",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "() -> profile snapshot: currencies, owned items, equipped loadout, club upgrade levels, quests.",
+		Doc = "() -> { ok, profile?, reason? } profile = ProfileTemplate.clientView: currencies, owned items, equipped loadout, club upgrade levels, stats, quests. reason 'not_loaded' if the server could not load the data.",
 		Limit = UI_QUERY,
 	},
 	{

@@ -20,13 +20,22 @@ COMPILE="${BIN:+$BIN/}luau-compile"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# Server modules reach Shared through `Shared.X` (statically resolvable in Studio)
+# and mark their Roblox-only lookup lines with OFFLINE-STRIP. For the offline
+# copy we delete those lines and turn every require into a sibling path.
+#
 # Files tagged "ROBLOX-ONLY" touch game/Instance APIs: they cannot be analyzed or
 # run standalone, so they only get a syntax check (luau-compile) below.
+SERVER="$ROOT/src/ServerScriptService/GolfRivals/Server"
 PURE=()
 ROBLOX_ONLY=()
-for f in "$SHARED"/*.luau; do
+for f in "$SHARED"/*.luau "$SERVER"/*.luau; do
 	out="$TMP/$(basename "$f")"
-	sed -E 's/require\(script\.Parent\.([A-Za-z0-9_]+)\)/require(".\/\1")/g' "$f" > "$out"
+	sed -E \
+		-e '/OFFLINE-STRIP/d' \
+		-e 's/require\(script\.Parent\.([A-Za-z0-9_]+)\)/require(".\/\1")/g' \
+		-e 's/require\(Shared\.([A-Za-z0-9_]+)\)/require(".\/\1")/g' \
+		"$f" > "$out"
 	if grep -q "ROBLOX-ONLY" "$f"; then ROBLOX_ONLY+=("$out"); else PURE+=("$out"); fi
 done
 cp "$ROOT/tools/verify_shared.luau" "$TMP/verify_shared.luau"
@@ -40,8 +49,8 @@ if [ -n "$ANALYZE_OUT" ]; then
 fi
 echo "analyze: clean"
 
-echo "== syntax check on ${#ROBLOX_ONLY[@]} Roblox-only modules =="
-for f in "${ROBLOX_ONLY[@]}" "$ROOT"/src/ServerScriptService/GolfRivals/Server/*.luau "$ROOT"/src/StarterPlayer/StarterPlayerScripts/GolfRivals/Client/*.luau; do
+echo "== syntax check on ${#ROBLOX_ONLY[@]} Roblox-only modules + client scripts =="
+for f in "${ROBLOX_ONLY[@]}" "$ROOT"/src/StarterPlayer/StarterPlayerScripts/GolfRivals/Client/*.luau; do
 	"$COMPILE" "$f" > /dev/null
 	echo "  ok  $(basename "$f")"
 done
