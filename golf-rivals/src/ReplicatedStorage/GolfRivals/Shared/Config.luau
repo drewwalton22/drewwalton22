@@ -16,6 +16,16 @@ export type LeagueDef = {
 	WinPayout: number, -- coins the winner receives
 }
 
+export type BotProfile = {
+	Stats: { Distance: number, Accuracy: number, Forgiveness: number }, -- applied to every club
+	PowerSigma: number, -- gauge execution noise, percentage points of power (std dev)
+	OffsetSigma: number, -- gauge execution noise on the accuracy offset (std dev, offset units)
+	BlunderChance: number, -- chance of a badly mistimed click (|offset| ~ 0.7)
+	WindAwareness: number, -- 0..1 fraction of the real wind the bot accounts for when planning
+	AimCandidates: { number }, -- aim offsets (degrees) the bot evaluates; picks the safest/closest
+	ClubMistakeChance: number, -- chance of picking a neighbouring club
+}
+
 export type LieDef = {
 	SpeedMult: number, -- multiplies ball speed when HITTING from this lie
 	SpinMult: number, -- multiplies backspin when hitting from this lie
@@ -188,6 +198,61 @@ Config.Lies = {
 	Green = { SpeedMult = 1.0, SpinMult = 1.0, AccuracyPenalty = 0.0, Restitution = 0.35, TangentRetain = 0.60, RollFriction = 0.056, Sinks = false },
 	Water = { SpeedMult = 1.0, SpinMult = 1.0, AccuracyPenalty = 0.0, Restitution = 0.0, TangentRetain = 0.0, RollFriction = 1.0, Sinks = true },
 } :: { [Types.LieId]: LieDef }
+
+-- MATCHES ---------------------------------------------------------------
+-- Stroke play over HolesPerMatch consecutive holes; fewest total strokes wins,
+-- equal totals draw (entry fees refunded). Turn order is "away plays first":
+-- the ball farthest from the pin shoots next; the first tee goes to a coin toss,
+-- later tees to whoever scored lower on the previous hole.
+Config.Match = {
+	HolesPerMatch = 3,
+	TurnSeconds = 40, -- time to complete the 3 clicks before a timeout shot
+	MaxTimeouts = 3, -- timeouts before a forfeit
+	AutoShotPower = 60, -- a timed-out turn plays this (deliberately poor) shot...
+	AutoShotOffset = 0.5, -- ...with this accuracy offset (a clear slice)
+	FlightPadSeconds = 2.5, -- pause after the ball stops before the next turn starts
+	MaxStrokesOverPar = 4, -- pick-up: a hole ends at par + this many strokes
+	GimmeMeters = 0.6, -- a ball resting this close on the green is holed (costs 1 stroke)
+	PenaltyStrokes = 1, -- water / out of bounds: replay from the same spot
+	MaxWindMph = 15,
+	MaxAimDegrees = 30, -- aim adjustment either side of the pin line
+	BotThinkSeconds = { Min = 1.5, Max = 3.5 }, -- bots pause like a person would
+	EndScreenSeconds = 6, -- results screen before the match is cleaned up
+}
+
+-- RANKED MATCHMAKING ----------------------------------------------------
+-- Players queue per league and are paired by OVR. The acceptable OVR gap starts
+-- at BaseOvrWindow and widens by WindowGrowthPerSecond while waiting, so nobody
+-- waits forever but close matches are preferred.
+Config.Matchmaking = {
+	BaseOvrWindow = 10,
+	WindowGrowthPerSecond = 2,
+	MaxOvrWindow = 100,
+	TickSeconds = 1,
+}
+
+-- AI BOTS ---------------------------------------------------------------
+-- Practice mode (no entry fee, no coin payout - bots can't be farmed). Bots play
+-- with the SAME physics as players: they plan a swing, then execute it with
+-- human-like gauge error.
+Config.Bots = {
+	Easy = {
+		Stats = { Distance = 50, Accuracy = 40, Forgiveness = 45 },
+		PowerSigma = 9, OffsetSigma = 0.32, BlunderChance = 0.10, WindAwareness = 0.2,
+		AimCandidates = { 0 }, ClubMistakeChance = 0.25,
+	},
+	Medium = {
+		Stats = { Distance = 65, Accuracy = 60, Forgiveness = 60 },
+		PowerSigma = 4, OffsetSigma = 0.14, BlunderChance = 0.03, WindAwareness = 0.6,
+		AimCandidates = { -6, 0, 6 }, ClubMistakeChance = 0.08,
+	},
+	Hard = {
+		Stats = { Distance = 85, Accuracy = 80, Forgiveness = 75 },
+		PowerSigma = 1.5, OffsetSigma = 0.05, BlunderChance = 0.0, WindAwareness = 1.0,
+		AimCandidates = { -8, -4, 0, 4, 8 }, ClubMistakeChance = 0.0,
+	},
+} :: { [string]: BotProfile }
+Config.BotDifficulties = { "Easy", "Medium", "Hard" } :: { string }
 
 -- RANKED LEAGUES --------------------------------------------------------
 -- Both players pay EntryFee; the winner takes WinPayout.

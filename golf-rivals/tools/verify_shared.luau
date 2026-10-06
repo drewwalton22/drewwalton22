@@ -24,12 +24,18 @@ local Prng = require("./Prng")
 local ShopRotation = require("./ShopRotation")
 local CaseRoller = require("./CaseRoller")
 local Economy = require("./Economy")
+local CourseDatabase = require("./CourseDatabase")
+local CourseTerrain = require("./CourseTerrain")
+local MatchEngine = require("./MatchEngine")
+local BotBrain = require("./BotBrain")
+local Matchmaker = require("./Matchmaker")
+local MatchSettlement = require("./MatchSettlement")
 
 local Types = require("./Types")
 local P_YD = Config.Physics.YardsToMeters -- metres per yard
 
 local failures = 0
-local function expect(label: string, condition: boolean)
+local function expect(label: string, condition: any)
 	if condition then
 		print("  PASS  " .. label)
 	else
@@ -1486,6 +1492,561 @@ do
 		expect(`Fuzz: {steps} random operations kept every invariant (failed ops change nothing)`, problem == nil)
 		expect("Fuzz exercised the successful paths of every operation", (successes.openCases or 0) > 100 and (successes.buyShopItem or 0) > 50 and (successes.sellItems or 0) > 100 and (successes.tradeUp or 0) > 20 and (successes.upgradeClub or 0) > 50 and (successes.buyClub or 0) > 5 and (successes.equipItem or 0) > 50)
 	end
+end
+
+
+-- Course & terrain --------------------------------------------------------------
+print("-- course")
+do
+	local YDS = Config.Physics.YardsToMeters
+	local allValid = true
+	for _, hole in CourseDatabase.Holes do
+		local yards = CourseDatabase.yards(hole)
+		local parOk = (hole.Par == 3 and yards < 250) or (hole.Par == 4 and yards >= 250 and yards <= 470) or (hole.Par == 5 and yards > 470)
+		local teeOk = CourseTerrain.lieAt(hole, hole.Tee.X, hole.Tee.Z) == "Tee" and CourseTerrain.inBounds(hole, hole.Tee.X, hole.Tee.Z)
+		local pinOk = CourseTerrain.lieAt(hole, hole.Pin.X, hole.Pin.Z) == "Green" and CourseTerrain.inBounds(hole, hole.Pin.X, hole.Pin.Z)
+		if not (parOk and teeOk and pinOk) then
+			allValid = false
+			print(`  hole {hole.Id} invalid: yards {yards} par {hole.Par} tee {teeOk} pin {pinOk}`)
+		end
+	end
+	expect("All 6 holes: sensible par for length, tee in bounds, pin on the green", allValid and #CourseDatabase.Holes == 6)
+	local h1, h2 = CourseDatabase.hole(1), CourseDatabase.hole(2)
+	expect("Hole lookups wrap around (hole 7 = hole 1)", CourseDatabase.hole(7).Id == 1 and CourseDatabase.hole(0).Id == 6)
+	expect("Hole 1: 380 yards, fairway / bunker / rough lies", math.abs(CourseDatabase.yards(h1) - 380) < 0.01 and CourseTerrain.lieAt(h1, 150 * YDS, 0) == "Fairway" and CourseTerrain.lieAt(h1, 255 * YDS, -24 * YDS) == "Sand" and CourseTerrain.lieAt(h1, 150 * YDS, 40 * YDS) == "Rough")
+	expect("Hole 2: the pond is water, beyond it rough, the pin is on the green", CourseTerrain.lieAt(h2, 95 * YDS, 0) == "Water" and CourseTerrain.lieAt(h2, 145 * YDS, 0) == "Rough" and CourseTerrain.lieAt(h2, 165 * YDS, 4 * YDS) == "Green")
+	local dogleg = CourseDatabase.hole(3)
+	expect("Dogleg fairway follows both segments", CourseTerrain.lieAt(dogleg, 200 * YDS, 0) == "Fairway" and CourseTerrain.lieAt(dogleg, 370 * YDS, 85 * YDS) == "Fairway" and CourseTerrain.lieAt(dogleg, 370 * YDS, -60 * YDS) == "Rough")
+	local priority = {
+		Id = 99, Name = "p", Par = 3, Tee = { X = 0, Z = 0 }, Pin = { X = 100, Z = 0 },
+		Fairway = { { AX = 0, AZ = 0, BX = 100, BZ = 0, HalfWidth = 10 } },
+		Greens = { { X = 50, Z = 0, R = 5 } }, Bunkers = { { X = 50, Z = 0, R = 8 } }, Water = { { X = 50, Z = 0, R = 2 } },
+		GreenSlope = { X = 0.1, Z = 0 }, Bounds = { MinX = -10, MaxX = 200, MinZ = -50, MaxZ = 50 },
+	} :: CourseDatabase.HoleDef
+	expect("Lie priority: water > green > sand > fairway", CourseTerrain.lieAt(priority, 50, 0) == "Water" and CourseTerrain.lieAt(priority, 53, 0) == "Green" and CourseTerrain.lieAt(priority, 56, 0) == "Sand" and CourseTerrain.lieAt(priority, 62, 0) == "Fairway")
+	expect("Out of bounds is detected", CourseTerrain.inBounds(h1, 100 * YDS, 0) and not CourseTerrain.inBounds(h1, 100 * YDS, 100 * YDS) and not CourseTerrain.inBounds(h1, -100 * YDS, 0))
+
+	local terrain = CourseTerrain.forHole(h1)
+	local rounds = true
+	for _, deg in { 0, 33, 90, 180, -75 } do
+		local h = math.rad(deg)
+		local wx, wz = CourseTerrain.toHole(10, -4, h, 25, 7)
+		local bx, bz = CourseTerrain.toShot(10, -4, h, wx, wz)
+		if math.abs(bx - 25) > 1e-9 or math.abs(bz - 7) > 1e-9 then
+			rounds = false
+		end
+	end
+	expect("toHole / toShot are exact inverses at any heading", rounds)
+	local wx90, wz90 = CourseTerrain.toHole(0, 0, math.rad(90), 10, 0)
+	local rx90, rz90 = CourseTerrain.toHole(0, 0, math.rad(90), 0, 10)
+	expect("Heading 90deg: shot forward = hole +Z, shot right = hole -X", math.abs(wx90) < 1e-9 and math.abs(wz90 - 10) < 1e-9 and math.abs(rx90 + 10) < 1e-9 and math.abs(rz90) < 1e-9)
+	local frame = CourseTerrain.shotFrame(terrain, 150 * YDS, 0, 0)
+	local lieMatches = true
+	for _, probe in { { 0, 0 }, { 105 * YDS, -24 * YDS }, { 200 * YDS, 0 }, { 0, 90 * YDS } } do
+		if frame.lieAt(probe[1], probe[2]) ~= terrain.lieAt(150 * YDS + probe[1], probe[2]) then
+			lieMatches = false
+		end
+	end
+	expect("shotFrame terrain agrees with the hole-frame terrain", lieMatches)
+	-- Stand on the pin, aim 90deg: shot forward = hole +Z, shot right = hole -X, so the
+	-- slope (gx, gz) must read (gz, -gx) in the shot frame.
+	local slopeFrame = CourseTerrain.shotFrame(terrain, h1.Pin.X, h1.Pin.Z, math.rad(90))
+	local sx, sz = slopeFrame.slopeAt(0, 0)
+	local gx, gz = terrain.slopeAt(h1.Pin.X, h1.Pin.Z)
+	expect("Slope rotates with the frame: (gx, gz) reads (gz, -gx) at heading 90deg, magnitude preserved", math.abs(sx - gz) < 1e-12 and math.abs(sz + gx) < 1e-12 and math.abs(math.sqrt(sx * sx + sz * sz) - math.sqrt(gx * gx + gz * gz)) < 1e-12)
+	local pondFrame = CourseTerrain.shotFrame(CourseTerrain.forHole(h2), 0, 0, 0)
+	local lwLaunch = SwingMath.computeLaunch({ Slot = ClubDatabase.getSlot("LW") :: ClubDatabase.BagSlot, Stats = { Distance = 50, Accuracy = 60, Forgiveness = 60 }, Power = 100, AccuracyOffset = 0, Lie = "Tee" })
+	expect("Physics + terrain: a lob wedge from the tee at the par 3 finds the pond", ShotPhysics.simulate(lwLaunch, pondFrame, nil, nil).Outcome == "Water")
+end
+
+-- Matchmaker ----------------------------------------------------------------------
+print("-- matchmaker")
+do
+	local mm = Matchmaker.new()
+	expect("Window starts at BaseOvrWindow and grows 2/s, capped", Matchmaker.window(0) == 10 and Matchmaker.window(10) == 30 and Matchmaker.window(10000) == Config.Matchmaking.MaxOvrWindow)
+	expect("enqueue works once per player (not twice, not in another league)", mm.enqueue("a", "Pro", 70, 0) and not mm.enqueue("a", "Pro", 70, 1) and not mm.enqueue("a", "Rookie", 70, 1) and mm.isQueued("a"))
+	expect("A lone player is not matched", #mm.findMatches(1) == 0 and mm.size("Pro") == 1)
+	mm.enqueue("b", "Pro", 75, 2)
+	local pairsNow = mm.findMatches(3)
+	expect("Two close players pair, oldest first, and leave the queue", #pairsNow == 1 and pairsNow[1].A.PlayerId == "a" and pairsNow[1].B.PlayerId == "b" and mm.size("Pro") == 0 and not mm.isQueued("a"))
+	local far = Matchmaker.new()
+	far.enqueue("x", "Pro", 40, 0)
+	far.enqueue("y", "Pro", 90, 0)
+	expect("A 50-point gap is refused at first (window 10)", #far.findMatches(0) == 0 and far.size("Pro") == 2)
+	expect("...still refused just before the window reaches 50 (19.9 s)", #far.findMatches(19.9) == 0)
+	expect("...and accepted once the oldest player's window covers the gap (20 s -> 50)", #far.findMatches(20) == 1)
+	local leagues = Matchmaker.new()
+	leagues.enqueue("r1", "Rookie", 60, 0)
+	leagues.enqueue("p1", "Pro", 60, 0)
+	expect("Leagues never mix, even with identical OVR", #leagues.findMatches(100) == 0)
+	local best = Matchmaker.new()
+	best.enqueue("old", "Pro", 70, 0)
+	best.enqueue("far", "Pro", 79, 1)
+	best.enqueue("near", "Pro", 71, 2)
+	local pb = best.findMatches(3)
+	expect("The oldest player is paired with the CLOSEST OVR, not the next arrival", #pb == 1 and pb[1].B.PlayerId == "near" and best.isQueued("far"))
+	local four = Matchmaker.new()
+	for i, ovr in { 50, 90, 52, 88 } do
+		four.enqueue("p" .. i, "Pro", ovr, i)
+	end
+	local fp = four.findMatches(5)
+	local sums: { string } = {}
+	for _, pair in fp do
+		table.insert(sums, math.min(pair.A.Ovr, pair.B.Ovr) .. "-" .. math.max(pair.A.Ovr, pair.B.Ovr))
+	end
+	table.sort(sums)
+	expect("Four players pair into the two closest couples (50+52, 88+90)", #fp == 2 and sums[1] == "50-52" and sums[2] == "88-90")
+	local gone = Matchmaker.new()
+	gone.enqueue("q", "Pro", 60, 0)
+	local removed = gone.dequeue("q")
+	expect("dequeue removes and returns the entry; unknown ids return nil", removed ~= nil and (removed :: Matchmaker.Entry).PlayerId == "q" and not gone.isQueued("q") and gone.dequeue("q") == nil)
+	local uniq = true
+	local crowd = Matchmaker.new()
+	for i = 1, 40 do
+		crowd.enqueue("c" .. i, if i % 2 == 0 then "Pro" else "Amateur", 50 + i % 7, i * 0.1)
+	end
+	local seenIds: { [string]: boolean } = {}
+	for _, pair in crowd.findMatches(60) do
+		for _, e in { pair.A, pair.B } do
+			if seenIds[e.PlayerId] then
+				uniq = false
+			end
+			seenIds[e.PlayerId] = true
+		end
+		if pair.A.PlayerId == pair.B.PlayerId or pair.A.League ~= pair.B.League then
+			uniq = false
+		end
+	end
+	expect("Crowd: no player in two pairs, nobody paired with self or across leagues", uniq)
+end
+
+-- Settlement ----------------------------------------------------------------------
+print("-- settlement")
+do
+	local function resultFor(winner: string?, draw: boolean): MatchEngine.MatchResult
+		return { Finished = true, WinnerId = winner, Draw = draw, Reason = "complete", Totals = {}, HoleScores = {}, ForfeitedIds = {} }
+	end
+	local noPlay: MatchSettlement.PlayStats = { HolesPlayed = 3, HolesInOne = 0, LongestDriveYds = 0 }
+	local zeroSum = true
+	for _, league in Config.Leagues do
+		local outcomes = MatchSettlement.settle(resultFor("A", false), "Ranked", league, { "A", "B" })
+		local a, b = outcomes.A, outcomes.B
+		expect(`{league.Id}: winner paid WinPayout, loser nothing`, a.Won and a.Winnings == league.WinPayout and not b.Won and b.Lost and b.Winnings == 0 and b.Refund == 0)
+		local netMint = (a.Winnings + b.Winnings) - 2 * league.EntryFee
+		if league.Id ~= "Champion" and netMint ~= 0 then
+			zeroSum = false
+		end
+		if league.Id == "Champion" then
+			expect("Champion league mints exactly 5,000 coins per decisive match", netMint == 5000)
+		end
+	end
+	expect("Rookie / Amateur / Pro matches are exactly zero-sum", zeroSum)
+	local pro = Config.Leagues[3]
+	local draw = MatchSettlement.settle(resultFor(nil, true), "Ranked", pro, { "A", "B" })
+	expect("Draw: both players refunded their entry fee, nobody wins or loses", draw.A.Refund == pro.EntryFee and draw.B.Refund == pro.EntryFee and draw.A.Winnings == 0 and not draw.A.Won and not draw.A.Lost and draw.A.Drew)
+	local abandoned = MatchSettlement.settle(resultFor(nil, false), "Ranked", pro, { "A" })
+	expect("Abandoned match pays and refunds nothing", abandoned.A.Winnings == 0 and abandoned.A.Refund == 0 and not abandoned.A.Won)
+	local bot = MatchSettlement.settle(resultFor("A", false), "Bot", nil, { "A" })
+	expect("Bot practice never pays coins, even for a win", bot.A.Won and bot.A.Winnings == 0 and bot.A.Refund == 0 and not bot.A.Ranked)
+
+	local d = ProfileTemplate.new(0)
+	d.Coins = 0
+	local winOutcome = MatchSettlement.settle(resultFor("A", false), "Ranked", pro, { "A", "B" }).A
+	local credited = MatchSettlement.applyToProfile(d, winOutcome, { HolesPlayed = 3, HolesInOne = 1, LongestDriveYds = 301.7 })
+	expect("applyToProfile: payout, ranked win, holes, hole-in-one, longest drive", credited == pro.WinPayout and d.Coins == pro.WinPayout and d.Stats.Wins == 1 and d.Stats.MatchesPlayed == 1 and d.Stats.HolesPlayed == 3 and d.Stats.HolesInOne == 1 and d.Stats.LongestDriveYds == 301 and d.Stats.TotalCoinsEarned == pro.WinPayout)
+	local d2 = ProfileTemplate.new(0)
+	MatchSettlement.applyToProfile(d2, MatchSettlement.settle(resultFor(nil, true), "Ranked", pro, { "A", "B" }).A, noPlay)
+	expect("A refund is not counted as earnings (TotalCoinsEarned stays 0)", d2.Coins == Config.Economy.StartingCoins + pro.EntryFee and d2.Stats.TotalCoinsEarned == 0 and d2.Stats.Wins == 0 and d2.Stats.Losses == 0)
+	local d3 = ProfileTemplate.new(0)
+	MatchSettlement.applyToProfile(d3, MatchSettlement.settle(resultFor("B", false), "Ranked", pro, { "A", "B" }).A, noPlay)
+	expect("Ranked loss recorded, no coins", d3.Stats.Losses == 1 and d3.Coins == Config.Economy.StartingCoins)
+	local d4 = ProfileTemplate.new(0)
+	d4.Stats.LongestDriveYds = 320
+	MatchSettlement.applyToProfile(d4, MatchSettlement.settle(resultFor("A", false), "Bot", nil, { "A" }).A, { HolesPlayed = 3, HolesInOne = 0, LongestDriveYds = 250 })
+	expect("Bot match counts as played but not as a ranked win; longest drive keeps the max", d4.Stats.MatchesPlayed == 1 and d4.Stats.Wins == 0 and d4.Stats.LongestDriveYds == 320)
+	local refundable = ProfileTemplate.new(0)
+	refundable.Coins = 50
+	expect("ProfileOps.refund adds without earnings and rejects bad amounts", ProfileOps.refund(refundable, "Coins", 100) and refundable.Coins == 150 and refundable.Stats.TotalCoinsEarned == 0 and not ProfileOps.refund(refundable, "Coins", -5) and not ProfileOps.refund(refundable, "Coins", 0 / 0))
+end
+
+-- Match engine ----------------------------------------------------------------------
+print("-- match engine")
+do
+	local mid: ClubDatabase.Stats = { Distance = 70, Accuracy = 70, Forgiveness = 70 }
+	local function statsFor(_label: string): ClubDatabase.Stats
+		return mid
+	end
+	local function twoHumans(): { MatchEngine.PlayerSpec }
+		return {
+			{ Id = "H1", Name = "One", IsBot = false, StatsFor = statsFor },
+			{ Id = "H2", Name = "Two", IsBot = false, StatsFor = statsFor },
+		}
+	end
+	local function twoBots(): { MatchEngine.PlayerSpec }
+		return {
+			{ Id = "B1", Name = "Bot1", IsBot = true, StatsFor = statsFor },
+			{ Id = "B2", Name = "Bot2", IsBot = true, StatsFor = statsFor },
+		}
+	end
+	local function eventsOfType(list: { MatchEngine.Event }, eventType: string): { MatchEngine.Event }
+		local out: { MatchEngine.Event } = {}
+		for _, e in list do
+			if e.Type == eventType then
+				table.insert(out, e)
+			end
+		end
+		return out
+	end
+	local function playerView(snapshot: any, id: string): any
+		for _, v in snapshot.Players do
+			if v.Id == id then
+				return v
+			end
+		end
+		return nil
+	end
+
+	-- Structure, validation, turn order -------------------------------------------
+	local engine = MatchEngine.new({ Players = twoHumans(), Holes = CourseDatabase.sequence(1, 3), Seed = 42, Now = 0 })
+	local snap = engine.snapshot(0)
+	expect("New match: Swing phase on hole 1 of 3 with an active player", snap.Phase == "Swing" and snap.HoleIndex == 1 and snap.HoleCount == 3 and engine.activeId() ~= nil and #snap.Players == 2)
+	expect("Snapshot: hole info, wind within the cap, full turn timer", snap.Hole.Par == 4 and math.abs(snap.Hole.Yards - 380) < 0.01 and snap.Wind.Mph >= 0 and snap.Wind.Mph <= Config.Match.MaxWindMph and snap.TurnSecondsLeft == Config.Match.TurnSeconds)
+	expect("The turn timer counts down in snapshots", engine.snapshot(15).TurnSecondsLeft == Config.Match.TurnSeconds - 15)
+	local first = engine.activeId() :: string
+	local second = if first == "H1" then "H2" else "H1"
+	local _, whyNotTurn = engine.submitSwing(second, 80, 0, 20)
+	expect("Swinging out of turn is refused", whyNotTurn == "not_your_turn")
+	local _, whyFast = engine.submitSwing(first, 100, 0, 0.3)
+	expect("A full-power perfect swing 0.3 s after the turn opened is rejected as too_fast", whyFast == "too_fast")
+	local _, whyBad = engine.submitSwing(first, 0 / 0, 0, 20)
+	local _, whyUnknown = engine.submitSwing("nobody", 50, 0, 20)
+	expect("NaN power and unknown players are rejected", whyBad == "bad_power" and whyUnknown == "unknown_player")
+	expect("Rejected swings change nothing (same active player, no Shot event)", engine.activeId() == first and #eventsOfType(engine.drainEvents(), "Shot") == 0)
+
+	local okShot = engine.submitSwing(first, 100, 0, 20)
+	local shotEvents = eventsOfType(engine.drainEvents(), "Shot")
+	expect("A valid swing resolves into one Shot event and starts the flight pause", okShot and #shotEvents == 1 and engine.phase() == "Flight" and shotEvents[1].Data.PlayerId == first and shotEvents[1].Data.Stroke == 1)
+	local shot = shotEvents[1].Data
+	expect("Shot event: telemetry plus a time-ordered trajectory in the hole frame", shot.Telemetry.CarryYds > 200 and shot.Telemetry.ApexFeet > 50 and #shot.Samples > 10 and shot.Samples[1][1] == 0 and shot.Samples[#shot.Samples][1] >= shot.Samples[1][1])
+	local _, whyFlight = engine.submitSwing(second, 80, 0, 25)
+	expect("Nobody can swing during the flight pause", whyFlight == "not_your_turn")
+	engine.tick(5)
+	expect("A tick before the pause ends keeps the Flight phase", engine.phase() == "Flight")
+	engine.tick(40)
+	expect("After the pause the other player (still on the tee, farthest away) plays next", engine.phase() == "Swing" and engine.activeId() == second)
+	engine.submitSwing(second, 70, 0, 80)
+	engine.tick(120)
+	expect("Away-plays-first: the ball farther from the pin shoots next", (function()
+		local view = engine.snapshot(120)
+		local a, b = view.Players[1], view.Players[2]
+		local farther = if a.YardsToPin > b.YardsToPin then a.Id else b.Id
+		return engine.activeId() == farther
+	end)())
+
+	-- Water / out-of-bounds penalties ----------------------------------------------
+	local pondEngine = MatchEngine.new({ Players = twoHumans(), Holes = { CourseDatabase.hole(2) }, Seed = 7, Now = 0 })
+	local shooter = pondEngine.activeId() :: string
+	pondEngine.setClub(shooter, "LW")
+	local beforeSwing = playerView(pondEngine.snapshot(0), shooter)
+	pondEngine.submitSwing(shooter, 100, 0, 30)
+	local pondShot = eventsOfType(pondEngine.drainEvents(), "Shot")[1].Data
+	expect("Par 3 pond: a short club ends in the water, penalty applied (2 strokes), not holed", pondShot.Outcome == "Water" and pondShot.Penalty and pondShot.Stroke == 2 and not pondShot.Holed)
+	local afterSwing = playerView(pondEngine.snapshot(30), shooter)
+	expect("Water: the ball is replayed from the same spot with the same lie", beforeSwing.Position.X == afterSwing.Position.X and beforeSwing.Position.Z == afterSwing.Position.Z and afterSwing.Lie == "Tee")
+
+	local obEngine = MatchEngine.new({ Players = twoHumans(), Holes = { CourseDatabase.hole(1) }, Seed = 8, Now = 0 })
+	local obShooter = obEngine.activeId() :: string
+	obEngine.setClub(obShooter, "D")
+	local aimOk = obEngine.setAim(obShooter, -Config.Match.MaxAimDegrees)
+	local aimBad = obEngine.setAim(obShooter, 200)
+	obEngine.submitSwing(obShooter, 100, 0, 30)
+	local obShot = eventsOfType(obEngine.drainEvents(), "Shot")[1].Data
+	expect("Aim: the extreme allowed value is accepted, out-of-range refused", aimOk and not aimBad)
+	expect("Out of bounds (driver aimed 30deg left): penalty stroke, replay", obShot.Penalty and obShot.Stroke == 2 and obShot.Outcome == "Rest")
+	local _, whyClub = obEngine.setClub(obShooter, "12i")
+	expect("Unknown club slots are refused", whyClub == "unknown_club_slot")
+
+	-- Precise scenarios on custom putting greens -------------------------------------
+	local function puttingHole(par: number, yards: number): CourseDatabase.HoleDef
+		local m = yards * Config.Physics.YardsToMeters
+		return {
+			Id = 90, Name = "Putting green", Par = par, Tee = { X = 0, Z = 0 }, Pin = { X = m, Z = 0 },
+			Fairway = {}, Greens = { { X = m, Z = 0, R = 60 } }, Bunkers = {}, Water = {},
+			GreenSlope = { X = 0, Z = 0 }, Bounds = { MinX = -50, MaxX = 500, MinZ = -200, MaxZ = 200 },
+		}
+	end
+	local function botDuel(hole: CourseDatabase.HoleDef, seed: number): MatchEngine.Engine
+		return MatchEngine.new({ Players = twoBots(), Holes = { hole }, Seed = seed, Now = 0 })
+	end
+	local function scanPower(e: MatchEngine.Engine, id: string, wanted: (ShotPhysics.ShotResult) -> boolean): number?
+		for tenth = 10, 1000 do
+			local power = tenth / 10
+			local preview = e.preview(id, "PT", 0, power, 0, 1)
+			if preview and wanted(preview.Result) then
+				return power
+			end
+		end
+		return nil
+	end
+	local pinM = 6 * Config.Physics.YardsToMeters
+
+	local aceEngine = botDuel(puttingHole(3, 6), 11)
+	local aceId = aceEngine.activeId() :: string
+	local acePower = scanPower(aceEngine, aceId, function(r: ShotPhysics.ShotResult): boolean
+		return r.Outcome == "Holed"
+	end)
+	expect("Scan finds a putting power that holes out from 6 yards", acePower ~= nil)
+	if acePower then
+		aceEngine.submitBotSwing(aceId, "PT", 0, acePower, 0, 1)
+		local ace = eventsOfType(aceEngine.drainEvents(), "Shot")[1].Data
+		expect("Holing out in one flags a hole-in-one with 1 stroke", ace.Holed and ace.HoleInOne and ace.Stroke == 1 and ace.Outcome == "Holed" and not ace.PickedUp)
+	end
+
+	local gimmeEngine = botDuel(puttingHole(3, 6), 12)
+	local gimmeId = gimmeEngine.activeId() :: string
+	local gimmePower = scanPower(gimmeEngine, gimmeId, function(r: ShotPhysics.ShotResult): boolean
+		local short = pinM - r.FinalX
+		return r.Outcome == "Rest" and short > 0.1 and short < Config.Match.GimmeMeters - 0.05
+	end)
+	expect("Scan finds a putt that stops within gimme range without dropping", gimmePower ~= nil)
+	if gimmePower then
+		gimmeEngine.submitBotSwing(gimmeId, "PT", 0, gimmePower, 0, 1)
+		local g = eventsOfType(gimmeEngine.drainEvents(), "Shot")[1].Data
+		expect("A ball resting inside the gimme radius is holed; the tap-in costs a stroke (2 total)", g.Holed and g.Stroke == 2 and not g.HoleInOne and g.Outcome == "Rest")
+	end
+	local missEngine = botDuel(puttingHole(3, 6), 13)
+	local missId = missEngine.activeId() :: string
+	local missPower = scanPower(missEngine, missId, function(r: ShotPhysics.ShotResult): boolean
+		local short = pinM - r.FinalX
+		return r.Outcome == "Rest" and short > 3 and short < 4
+	end)
+	expect("Scan finds a putt that stops 3-4 m short", missPower ~= nil)
+	if missPower then
+		missEngine.submitBotSwing(missId, "PT", 0, missPower, 0, 1)
+		local m = eventsOfType(missEngine.drainEvents(), "Shot")[1].Data
+		expect("A putt stopping 3+ metres away is not a gimme (play continues)", not m.Holed and m.Stroke == 1)
+	end
+
+	-- Pick-up at par + MaxStrokesOverPar; a tie is a draw.
+	local pickup = botDuel(puttingHole(3, 30), 14)
+	local safety, pickedUps, simNow = 0, 0, 0.0
+	while not pickup.isFinished() and safety < 200 do
+		safety += 1
+		simNow += 30
+		pickup.tick(simNow)
+		local id = pickup.activeId()
+		if id and pickup.phase() == "Swing" then
+			pickup.submitBotSwing(id, "PT", 0, 1, 0, simNow) -- the smallest possible putt, forever
+		end
+		for _, e in pickup.drainEvents() do
+			if e.Type == "Shot" and e.Data.PickedUp then
+				pickedUps += 1
+			end
+		end
+	end
+	local pickResult = pickup.result()
+	expect("Pick-up: endless 1% putts end each player's hole at par + 4 = 7", pickup.isFinished() and pickedUps == 2 and pickResult.Totals.B1 == 7 and pickResult.Totals.B2 == 7)
+	expect("Equal totals draw (no winner)", pickResult.Draw and pickResult.WinnerId == nil and pickResult.Reason == "complete")
+
+	-- Timeouts ---------------------------------------------------------------------
+	local toEngine = MatchEngine.new({ Players = twoHumans(), Holes = CourseDatabase.sequence(1, 3), Seed = 5, Now = 0 })
+	local victim = toEngine.activeId() :: string
+	toEngine.tick(Config.Match.TurnSeconds - 0.1)
+	expect("No timeout before the deadline", #eventsOfType(toEngine.drainEvents(), "Timeout") == 0 and toEngine.activeId() == victim)
+	toEngine.tick(Config.Match.TurnSeconds + 0.1)
+	local toEvents = toEngine.drainEvents()
+	local timeoutEv = eventsOfType(toEvents, "Timeout")
+	local autoShot = eventsOfType(toEvents, "Shot")
+	expect("Timeout: counted, and an automatic poor shot is played for that player", #timeoutEv == 1 and timeoutEv[1].Data.Count == 1 and #autoShot == 1 and autoShot[1].Data.Auto and autoShot[1].Data.PlayerId == victim)
+	expect("The automatic shot is a visible slice, not a straight ball", math.abs(autoShot[1].Data.Telemetry.LateralYds) > 3)
+	-- Let only the victim's turns expire (the other player keeps swinging) until they forfeit.
+	local clock = Config.Match.TurnSeconds + 0.1
+	local timeoutsOfVictim = 1
+	for _ = 1, 400 do
+		if toEngine.isFinished() then
+			break
+		end
+		clock += 5
+		toEngine.tick(clock)
+		local active = toEngine.activeId()
+		if active and active ~= victim and toEngine.phase() == "Swing" then
+			toEngine.submitSwing(active, 60, 0, clock + 30) -- promptly swings (validated against its own timeline)
+		end
+		for _, e in toEngine.drainEvents() do
+			if e.Type == "Timeout" and e.Data.PlayerId == victim then
+				timeoutsOfVictim += 1
+			end
+		end
+	end
+	local toResult = toEngine.result()
+	expect("MaxTimeouts (3) timeouts forfeit the match; the opponent wins", toEngine.isFinished() and toResult.ForfeitedIds[1] == victim and toResult.Reason == "forfeit" and toResult.WinnerId ~= victim and timeoutsOfVictim >= Config.Match.MaxTimeouts - 1)
+
+	-- Forfeit ----------------------------------------------------------------------------
+	local ff = MatchEngine.new({ Players = twoHumans(), Holes = CourseDatabase.sequence(1, 3), Seed = 6, Now = 0 })
+	ff.forfeit("H1", 10)
+	local ffResult = ff.result()
+	expect("Forfeit ends the match at once; the other player wins", ff.isFinished() and ffResult.WinnerId == "H2" and ffResult.Reason == "forfeit" and ffResult.ForfeitedIds[1] == "H1" and ff.phase() == "Finished" and ff.activeId() == nil)
+	local ffEvents = ff.drainEvents()
+	expect("Forfeit emits Forfeit and MatchComplete events", #eventsOfType(ffEvents, "Forfeit") == 1 and #eventsOfType(ffEvents, "MatchComplete") == 1)
+	local _, whyAfter = ff.submitSwing("H2", 50, 0, 100)
+	expect("No swings after the match is over", whyAfter == "not_your_turn")
+	ff.forfeit("H2", 11)
+	expect("Forfeiting again after the end is ignored", #ff.result().ForfeitedIds == 1 and ff.result().WinnerId == "H2")
+
+	local humanEngine = MatchEngine.new({ Players = twoHumans(), Holes = CourseDatabase.sequence(1, 1), Seed = 9, Now = 0 })
+	local _, whyHuman = humanEngine.submitBotSwing(humanEngine.activeId() :: string, "D", 0, 50, 0, 1)
+	expect("submitBotSwing refuses human players (no way to bypass the timing check)", whyHuman == "not_a_bot")
+
+	-- Honour: the lower score tees off first on the next hole ----------------------------------
+	local honourOk, honourChecked = true, 0
+	for seed = 1, 12 do
+		local e = MatchEngine.new({ Players = twoBots(), Holes = CourseDatabase.sequence(1, 2), Seed = seed, Now = 0 })
+		local rngH = Prng.new(seed + 100)
+		local tH = 0.0
+		for _ = 1, 600 do
+			tH += 5
+			e.tick(tH)
+			local id = e.activeId()
+			if id and e.phase() == "Swing" then
+				BotBrain.play(e, id, if id == "B1" then "Hard" else "Easy", rngH.next, tH)
+			end
+			local events = e.drainEvents()
+			local completeAt = 0
+			for i, ev in events do
+				if ev.Type == "HoleComplete" and ev.Data.HoleIndex == 1 then
+					completeAt = i
+				end
+			end
+			if completeAt > 0 then
+				local view = e.snapshot(tH)
+				local s1, s2 = playerView(view, "B1").HoleScores[1], playerView(view, "B2").HoleScores[1]
+				local nextTurn: string? = nil
+				for i = completeAt, #events do
+					if events[i].Type == "TurnStart" and nextTurn == nil then
+						nextTurn = events[i].Data.PlayerId
+					end
+				end
+				if s1 ~= s2 then
+					honourChecked += 1
+					local expected = if s1 < s2 then "B1" else "B2"
+					if nextTurn ~= expected then
+						honourOk = false
+					end
+				end
+				break
+			end
+		end
+	end
+	expect(`Honour: the player with the lower score on a hole tees off first on the next ({honourChecked} matches checked)`, honourOk and honourChecked >= 6)
+
+	-- Bot matches ---------------------------------------------------------------------------------
+	local function playBotMatch(seed: number, levelA: string, levelB: string, holes: { CourseDatabase.HoleDef }): (MatchEngine.MatchResult, number, number)
+		local rngB = Prng.new(seed + 999)
+		local specs: { MatchEngine.PlayerSpec } = {
+			{ Id = "A", Name = "A", IsBot = true, StatsFor = BotBrain.statsFor(levelA) },
+			{ Id = "B", Name = "B", IsBot = true, StatsFor = BotBrain.statsFor(levelB) },
+		}
+		local match = MatchEngine.new({ Players = specs, Holes = holes, Seed = seed, Now = 0 })
+		local levels: { [string]: string } = { A = levelA, B = levelB }
+		local now2, steps, penalties, refused = 0.0, 0, 0, 0
+		while not match.isFinished() and steps < 3000 do
+			steps += 1
+			now2 += 0.5
+			match.tick(now2)
+			local id = match.activeId()
+			if id and match.phase() == "Swing" then
+				if BotBrain.play(match, id, levels[id], rngB.next, now2) == nil then
+					refused += 1
+				end
+			end
+			for _, e in match.drainEvents() do
+				if e.Type == "Shot" and e.Data.Penalty then
+					penalties += 1
+				end
+			end
+		end
+		return match.result(), penalties, refused
+	end
+
+	local function ladder(levelA: string, levelB: string, n: number): (number, number, number, boolean)
+		local winsA, winsB, draws, clean = 0, 0, 0, true
+		for i = 1, n do
+			local r, _, refused = playBotMatch(i * 13, levelA, levelB, CourseDatabase.sequence(i, 3))
+			if not r.Finished or refused > 0 then
+				clean = false
+			end
+			if r.Draw then
+				draws += 1
+			elseif r.WinnerId == "A" then
+				winsA += 1
+			else
+				winsB += 1
+			end
+		end
+		return winsA, winsB, draws, clean
+	end
+	local hardEasyA, hardEasyB, _, clean1 = ladder("Hard", "Easy", 24)
+	local hardMedA, hardMedB, _, clean2 = ladder("Hard", "Medium", 24)
+	local medEasyA, medEasyB, _, clean3 = ladder("Medium", "Easy", 24)
+	print(`  skill ladder (24 matches each): Hard-Easy {hardEasyA}-{hardEasyB}, Hard-Medium {hardMedA}-{hardMedB}, Medium-Easy {medEasyA}-{medEasyB}`)
+	expect("Every bot match finishes and no bot action is ever refused by the engine", clean1 and clean2 and clean3)
+	expect("Skill ladder: Hard beats Easy (>= 20 of 24)", hardEasyA >= 20 and hardEasyB <= 2)
+	expect("Skill ladder: Hard beats Medium (>= 14 wins, <= 3 losses)", hardMedA >= 14 and hardMedB <= 3)
+	expect("Skill ladder: Medium beats Easy (>= 15 wins, <= 4 losses)", medEasyA >= 15 and medEasyB <= 4)
+
+	-- Hazards: Hard bots read the pond hole and rarely go in the water.
+	local waterBalls, pondHoles = 0, 0
+	for i = 1, 40 do
+		local _, penalties = playBotMatch(i * 5, "Hard", "Hard", { CourseDatabase.hole(2) })
+		waterBalls += penalties
+		pondHoles += 2
+	end
+	expect(`Hard bots avoid the pond ({waterBalls} penalties in {pondHoles} player-holes, limit 4)`, waterBalls <= 4)
+
+	-- Determinism: same seeds -> same match.
+	local r1 = playBotMatch(77, "Medium", "Hard", CourseDatabase.sequence(2, 3))
+	local r2 = playBotMatch(77, "Medium", "Hard", CourseDatabase.sequence(2, 3))
+	expect("A bot match replays identically from the same seeds", r1.Totals.A == r2.Totals.A and r1.Totals.B == r2.Totals.B and r1.WinnerId == r2.WinnerId)
+
+	-- Bot planning must not change the match.
+	local probe = MatchEngine.new({ Players = twoBots(), Holes = CourseDatabase.sequence(1, 3), Seed = 21, Now = 0 })
+	local probeId = probe.activeId() :: string
+	local beforeProbe = probe.snapshot(0)
+	for _ = 1, 3 do
+		BotBrain.decide({
+			situation = function(): MatchEngine.Situation
+				return probe.situation(probeId) :: MatchEngine.Situation
+			end,
+			preview = function(label: string, aim: number, power: number, offset: number, windScale: number): SwingMath.ResolvedShot?
+				return probe.preview(probeId, label, aim, power, offset, windScale)
+			end,
+			landing = function(aim: number, result: ShotPhysics.ShotResult): (Types.LieId, boolean)
+				return probe.landing(probeId, aim, result)
+			end,
+			statsFor = BotBrain.statsFor("Hard"),
+		}, "Hard", Prng.new(1).next)
+	end
+	local afterProbe = probe.snapshot(0)
+	local function same(a: any, b: any): boolean
+		if type(a) ~= type(b) then
+			return false
+		end
+		if type(a) ~= "table" then
+			return a == b
+		end
+		for k, v in a do
+			if not same(v, b[k]) then
+				return false
+			end
+		end
+		for k in b do
+			if a[k] == nil then
+				return false
+			end
+		end
+		return true
+	end
+	expect("Bot planning (dozens of previews) leaves the match state untouched", same(beforeProbe, afterProbe) and #probe.drainEvents() > 0 and probe.activeId() == probeId)
 end
 
 for _, caseId in CaseDatabase.Order do

@@ -75,6 +75,17 @@ function ProfileOps.add(data: ProfileData, currency: Types.CurrencyId, amount: n
 	return true, nil
 end
 
+-- Give back currency the player already paid (entry-fee refunds). Unlike `add`,
+-- this is NOT counted as earnings (Stats.TotalCoinsEarned stays put).
+function ProfileOps.refund(data: ProfileData, currency: Types.CurrencyId, amount: number): (boolean, string?)
+	if not isPositiveInteger(amount) then
+		return false, "bad_amount"
+	end
+	local cap = if currency == "Coins" then Config.Economy.MaxCoins else Config.Economy.MaxGems
+	setBalance(data, currency, math.min(cap, ProfileOps.balance(data, currency) + amount))
+	return true, nil
+end
+
 function ProfileOps.spend(data: ProfileData, price: Types.Price): (boolean, string?)
 	if not isPositiveInteger(price.Amount) then
 		return false, "bad_amount"

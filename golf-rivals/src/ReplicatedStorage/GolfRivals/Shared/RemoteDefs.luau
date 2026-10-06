@@ -60,16 +60,30 @@ RemoteDefs.List = {
 		Limit = SWING,
 	},
 	{
+		Name = "SelectClub",
+		Kind = "Event",
+		Direction = "ClientToServer",
+		Doc = "(slotLabel: string, e.g. 'D', '7i', 'PT') Choose which bag slot the next swing uses. The server uses the profile's equipped club and its stats.",
+		Limit = UI_ACTION,
+	},
+	{
+		Name = "SetAim",
+		Kind = "Event",
+		Direction = "ClientToServer",
+		Doc = "(aimDegrees: number, +/-Config.Match.MaxAimDegrees) Aim offset from the pin line (negative = left, positive = right).",
+		Limit = SWING,
+	},
+	{
 		Name = "ShotResult",
 		Kind = "Event",
 		Direction = "ServerToClient",
-		Doc = "(result: table) Authoritative flight: sampled trajectory points plus carry/total/roll yards, apex height and spin RPM for the telemetry overlay.",
+		Doc = "(shot: table) Authoritative shot from MatchEngine: PlayerId, ClubLabel, Quality, Start/End positions, Outcome, Penalty/Holed flags, Telemetry {CarryYds, TotalYds, RollYds, ApexFeet, SpinRpm, LateralYds...} and Samples {t,x,y,z} in the hole frame for the ball animation.",
 	},
 	{
 		Name = "MatchState",
 		Kind = "Event",
 		Direction = "ServerToClient",
-		Doc = "(state: table) Whose turn, hole number, par, yards-to-pin, wind, scores. Sent on every change.",
+		Doc = "(state: table) MatchEngine snapshot: Phase, HoleIndex/HoleCount, Hole {Par, Yards, Tee, Pin}, Wind, ActiveId, TurnSecondsLeft, Players {Position, YardsToPin, Lie, Strokes, Total, Cosmetics...}, Finished/Result. Sent on every change.",
 	},
 
 	-- ---- Profile / inventory ----------------------------------------------
@@ -157,7 +171,7 @@ RemoteDefs.List = {
 		Name = "QueueRanked",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(leagueId: string) -> { ok, reason? } Pay the entry fee and enter that league's queue.",
+		Doc = "(leagueId: string 'Rookie'|'Amateur'|'Pro'|'Champion') -> { ok, reason?, Fee? } Pay the entry fee (held until the match settles) and enter that league's queue.",
 		Limit = UI_ACTION,
 	},
 	{
@@ -176,6 +190,13 @@ RemoteDefs.List = {
 	},
 
 	-- ---- Quests / social ---------------------------------------------------
+	{
+		Name = "LeaveMatch",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "() -> { ok } Forfeit the current match (the opponent wins).",
+		Limit = UI_ACTION,
+	},
 	{
 		Name = "ClaimQuest",
 		Kind = "Function",

@@ -18,6 +18,9 @@
 	  ProfileService.waitFor(player, timeout)-> yields until loaded (or nil)
 	  ProfileService.onLoaded(callback)      -> callback(player, data) after each load
 	  ProfileService.notify(player, patch)   -> pushes a partial update to that client
+	  ProfileService.onLeaving(callback)     -> callback(player, data) just BEFORE the final
+	                                            save, while the profile is still editable
+	                                            (refund queue fees, settle forfeited matches)
 	  ProfileService.saveSoon(player)        -> debounced save within SaveSoonSeconds
 	                                            (call after purchases, case opens, trades)
 
@@ -49,6 +52,7 @@ local ProfileService = {}
 
 local profiles: { [Player]: ProfileStore.Profile } = {}
 local loadedCallbacks: { (player: Player, data: ProfileTemplate.ProfileData) -> () } = {}
+local leavingCallbacks: { (player: Player, data: ProfileTemplate.ProfileData) -> () } = {}
 local store: ProfileStore.Store? = nil
 local pendingReleases = 0 -- releases in flight; BindToClose waits for this to reach 0
 local saveQueued: { [Player]: boolean } = {} -- players with a debounced save scheduled
@@ -180,8 +184,16 @@ function ProfileService.start()
 
 	Players.PlayerRemoving:Connect(function(player: Player)
 		local profile = profiles[player]
-		profiles[player] = nil
 		if profile then
+			-- Leave hooks run synchronously BEFORE the profile is detached and
+			-- released, so their edits are included in the final save.
+			for _, callback in leavingCallbacks do
+				local ok, err = pcall(callback, player, profile.Data)
+				if not ok then
+					Logger.info("Profiles", `leaving hook failed for {player.Name}: {tostring(err)}`)
+				end
+			end
+			profiles[player] = nil
 			task.spawn(releaseProfile, profile)
 		end
 	end)
@@ -258,6 +270,10 @@ function ProfileService.saveSoon(player: Player)
 			Logger.info("Profiles", `save-soon failed for {player.Name}; autosave will retry`)
 		end
 	end)
+end
+
+function ProfileService.onLeaving(callback: (player: Player, data: ProfileTemplate.ProfileData) -> ())
+	table.insert(leavingCallbacks, callback)
 end
 
 function ProfileService.onLoaded(callback: (player: Player, data: ProfileTemplate.ProfileData) -> ())
