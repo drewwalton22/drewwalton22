@@ -4,8 +4,8 @@
 
 	What the Skin Shop screen (mockup panel 3) shows, from the server's GetShop reply
 	and the local profile. Tabs split today's offers by what they are; club skins can
-	also be filtered by club class (All / Drivers / Fairway Woods / Irons / Wedges /
-	Putters). Cards are sorted by rarity then name so the layout is stable.
+	also be filtered by club category (All / Driver / Fairway Wood / Long Iron /
+	Short Iron / Wedge / Putter). Cards are sorted by rarity then name so the layout is stable.
 ]]
 
 local Types = require(script.Parent.Types)
@@ -52,15 +52,17 @@ ShopView.Tabs = {
 
 ShopView.ClassFilters = {
 	{ Id = "All", Label = "All Clubs" },
-	{ Id = "Driver", Label = "Drivers" },
-	{ Id = "Wood", Label = "Fairway Woods" },
-	{ Id = "Iron", Label = "Irons" },
-	{ Id = "Wedge", Label = "Wedges" },
-	{ Id = "Putter", Label = "Putters" },
+	{ Id = "Driver", Label = "Driver" },
+	{ Id = "FairwayWood", Label = "Fairway Wood" },
+	{ Id = "LongIron", Label = "Long Iron" },
+	{ Id = "ShortIron", Label = "Short Iron" },
+	{ Id = "Wedge", Label = "Wedge" },
+	{ Id = "Putter", Label = "Putter" },
 }
 
 local SLOT_NAMES: { [string]: string } = {
-	Driver = "Driver Skin", Wood = "Wood Skin", Iron = "Iron Skin", Wedge = "Wedge Skin", Putter = "Putter Skin",
+	Driver = "Driver Skin", FairwayWood = "Fairway Wood Skin", LongIron = "Long Iron Skin",
+	ShortIron = "Short Iron Skin", Wedge = "Wedge Skin", Putter = "Putter Skin",
 	Swing = "Swing", Stance = "Stance", Emote = "Victory Emote",
 	BallModel = "Ball", BallTrail = "Trail", HoleEffect = "Hole Effect",
 }

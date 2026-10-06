@@ -7,6 +7,7 @@
 ]]
 
 local Config = require(script.Parent.Config)
+local ClubStats = require(script.Parent.ClubStats)
 local Format = require(script.Parent.Format)
 local ProfileOps = require(script.Parent.ProfileOps)
 local ProfileTemplate = require(script.Parent.ProfileTemplate)
@@ -59,12 +60,11 @@ function ModeView.bots(): { BotCard }
 	local cards: { BotCard } = {}
 	for _, difficulty in Config.BotDifficulties do
 		local stats = Config.Bots[difficulty].Stats
-		local weights = Config.Clubs.OVRWeights
 		table.insert(cards, {
 			Difficulty = difficulty,
 			Label = string.upper(difficulty),
 			Blurb = BLURBS[difficulty] or "",
-			Ovr = math.floor(stats.Distance * weights.Distance + stats.Accuracy * weights.Accuracy + stats.Forgiveness * weights.Forgiveness + 0.5),
+			Ovr = ClubStats.overall(stats),
 		})
 	end
 	return cards

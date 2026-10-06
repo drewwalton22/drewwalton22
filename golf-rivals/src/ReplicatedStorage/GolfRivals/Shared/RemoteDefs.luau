@@ -63,7 +63,7 @@ RemoteDefs.List = {
 		Name = "SelectClub",
 		Kind = "Event",
 		Direction = "ClientToServer",
-		Doc = "(slotLabel: string, e.g. 'D', '7i', 'PT') Choose which bag slot the next swing uses. The server uses the profile's equipped club and its stats.",
+		Doc = "(categoryLabel: 'DR'|'FW'|'LI'|'SI'|'WG'|'PT') Choose which bag slot the next swing uses. The server uses the profile's equipped club and its stats.",
 		Limit = UI_ACTION,
 	},
 	{
@@ -125,7 +125,7 @@ RemoteDefs.List = {
 		Name = "UpgradeClub",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(clubId: string, stat: 'Distance'|'Accuracy'|'Forgiveness') -> { ok, reason?, NewLevel?, Cost? } Spend coins to upgrade one stat.",
+		Doc = "(clubId: string, stat: 'Power'|'Accuracy'|'Spin') -> { ok, reason?, NewLevel?, Cost? } Spend coins to upgrade one stat.",
 		Limit = UI_ACTION,
 	},
 
@@ -223,6 +223,35 @@ RemoteDefs.List = {
 		Kind = "Event",
 		Direction = "ServerToClient",
 		Doc = "(message: string, kind: 'info'|'success'|'error') Toast text for the HUD.",
+	},
+
+	-- ---- Lobby zones: driving range + AFK lounge ---------------------------
+	{
+		Name = "RangeJoin",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "(bayId: number) -> { ok, reason?, BayId?, Earned?, Cap? } Take a free hitting bay you are standing next to.",
+		Limit = UI_ACTION,
+	},
+	{
+		Name = "RangeSwing",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "(clubLabel: string, aimDeg: number, power: 0-100, offset: -1..1) -> { ok, reason?, Shot?, Paid?, Earned?, Cap? } Hit a range ball. The server times the swing, simulates it (RangeRules) and pays coins for a ball at rest on a target, up to the daily cap.",
+		Limit = SWING,
+	},
+	{
+		Name = "RangeLeave",
+		Kind = "Event",
+		Direction = "ClientToServer",
+		Doc = "() Give the bay back.",
+		Limit = UI_ACTION,
+	},
+	{
+		Name = "ZoneStatus",
+		Kind = "Event",
+		Direction = "ServerToClient",
+		Doc = "(status: { Zone: 'Afk', Inside: boolean, SecondsLeft: number?, Earned: number, Cap: number }) AFK lounge state for the lounge HUD (sent on enter/leave and each payout).",
 	},
 } :: { RemoteDef }
 

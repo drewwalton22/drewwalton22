@@ -66,6 +66,9 @@ export type Launch = {
 	SidespinRpm: number, -- + hook (left), - slice (right)
 	AimOffsetRad: number, -- putts only: aim error, + = right
 	IsPutt: boolean,
+	-- Spin-stat grip: multiplies the landing backspin brake (nil = 1). Changes how
+	-- quickly the ball stops after landing, never the carry.
+	GripMult: number?,
 }
 
 export type Sample = { T: number, X: number, Y: number, Z: number }
@@ -124,8 +127,10 @@ local function surfaceNormal(terrain: Terrain, x: number, z: number): (number, n
 end
 
 export type Options = {
-	-- Stop at the first touchdown (used by carry calibration).
+	-- Stop at the first touchdown (used by carry calibration and the aim arc).
 	CarryOnly: boolean?,
+	-- With CarryOnly: still record trajectory samples (calibration skips them for speed).
+	KeepSamples: boolean?,
 }
 
 -- Simulates one shot. `cup` is optional (greens only matter near the hole).
@@ -133,6 +138,7 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 	local windX = if wind then wind.X else 0
 	local windZ = if wind then wind.Z else 0
 	local carryOnly = options ~= nil and options.CarryOnly == true
+	local skipSamples = carryOnly and not (options ~= nil and options.KeepSamples == true)
 
 	local x, z = 0.0, 0.0
 	local startY = terrain.heightAt(0, 0)
@@ -146,7 +152,7 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 	local samples: { Sample } = {}
 	local nextSample = 0.0
 	local function record(force: boolean)
-		if carryOnly then
+		if skipSamples then
 			return
 		end
 		if force or t >= nextSample then
@@ -260,7 +266,7 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 			local vn = vx * nx + vy * ny + vz * nz
 			local tx, ty, tz = vx - vn * nx, vy - vn * ny, vz - vn * nz
 			local backspinRpm = wz / RPM_TO_RADS
-			local brake = P.BackspinBrake * math.clamp(backspinRpm / P.SpinReferenceRpm, 0, 1.5)
+			local brake = P.BackspinBrake * math.clamp(backspinRpm / P.SpinReferenceRpm, 0, 1.5) * (launch.GripMult or 1)
 			local retain = math.max(P.MinTangentRetain, def.TangentRetain * (1 - brake))
 			local vnOut = -vn * def.Restitution
 

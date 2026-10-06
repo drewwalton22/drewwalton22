@@ -37,6 +37,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage.GolfRivals.Shared
 local ClubDatabase = require(Shared.ClubDatabase)
+local ClubStats = require(Shared.ClubStats)
 local Config = require(Shared.Config)
 local CourseDatabase = require(Shared.CourseDatabase)
 local Logger = require(Shared.Logger)
@@ -117,10 +118,10 @@ local function frozenBag(data: ProfileData): (string) -> ClubDatabase.Stats
 	for _, slot in ClubDatabase.BagSlots do
 		local clubId = data.EquippedClubs[slot.Label]
 		local stats = if clubId then ProfileOps.clubStats(data, clubId) else nil
-		bag[slot.Label] = stats or { Distance = 50, Accuracy = 50, Forgiveness = 50 }
+		bag[slot.Label] = stats or ClubStats.baseline()
 	end
 	return function(label: string): ClubDatabase.Stats
-		return bag[label] or bag.D
+		return bag[label] or bag[ClubStats.DRIVER]
 	end
 end
 
@@ -162,7 +163,7 @@ local function flush(match: Match)
 					stats.FairwaysHit += 1
 				end
 				-- Longest drive: a real driver shot that finished in play.
-				if data.ClubLabel == "D" and not data.Penalty and data.Telemetry.CarryYds > stats.LongestDriveYds then
+				if data.ClubLabel == ClubStats.DRIVER and not data.Penalty and data.Telemetry.CarryYds > stats.LongestDriveYds then
 					stats.LongestDriveYds = data.Telemetry.CarryYds
 				end
 			end
@@ -372,6 +373,11 @@ end
 -- ---------------------------------------------------------------------------
 -- Start
 -- ---------------------------------------------------------------------------
+
+-- True while the player is queued for, or playing, a match (lobby zones use it).
+function MatchService.isBusy(player: Player): boolean
+	return playerMatch[player] ~= nil or queued[player] ~= nil
+end
 
 function MatchService.start()
 	Remotes.onInvoke("QueueRanked", function(player: Player, leagueId: any)

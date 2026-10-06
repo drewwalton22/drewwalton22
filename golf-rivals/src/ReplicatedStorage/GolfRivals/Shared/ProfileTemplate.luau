@@ -6,18 +6,28 @@
 	profile loaded from the DataStore is validated and repaired before the game
 	ever touches it.
 
-	PROFILE (SchemaVersion 1)
+	PROFILE (SchemaVersion 2)
 	  Coins / Gems          balances (non-negative integers, capped)
 	  OwnedItems            itemId -> copy count (duplicates stack; they feed
 	                        Sell and Trade-Up)
-	  EquippedItems         slot ("Driver","Swing","BallTrail",...) -> itemId
+	  EquippedItems         slot ("Driver","LongIron","Swing","BallTrail",...) -> itemId
 	  OwnedClubs            clubId -> true
-	  EquippedClubs         bag slot label ("D","7i","PT",...) -> clubId
-	  ClubUpgrades          clubId -> { Distance, Accuracy, Forgiveness } levels
+	  EquippedClubs         category label ("DR","FW","LI","SI","WG","PT") -> clubId
+	  ClubUpgrades          clubId -> { Power, Accuracy, Spin } levels
+	  Earnings              today's lobby coin earnings (driving range / AFK zone),
+	                        for the daily caps; reset when Day changes
 	  Stats                 lifetime counters (quests/leaderboards read these)
 	  Quests                owned by the quest system (filled in a later step)
 	  Shop                  today's purchases, so a rotation item can't be bought twice
 	  Meta                  CreatedAt / Sessions
+
+	SCHEMA HISTORY
+	  v1  14-club bag (D, 3W, 5W, 4i-9i, PW, GW, SW, LW, PT), stats Distance /
+	      Accuracy / Forgiveness, five skin slots (Driver, Wood, Iron, Wedge, Putter).
+	  v2  six club categories (ClubStats), stats Power / Accuracy / Spin, six skin
+	      slots, Earnings section. migrateV1 maps every v1 club to its category
+	      (keeping the highest upgrade levels when several merge), renames the
+	      stats, and gives Iron skins to BOTH new iron slots so nothing is lost.
 
 	LOAD PIPELINE  (`prepare`)
 	  1. reject non-tables ("corrupt") and data from a NEWER schema ("too_new"):
@@ -39,9 +49,9 @@ local ClubDatabase = require(script.Parent.ClubDatabase)
 local TableUtil = require(script.Parent.TableUtil)
 
 export type ClubLevels = {
-	Distance: number,
+	Power: number,
 	Accuracy: number,
-	Forgiveness: number,
+	Spin: number,
 }
 
 export type ProfileData = {
@@ -76,6 +86,11 @@ export type ProfileData = {
 		Rotation: number, -- shop rotation index these purchases belong to
 		Purchased: { [string]: boolean },
 	},
+	Earnings: {
+		Day: number, -- floor(os.time() / 86400) the counters belong to
+		Range: number, -- coins earned at the driving range that day
+		Afk: number, -- coins earned in the AFK lounge that day
+	},
 	Meta: {
 		CreatedAt: number,
 		Sessions: number,
@@ -91,14 +106,104 @@ export type PrepareOptions = {
 
 local ProfileTemplate = {}
 
-ProfileTemplate.CURRENT_VERSION = 1
+ProfileTemplate.CURRENT_VERSION = 2
+
+local function tableOr(value: any): { [any]: any }
+	return if type(value) == "table" then value else {}
+end
+
+local function level(value: any): number
+	return if type(value) == "number" and value == value then value else 0
+end
+
+-- v1 -> v2: 14-club bag -> six categories, Distance/Forgiveness -> Power/Spin,
+-- five skin slots -> six. Defensive against garbage (sanitize runs afterwards).
+local function migrateV1(data: any)
+	-- Owned clubs: each legacy club becomes its category's club of the same line.
+	local owned: { [string]: boolean } = {}
+	for oldId, flag in tableOr(data.OwnedClubs) do
+		local newId = ClubDatabase.migrateLegacyId(oldId)
+		if newId and flag then
+			owned[newId] = true
+		end
+	end
+	data.OwnedClubs = owned
+
+	-- Upgrades: rename the stats; when clubs merge keep the best level per stat.
+	local upgrades: { [string]: ClubLevels } = {}
+	for oldId, levels in tableOr(data.ClubUpgrades) do
+		local newId = ClubDatabase.migrateLegacyId(oldId)
+		if newId and type(levels) == "table" then
+			local merged = upgrades[newId] or { Power = 0, Accuracy = 0, Spin = 0 }
+			merged.Power = math.max(merged.Power, level(levels.Distance))
+			merged.Accuracy = math.max(merged.Accuracy, level(levels.Accuracy))
+			merged.Spin = math.max(merged.Spin, level(levels.Forgiveness))
+			upgrades[newId] = merged
+		end
+	end
+	data.ClubUpgrades = upgrades
+
+	-- Equipped clubs: the club from the category's "main" legacy slot wins.
+	local equipped: { [string]: string } = {}
+	for oldLabel, oldId in tableOr(data.EquippedClubs) do
+		local newLabel = if type(oldLabel) == "string" then ClubDatabase.LegacyLabelMap[oldLabel] else nil
+		local newId = ClubDatabase.migrateLegacyId(oldId)
+		if newLabel and newId and (equipped[newLabel] == nil or ClubDatabase.LegacyPreferred[newLabel] == oldLabel) then
+			equipped[newLabel] = newId
+		end
+	end
+	data.EquippedClubs = equipped
+
+	-- Skins: "_wood" -> "_fairwaywood"; "_iron" -> both "_longiron" and "_shortiron".
+	local function skinTargets(itemId: any): { string }?
+		if type(itemId) ~= "string" or string.sub(itemId, 1, 5) ~= "skin_" then
+			return nil
+		end
+		local base = string.match(itemId, "^(.*)_wood$")
+		if base then
+			return { base .. "_fairwaywood" }
+		end
+		base = string.match(itemId, "^(.*)_iron$")
+		if base then
+			return { base .. "_longiron", base .. "_shortiron" }
+		end
+		return nil
+	end
+	local items: { [any]: any } = {}
+	for itemId, count in tableOr(data.OwnedItems) do
+		local targets = skinTargets(itemId)
+		if targets then
+			for _, target in targets do
+				items[target] = level(items[target]) + level(count)
+			end
+		else
+			items[itemId] = count
+		end
+	end
+	data.OwnedItems = items
+	local slots: { [any]: any } = {}
+	for slot, itemId in tableOr(data.EquippedItems) do
+		if slot == "Wood" or slot == "Iron" then
+			local targets = skinTargets(itemId)
+			if targets then
+				for _, target in targets do
+					local newSlot = if string.match(target, "_fairwaywood$") then "FairwayWood" elseif string.match(target, "_longiron$") then "LongIron" else "ShortIron"
+					slots[newSlot] = target
+				end
+			end
+		else
+			slots[slot] = itemId
+		end
+	end
+	data.EquippedItems = slots
+end
 
 -- migrations[v] upgrades a version-v profile IN PLACE to version v+1.
--- (None yet: version 1 is the first schema.) Example for later:
---   [1] = function(data) data.NewField = 0 end,
-ProfileTemplate.Migrations = {} :: { [number]: Migration }
+ProfileTemplate.Migrations = {
+	[1] = migrateV1,
+} :: { [number]: Migration }
 
-local STAT_IDS: { Types.StatId } = { "Distance", "Accuracy", "Forgiveness" }
+local STAT_IDS: { Types.StatId } = { "Power", "Accuracy", "Spin" }
 local MAX_ITEM_COPIES = 1e6
 
 -- A fresh profile: starting currency, starter items/clubs owned AND equipped.
@@ -132,6 +237,7 @@ function ProfileTemplate.new(now: number): ProfileData
 		},
 		Quests = {},
 		Shop = { Rotation = 0, Purchased = {} },
+		Earnings = { Day = 0, Range = 0, Afk = 0 },
 		Meta = { CreatedAt = now, Sessions = 0 },
 	}
 	ProfileTemplate.ensureDefaults(data)
@@ -223,7 +329,7 @@ local function fillMissing(raw: any, now: number)
 			raw[key] = TableUtil.deepCopy(defaultValue)
 		end
 	end
-	for _, section in { "Stats", "Shop", "Meta" } do
+	for _, section in { "Stats", "Shop", "Earnings", "Meta" } do
 		for key, defaultValue in template[section] do
 			if type(raw[section][key]) ~= type(defaultValue) then
 				raw[section][key] = TableUtil.deepCopy(defaultValue)

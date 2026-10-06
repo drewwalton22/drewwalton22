@@ -18,6 +18,7 @@
 local Types = require(script.Parent.Types)
 local Format = require(script.Parent.Format)
 local ClubDatabase = require(script.Parent.ClubDatabase)
+local ClubStats = require(script.Parent.ClubStats)
 local ClubAdvisor = require(script.Parent.ClubAdvisor)
 
 export type ClubOption = {
@@ -122,6 +123,8 @@ function MatchView.hud(snapshot: any, myId: string, statsFor: (string) -> ClubDa
 	local banner: string
 	if snapshot.Phase == "Finished" then
 		banner = "MATCH COMPLETE"
+	elseif snapshot.Phase == "Intro" then
+		banner = `HOLE {snapshot.HoleIndex}  ·  PAR {snapshot.Hole.Par}`
 	elseif snapshot.Phase == "Flight" then
 		banner = "BALL IN FLIGHT"
 	elseif isMyTurn then
@@ -132,7 +135,7 @@ function MatchView.hud(snapshot: any, myId: string, statsFor: (string) -> ClubDa
 
 	local lie: Types.LieId = if myView then myView.Lie else "Tee"
 	local yardsToPin = if myView then myView.YardsToPin else hole.Yards
-	local selected = if myView then myView.ClubLabel else "D"
+	local selected = if myView then myView.ClubLabel else ClubStats.DRIVER
 	local aim = if myView then myView.AimDeg else 0
 
 	local options: { ClubOption } = {}

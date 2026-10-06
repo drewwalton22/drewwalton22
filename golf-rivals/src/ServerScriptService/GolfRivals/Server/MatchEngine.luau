@@ -7,12 +7,16 @@
 	picks wind and the opening tee), so a whole match is replayable in tests.
 
 	FLOW
+	  Intro phase  : every hole opens with HoleIntroSeconds of fly-over. Nobody may
+	                 swing (bots included) and no turn clock runs, so a bot can never
+	                 shoot while the players are still watching the hole preview.
 	  Swing phase  : exactly one player (the "active" player) may swing. The
 	                 server timestamps when the turn opened; a swing faster than a
 	                 human could click is rejected (SwingMath.validateSubmission).
 	  Flight phase : the shot is resolved at once on the server; the engine then
-	                 waits (ball flight + FlightPadSeconds) so clients can play the
-	                 animation, then opens the next turn.
+	                 waits SwingLeadSeconds (the golfer's swing animation up to the
+	                 club's impact frame) + ball flight + FlightPadSeconds so clients
+	                 can play swing -> impact -> flight, then opens the next turn.
 	  Finished     : someone won, drew, or the others forfeited.
 
 	RULES
@@ -46,6 +50,7 @@ local Types = require(Shared.Types)
 local Config = require(Shared.Config)
 local ClubAdvisor = require(Shared.ClubAdvisor)
 local ClubDatabase = require(Shared.ClubDatabase)
+local ClubStats = require(Shared.ClubStats)
 local CourseDatabase = require(Shared.CourseDatabase)
 local CourseTerrain = require(Shared.CourseTerrain)
 local Prng = require(Shared.Prng)
@@ -71,9 +76,11 @@ export type EngineConfig = {
 	Holes: { CourseDatabase.HoleDef },
 	Seed: number,
 	Now: number,
+	IntroSeconds: number?, -- per-hole fly-over (default Config.Match.HoleIntroSeconds; 0 = none)
+	SwingLeadSeconds: number?, -- swing animation lead before impact (default Config.Match.SwingLeadSeconds)
 }
 
-export type Phase = "Swing" | "Flight" | "Finished"
+export type Phase = "Intro" | "Swing" | "Flight" | "Finished"
 
 export type Event = { Type: string, Data: { [string]: any } }
 
@@ -157,7 +164,7 @@ function MatchEngine.new(config: EngineConfig): Engine
 	for _, spec in config.Players do
 		local ps: PlayerState = {
 			Spec = spec, X = 0, Z = 0, Lie = "Tee", Strokes = 0, Holed = false,
-			ClubLabel = "D", AimDeg = 0, HoleScores = {}, Total = 0, Timeouts = 0, Forfeited = false,
+			ClubLabel = ClubStats.DRIVER, AimDeg = 0, HoleScores = {}, Total = 0, Timeouts = 0, Forfeited = false,
 		}
 		table.insert(players, ps)
 		byId[spec.Id] = ps
@@ -175,7 +182,9 @@ function MatchEngine.new(config: EngineConfig): Engine
 	local windMph, windDirDeg = 0.0, 0.0
 	local phase: Phase = "Swing"
 	local active: PlayerState = players[1]
-	local turnStartedAt, turnDeadline, flightUntil = config.Now, config.Now, config.Now
+	local turnStartedAt, turnDeadline, flightUntil, introUntil = config.Now, config.Now, config.Now, config.Now
+	local introSeconds = config.IntroSeconds or M.HoleIntroSeconds
+	local swingLead = config.SwingLeadSeconds or M.SwingLeadSeconds
 	local events: { Event } = {}
 	local finished = false
 	local resultCache: MatchResult? = nil
@@ -299,9 +308,17 @@ function MatchEngine.new(config: EngineConfig): Engine
 		for _, ps in players do
 			ps.X, ps.Z, ps.Lie, ps.Strokes, ps.Holed = hole.Tee.X, hole.Tee.Z, "Tee", 0, false
 		end
-		push("HoleStart", { HoleIndex = index, Par = hole.Par, Wind = { Mph = windMph, DirDeg = windDirDeg } })
+		push("HoleStart", { HoleIndex = index, Par = hole.Par, Wind = { Mph = windMph, DirDeg = windDirDeg }, IntroSeconds = introSeconds })
 		local first = chooseNext()
-		if first then
+		if first == nil then
+			return
+		end
+		if introSeconds > 0 then
+			-- Fly-over: show who tees off first, but nobody may swing yet.
+			phase = "Intro"
+			active = first
+			introUntil = now + introSeconds
+		else
 			beginTurn(first, now)
 		end
 	end
@@ -423,7 +440,7 @@ function MatchEngine.new(config: EngineConfig): Engine
 		end
 
 		phase = "Flight"
-		flightUntil = now + result.TotalSeconds + M.FlightPadSeconds
+		flightUntil = now + swingLead + result.TotalSeconds + M.FlightPadSeconds
 		push("Shot", {
 			PlayerId = ps.Spec.Id,
 			HoleIndex = holeIndex,
@@ -445,7 +462,8 @@ function MatchEngine.new(config: EngineConfig): Engine
 				ApexFeet = result.ApexFeet, SpinRpm = result.SpinRpm, BallSpeedMph = result.BallSpeedMph,
 				LateralYds = result.LateralYds,
 			},
-			Samples = samples, -- { t, x, y, z } in the hole frame
+			Samples = samples, -- { t, x, y, z } in the hole frame (t = 0 at club impact)
+			ImpactDelay = swingLead, -- seconds of swing animation before the ball leaves the club
 			AirSeconds = result.FlightSeconds, -- time until first touchdown (carry ends here)
 			TotalSeconds = result.TotalSeconds, -- until the ball stops
 		})
@@ -483,6 +501,7 @@ function MatchEngine.new(config: EngineConfig): Engine
 			Wind = { Mph = windMph, DirDeg = windDirDeg },
 			ActiveId = if phase == "Finished" then nil else active.Spec.Id,
 			TurnSecondsLeft = if phase == "Swing" then math.max(0, turnDeadline - now) else 0,
+			IntroSecondsLeft = if phase == "Intro" then math.max(0, introUntil - now) else 0,
 			Players = views,
 			Finished = finished,
 			Result = if finished then buildResult() else nil,
@@ -600,7 +619,14 @@ function MatchEngine.new(config: EngineConfig): Engine
 		if finished then
 			return
 		end
-		if phase == "Flight" then
+		if phase == "Intro" then
+			if now >= introUntil then
+				local first = chooseNext()
+				if first then
+					beginTurn(first, now)
+				end
+			end
+		elseif phase == "Flight" then
 			if now >= flightUntil then
 				advance(now)
 			end

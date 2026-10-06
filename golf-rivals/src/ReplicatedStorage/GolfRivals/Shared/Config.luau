@@ -17,7 +17,7 @@ export type LeagueDef = {
 }
 
 export type BotProfile = {
-	Stats: { Distance: number, Accuracy: number, Forgiveness: number }, -- applied to every club
+	Stats: { Power: number, Accuracy: number, Spin: number }, -- applied to every club
 	PowerSigma: number, -- gauge execution noise, percentage points of power (std dev)
 	OffsetSigma: number, -- gauge execution noise on the accuracy offset (std dev, offset units)
 	BlunderChance: number, -- chance of a badly mistimed click (|offset| ~ 0.7)
@@ -29,7 +29,7 @@ export type BotProfile = {
 export type LieDef = {
 	SpeedMult: number, -- multiplies ball speed when HITTING from this lie
 	SpinMult: number, -- multiplies backspin when hitting from this lie
-	AccuracyPenalty: number, -- 0..1 shrinks the green zone / amplifies curve (before Forgiveness)
+	AccuracyPenalty: number, -- 0..1 shrinks the green zone / amplifies curve (before Spin)
 	Restitution: number, -- vertical bounce: v_normal_out = Restitution * v_normal_in
 	TangentRetain: number, -- fraction of along-surface speed kept after impact (before backspin check)
 	RollFriction: number, -- rolling-resistance coefficient (decel = RollFriction * g)
@@ -106,8 +106,8 @@ Config.Clubs = {
 	UpgradeCostBase = 500,
 	UpgradeCostGrowth = 1.35,
 	-- Overall (OVR) = weighted stat average. 0.4/0.3/0.3 reproduces the mockup:
-	-- Distance 92, Accuracy 78, Forgiveness 85 -> 36.8 + 23.4 + 25.5 = 85.7 -> 86.
-	OVRWeights = { Distance = 0.4, Accuracy = 0.3, Forgiveness = 0.3 },
+	-- Power 92, Accuracy 78, Spin 85 -> 36.8 + 23.4 + 25.5 = 85.7 -> 86.
+	OVRWeights = { Power = 0.4, Accuracy = 0.3, Spin = 0.3 },
 }
 
 -- 3-CLICK SWING --------------------------------------------------------
@@ -144,13 +144,16 @@ Config.Swing = {
 	-- lands within ~5 points of 25/50/75% of full carry for every club (verified
 	-- in tools/verify_shared.luau). Re-run that check after touching Physics.
 	PowerToSpeedExponent = 0.52,
-	-- Distance stat: speed *= 1 + DistanceSpeedPerPoint * (distance - Baseline).
-	-- BaseCarryYds in ClubDatabase is the carry AT the baseline stat.
-	DistanceStatBaseline = 50,
-	DistanceSpeedPerPoint = 0.0025,
-	-- Forgiveness removes this fraction of a lie's AccuracyPenalty at stat 100.
-	LieForgivenessReduction = 0.7,
-	-- Putter: a 100% putt rolls this far on a flat green (before Distance stat).
+	-- Stat baseline: a stat of 50 is "neutral" (carries equal BaseCarryYds).
+	StatBaseline = 50,
+	-- Power stat: speed *= 1 + PowerSpeedPerPoint * (Power - StatBaseline).
+	PowerSpeedPerPoint = 0.0025,
+	-- Spin stat: landing brake *= 1 + SpinGripPerPoint * (Spin - StatBaseline)
+	-- (Spin 100 -> 1.6x grip, Spin 0 -> 0.4x) ...
+	SpinGripPerPoint = 0.012,
+	-- ... and Spin removes this fraction of a lie's AccuracyPenalty at stat 100.
+	LieSpinReduction = 0.7,
+	-- Putter: a 100% putt rolls this far on a flat green (before the Power stat).
 	PuttFullPowerYards = 40,
 
 	-- Anti-cheat: a submission faster than a human could have clicked is
@@ -211,6 +214,14 @@ Config.Match = {
 	AutoShotPower = 60, -- a timed-out turn plays this (deliberately poor) shot...
 	AutoShotOffset = 0.5, -- ...with this accuracy offset (a clear slice)
 	FlightPadSeconds = 2.5, -- pause after the ball stops before the next turn starts
+	-- Every shot is presented as: golfer swings -> club meets ball -> ball flies.
+	-- The ball leaves the club this long after the server resolves the shot, so
+	-- the engine waits SwingLeadSeconds + flight + FlightPadSeconds before the
+	-- next turn (clients sync the impact frame to it; see GolferRig.IMPACT_SECONDS).
+	SwingLeadSeconds = 1.0,
+	-- Each hole opens with a camera fly-over; no one (bots included) may swing and
+	-- the turn clock does not run until it ends.
+	HoleIntroSeconds = 4.5,
 	MaxStrokesOverPar = 4, -- pick-up: a hole ends at par + this many strokes
 	GimmeMeters = 0.6, -- a ball resting this close on the green is holed (costs 1 stroke)
 	PenaltyStrokes = 1, -- water / out of bounds: replay from the same spot
@@ -218,6 +229,29 @@ Config.Match = {
 	MaxAimDegrees = 30, -- aim adjustment either side of the pin line
 	BotThinkSeconds = { Min = 1.5, Max = 3.5 }, -- bots pause like a person would
 	EndScreenSeconds = 6, -- results screen before the match is cleaned up
+}
+
+-- LOBBY: DRIVING RANGE -------------------------------------------------
+-- Walk into a bay at the range (west of the plaza), hit balls at the target
+-- greens and earn coins for every ball that comes to rest on one (double on the
+-- bullseye). The server simulates every shot (same physics as matches) and pays
+-- out; the client only sends its three-click swing. Targets live in RangeRules.
+Config.Range = {
+	DailyCoinCap = 3000, -- most coins the range pays one player per UTC day
+	BullseyeMultiplier = 2, -- inside the inner third of a target
+	ReadyPadSeconds = 1.0, -- after a ball stops, before the next one may be struck
+	IdleKickSeconds = 120, -- a bay is released after this long without a swing
+	JoinRadiusStuds = 16, -- how close to a bay you must stand to take it
+}
+
+-- LOBBY: AFK LOUNGE -----------------------------------------------------
+-- Stand (or idle) inside the lounge under the cabana roof and earn coins over
+-- time. Server-side presence check only: nothing the client sends matters.
+Config.Afk = {
+	CoinsPerTick = 15,
+	TickSeconds = 60, -- uninterrupted time inside the lounge per payout
+	DailyCoinCap = 1800, -- two hours of AFK per UTC day
+	CheckSeconds = 1, -- how often the server samples positions
 }
 
 -- RANKED MATCHMAKING ----------------------------------------------------
@@ -237,17 +271,17 @@ Config.Matchmaking = {
 -- human-like gauge error.
 Config.Bots = {
 	Easy = {
-		Stats = { Distance = 50, Accuracy = 40, Forgiveness = 45 },
+		Stats = { Power = 50, Accuracy = 40, Spin = 45 },
 		PowerSigma = 9, OffsetSigma = 0.32, BlunderChance = 0.10, WindAwareness = 0.2,
 		AimCandidates = { 0 }, ClubMistakeChance = 0.25,
 	},
 	Medium = {
-		Stats = { Distance = 65, Accuracy = 60, Forgiveness = 60 },
+		Stats = { Power = 65, Accuracy = 60, Spin = 60 },
 		PowerSigma = 4, OffsetSigma = 0.14, BlunderChance = 0.03, WindAwareness = 0.6,
 		AimCandidates = { -6, 0, 6 }, ClubMistakeChance = 0.08,
 	},
 	Hard = {
-		Stats = { Distance = 85, Accuracy = 80, Forgiveness = 75 },
+		Stats = { Power = 85, Accuracy = 80, Spin = 75 },
 		PowerSigma = 1.5, OffsetSigma = 0.05, BlunderChance = 0.0, WindAwareness = 1.0,
 		AimCandidates = { -8, -4, 0, 4, 8 }, ClubMistakeChance = 0.0,
 	},

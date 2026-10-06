@@ -10,6 +10,7 @@
 local Types = require(script.Parent.Types)
 local Config = require(script.Parent.Config)
 local ClubDatabase = require(script.Parent.ClubDatabase)
+local ClubStats = require(script.Parent.ClubStats)
 local ItemDatabase = require(script.Parent.ItemDatabase)
 local ProfileOps = require(script.Parent.ProfileOps)
 local ProfileTemplate = require(script.Parent.ProfileTemplate)
@@ -55,7 +56,7 @@ export type Skin = { ItemId: string, Name: string, Rarity: Types.RarityId, Color
 
 local LoadoutView = {}
 
-local STATS: { Types.StatId } = { "Distance", "Accuracy", "Forgiveness" }
+local STATS: { Types.StatId } = ClubStats.StatIds
 
 local function ovrOf(profile: ProfileData, clubId: string): number
 	local stats = ProfileOps.clubStats(profile, clubId)

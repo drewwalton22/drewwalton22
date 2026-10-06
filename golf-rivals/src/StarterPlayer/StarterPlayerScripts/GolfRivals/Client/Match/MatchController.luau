@@ -58,7 +58,7 @@ local MatchController = {}
 local ARENA_BASE = Vector3.new(30000, 0, 0)
 local ARENA_SPACING = 6000
 local localPlayer = Players.LocalPlayer
-local DEFAULT_STATS: ClubDatabase.Stats = { Distance = 50, Accuracy = 50, Forgiveness = 50 }
+local DEFAULT_STATS: ClubDatabase.Stats = { Power = 50, Accuracy = 50, Spin = 50 }
 
 -- ---- session state (nil / false while in the lobby) --------------------------------------
 local active = false
@@ -183,7 +183,7 @@ local function onGauge(gauge: any)
 		return
 	end
 	local stats = statsFor(view.ClubLabel)
-	local penalty = SwingMath.effectivePenalty(view.Lie, stats.Forgiveness)
+	local penalty = SwingMath.effectivePenalty(view.Lie, stats.Spin)
 	local green = SwingMath.greenHalfWidth(stats.Accuracy, penalty)
 	hud.setGauge(GaugeView.layout(gauge, green), nil)
 end

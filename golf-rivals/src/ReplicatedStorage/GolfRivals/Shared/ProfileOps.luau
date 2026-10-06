@@ -35,7 +35,7 @@ type ProfileData = ProfileTemplate.ProfileData
 
 local ProfileOps = {}
 
-local STAT_IDS: { string } = { "Distance", "Accuracy", "Forgiveness" }
+local STAT_IDS: { string } = { "Power", "Accuracy", "Spin" }
 local MAX_ITEM_COPIES = 1e6
 
 -- ---------------------------------------------------------------------------
@@ -221,9 +221,9 @@ end
 function ProfileOps.clubLevels(data: ProfileData, clubId: string): ProfileTemplate.ClubLevels
 	local levels = data.ClubUpgrades[clubId]
 	if levels == nil then
-		return { Distance = 0, Accuracy = 0, Forgiveness = 0 }
+		return { Power = 0, Accuracy = 0, Spin = 0 }
 	end
-	return { Distance = levels.Distance, Accuracy = levels.Accuracy, Forgiveness = levels.Forgiveness }
+	return { Power = levels.Power, Accuracy = levels.Accuracy, Spin = levels.Spin }
 end
 
 -- Effective stats = base + upgrades (what SwingMath consumes).
@@ -234,9 +234,9 @@ function ProfileOps.clubStats(data: ProfileData, clubId: string): ClubDatabase.S
 	end
 	local levels = ProfileOps.clubLevels(data, clubId)
 	return {
-		Distance = ClubDatabase.statAtLevel(club.BaseStats.Distance, levels.Distance),
+		Power = ClubDatabase.statAtLevel(club.BaseStats.Power, levels.Power),
 		Accuracy = ClubDatabase.statAtLevel(club.BaseStats.Accuracy, levels.Accuracy),
-		Forgiveness = ClubDatabase.statAtLevel(club.BaseStats.Forgiveness, levels.Forgiveness),
+		Spin = ClubDatabase.statAtLevel(club.BaseStats.Spin, levels.Spin),
 	}
 end
 

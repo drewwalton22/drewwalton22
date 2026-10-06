@@ -10,6 +10,7 @@
 	  4. Economy service: shop rotation, cases, sell, trade-up, upgrades, equip
 	  5. Match service: ranked queues, AI bots, match orchestration
 	  6. Quests, leaderboard, and the lobby world
+	  7. Lobby coin zones: driving range bays + AFK lounge
 
 	If validation fails the error aborts this script on purpose: a server with
 	broken economy data must not accept players.
@@ -30,6 +31,7 @@ local MatchService = require(script.Parent:WaitForChild("MatchService"))
 local QuestService = require(script.Parent:WaitForChild("QuestService"))
 local LeaderboardService = require(script.Parent:WaitForChild("LeaderboardService"))
 local LobbyBuilder = require(script.Parent:WaitForChild("LobbyBuilder"))
+local ZoneService = require(script.Parent:WaitForChild("ZoneService"))
 
 Logger.info("Server", "Booting Golf Rivals server...")
 Logger.info("Server", "Step 1: validating item / club / case databases (economy exploit checks included)")
@@ -61,5 +63,8 @@ Logger.info("Server", "Step 6: quests, leaderboard and the lobby world")
 QuestService.start()
 LeaderboardService.start()
 LobbyBuilder.build()
+
+Logger.info("Server", "Step 7: lobby coin zones (driving range + AFK lounge, server-simulated and daily-capped)")
+ZoneService.start()
 
 Logger.info("Server", "Server ready.")

@@ -118,10 +118,13 @@ function DatabaseValidator.run(): { string }
 	-- 5) CLUBS -------------------------------------------------------------
 	for _, club in ClubDatabase.Ordered do
 		local s = club.BaseStats
-		for _, statValue in { s.Distance, s.Accuracy, s.Forgiveness } do
+		for _, statValue in { s.Power, s.Accuracy, s.Spin } do
 			check(statValue >= 1 and statValue <= Config.Clubs.StatCap, `club {club.Id}: stat out of range`)
 		end
 	end
+	-- Exactly the six club categories, one skin slot each.
+	check(#ClubDatabase.BagSlots == 6, "the bag must have exactly six club categories")
+	check(#ItemDatabase.ClubClasses == #ClubDatabase.BagSlots, "every club category needs a skin slot")
 	-- A brand-new player must be able to fill the whole bag for free.
 	for _, slot in ClubDatabase.BagSlots do
 		local hasStarter = false

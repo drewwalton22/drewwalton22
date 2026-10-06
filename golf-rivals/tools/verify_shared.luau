@@ -47,6 +47,13 @@ local CasesView = require("./CasesView")
 local TradeUpView = require("./TradeUpView")
 local ModeView = require("./ModeView")
 local LobbyLayout = require("./LobbyLayout")
+local ClubStats = require("./ClubStats")
+local Assets = require("./Assets")
+local AimGuide = require("./AimGuide")
+local RangeRules = require("./RangeRules")
+local ZoneRewards = require("./ZoneRewards")
+local SwingPose = require("./SwingPose")
+local PodiumView = require("./PodiumView")
 
 local Types = require("./Types")
 local P_YD = Config.Physics.YardsToMeters -- metres per yard
@@ -71,8 +78,8 @@ print(`items={#ItemDatabase.Ordered} clubs={#ClubDatabase.Ordered} cases={#CaseD
 
 -- Mockup spot checks ------------------------------------------------------
 expect("Rarity chain ends at Mythical", Rarity.nextTier("Legendary") == "Mythical" and Rarity.nextTier("Mythical") == nil)
-expect("OVR 92/78/85 -> 86 (driver card)", ClubDatabase.overall({ Distance = 92, Accuracy = 78, Forgiveness = 85 }) == 86)
-local shadow = ClubDatabase.get("tatermade_shadow_d")
+expect("OVR 92/78/85 -> 86 (driver card)", ClubDatabase.overall({ Power = 92, Accuracy = 78, Spin = 85 }) == 86)
+local shadow = ClubDatabase.get("tatermade_shadow_dr")
 expect("Tatermade Shadow driver is OVR 86", shadow ~= nil and ClubDatabase.overall(shadow.BaseStats) == 86)
 expect("Case drop percents are 45/30/15/7/2/1", (function()
 	local p = CaseDatabase.getDropPercents("club_skins_case")
@@ -254,7 +261,7 @@ end
 -- Shot physics ----------------------------------------------------------------
 print("-- shot physics")
 do
-	local baseStats = { Distance = 50, Accuracy = 60, Forgiveness = 60 }
+	local baseStats = { Power = 50, Accuracy = 60, Spin = 60 }
 	local fairway = ShotPhysics.flatTerrain("Fairway")
 	local function shot(label: string, stats: ClubDatabase.Stats, power: number, offset: number, lie: Types.LieId?, wind: ShotPhysics.Wind?): SwingMath.ResolvedShot
 		local slot = ClubDatabase.getSlot(label) :: ClubDatabase.BagSlot
@@ -278,7 +285,7 @@ do
 	expect("Full-power carry matches BaseCarryYds for all 13 clubs (+/-0.5 yd)", calibrated)
 
 	-- Mockup driver card: Distance 92 / Acc 78 / Forg 85 -> ~278 carry, ~312 total, 2450 rpm.
-	local mock = shot("D", { Distance = 92, Accuracy = 78, Forgiveness = 85 }, 100, 0).Result
+	local mock = shot("DR", { Power = 92, Accuracy = 78, Spin = 85 }, 100, 0).Result
 	print(`  mockup driver: carry {mock.CarryYds} total {mock.TotalYds} roll {mock.RollYds} apex {mock.ApexFeet}ft spin {mock.SpinRpm}`)
 	expect("Mockup driver carry within 270-285 yds (mockup: 278)", mock.CarryYds > 270 and mock.CarryYds < 285)
 	expect("Mockup driver total within 300-325 (mockup: 312) and roll positive", mock.TotalYds > 300 and mock.TotalYds < 325 and mock.RollYds > 0)
@@ -287,7 +294,7 @@ do
 
 	-- Power is ~linear in distance.
 	local linear = true
-	for _, label in { "D", "5W", "7i", "PW", "LW" } do
+	for _, label in { "DR", "FW", "LI", "SI", "WG" } do
 		local slot = ClubDatabase.getSlot(label) :: ClubDatabase.BagSlot
 		for _, p in { 25, 50, 75 } do
 			local pct = shot(label, baseStats, p, 0).Result.CarryYds / slot.BaseCarryYds * 100
@@ -298,36 +305,36 @@ do
 		end
 	end
 	expect("Carry% tracks power% within 6 points (25/50/75, 5 clubs)", linear)
-	local lowP = shot("D", baseStats, 25, 0).Result.CarryYds
-	local highP = shot("D", baseStats, 75, 0).Result.CarryYds
-	expect("More power -> strictly more carry", lowP < highP and highP < shot("D", baseStats, 100, 0).Result.CarryYds)
+	local lowP = shot("DR", baseStats, 25, 0).Result.CarryYds
+	local highP = shot("DR", baseStats, 75, 0).Result.CarryYds
+	expect("More power -> strictly more carry", lowP < highP and highP < shot("DR", baseStats, 100, 0).Result.CarryYds)
 
 	-- Distance stat.
-	local weak = shot("D", { Distance = 50, Accuracy = 60, Forgiveness = 60 }, 100, 0).Result.CarryYds
-	local strong = shot("D", { Distance = 90, Accuracy = 60, Forgiveness = 60 }, 100, 0).Result.CarryYds
+	local weak = shot("DR", { Power = 50, Accuracy = 60, Spin = 60 }, 100, 0).Result.CarryYds
+	local strong = shot("DR", { Power = 90, Accuracy = 60, Spin = 60 }, 100, 0).Result.CarryYds
 	expect("Higher Distance stat -> more carry", strong > weak + 15)
 
 	-- Curve direction & monotonic severity.
-	local straight = shot("D", baseStats, 100, 0).Result
-	local slice = shot("D", baseStats, 100, -0.6).Result
-	local hook = shot("D", baseStats, 100, 0.6).Result
+	local straight = shot("DR", baseStats, 100, 0).Result
+	local slice = shot("DR", baseStats, 100, -0.6).Result
+	local hook = shot("DR", baseStats, 100, 0.6).Result
 	expect("Perfect timing flies dead straight (|lateral| < 0.01 yd)", math.abs(straight.LateralYds) < 0.01)
 	expect("Early click (offset<0) slices RIGHT (lateral > 0)", slice.LateralYds > 10)
 	expect("Late click (offset>0) hooks LEFT (lateral < 0)", hook.LateralYds < -10)
 	expect("Slice and hook are mirror images", math.abs(slice.LateralYds + hook.LateralYds) < 0.01)
-	local m1, m2, m3 = shot("D", baseStats, 100, -0.3).Result.LateralYds, slice.LateralYds, shot("D", baseStats, 100, -1).Result.LateralYds
+	local m1, m2, m3 = shot("DR", baseStats, 100, -0.3).Result.LateralYds, slice.LateralYds, shot("DR", baseStats, 100, -1).Result.LateralYds
 	expect("Bigger timing miss -> bigger curve", m1 < m2 and m2 < m3)
-	local insideGreen = shot("D", baseStats, 100, 0.05)
+	local insideGreen = shot("DR", baseStats, 100, 0.05)
 	expect("Inside the green zone: Perfect quality, no curve", insideGreen.Quality == "Perfect" and math.abs(insideGreen.Result.LateralYds) < 0.01)
-	expect("Quality bands: Good at 0.2, Poor at 0.8", shot("D", baseStats, 100, 0.2).Quality == "Good" and shot("D", baseStats, 100, 0.8).Quality == "Poor")
-	local lowAcc = shot("D", { Distance = 50, Accuracy = 20, Forgiveness = 60 }, 100, -0.6).Result.LateralYds
-	local highAcc = shot("D", { Distance = 50, Accuracy = 95, Forgiveness = 60 }, 100, -0.6).Result.LateralYds
+	expect("Quality bands: Good at 0.2, Poor at 0.8", shot("DR", baseStats, 100, 0.2).Quality == "Good" and shot("DR", baseStats, 100, 0.8).Quality == "Poor")
+	local lowAcc = shot("DR", { Power = 50, Accuracy = 20, Spin = 60 }, 100, -0.6).Result.LateralYds
+	local highAcc = shot("DR", { Power = 50, Accuracy = 95, Spin = 60 }, 100, -0.6).Result.LateralYds
 	expect("Higher Accuracy stat -> smaller curve for the same miss", highAcc < lowAcc * 0.8)
 
 	-- Wind.
-	local head = shot("D", baseStats, 100, 0, nil, SwingMath.windToLocal(15, 180, 0)).Result
-	local tail = shot("D", baseStats, 100, 0, nil, SwingMath.windToLocal(15, 0, 0)).Result
-	local cross = shot("D", baseStats, 100, 0, nil, SwingMath.windToLocal(15, 90, 0)).Result
+	local head = shot("DR", baseStats, 100, 0, nil, SwingMath.windToLocal(15, 180, 0)).Result
+	local tail = shot("DR", baseStats, 100, 0, nil, SwingMath.windToLocal(15, 0, 0)).Result
+	local cross = shot("DR", baseStats, 100, 0, nil, SwingMath.windToLocal(15, 90, 0)).Result
 	expect("Headwind shortens, tailwind lengthens carry", head.CarryYds < straight.CarryYds - 10 and tail.CarryYds > straight.CarryYds + 10)
 	expect("Wind from the left (blowing right) pushes the ball right", cross.LateralYds > 10)
 	local windLocal = SwingMath.windToLocal(10, 90, 90)
@@ -336,12 +343,12 @@ do
 	-- Lies.
 	local lieCarry = {}
 	for _, lie in { "Fairway", "Rough", "Sand" } do
-		lieCarry[lie] = shot("7i", baseStats, 100, 0, lie :: Types.LieId).Result.CarryYds
+		lieCarry[lie] = shot("SI", baseStats, 100, 0, lie :: Types.LieId).Result.CarryYds
 	end
 	expect("Lie penalty: Fairway > Rough > Sand carry", lieCarry.Fairway > lieCarry.Rough and lieCarry.Rough > lieCarry.Sand)
-	local sandLowF = shot("7i", { Distance = 50, Accuracy = 60, Forgiveness = 10 }, 100, -0.5, "Sand").Result.LateralYds
-	local sandHighF = shot("7i", { Distance = 50, Accuracy = 60, Forgiveness = 95 }, 100, -0.5, "Sand").Result.LateralYds
-	expect("Forgiveness softens the lie's accuracy penalty", sandHighF < sandLowF)
+	local sandLowF = shot("SI", { Power = 50, Accuracy = 60, Spin = 10 }, 100, -0.5, "Sand").Result.LateralYds
+	local sandHighF = shot("SI", { Power = 50, Accuracy = 60, Spin = 95 }, 100, -0.5, "Sand").Result.LateralYds
+	expect("Spin softens the lie's accuracy penalty", sandHighF < sandLowF)
 
 	-- Roll / bounce / spin.
 	local function onGreenAt(distanceM: number): ShotPhysics.Terrain
@@ -360,7 +367,7 @@ do
 		local terrain = onGreenAt(slot.BaseCarryYds * P_YD - 20)
 		return SwingMath.resolveShot({ Slot = slot, Stats = baseStats, Power = 100, AccuracyOffset = 0, Lie = "Fairway" }, terrain, nil).Result
 	end
-	local driverGreen, lwGreen = toGreen("D"), toGreen("LW")
+	local driverGreen, lwGreen = toGreen("DR"), toGreen("WG")
 	expect("Driver releases forward on a green; lob wedge checks up (roll: driver > 10 yd, wedge < 2 yd)", driverGreen.RollYds > 10 and lwGreen.RollYds < 2)
 	expect("Flight samples are time-ordered and start at the origin", (function()
 		local s = driverGreen.Samples
@@ -384,7 +391,7 @@ do
 		end,
 	}
 	local drowned = SwingMath.resolveShot({
-		Slot = ClubDatabase.getSlot("D") :: ClubDatabase.BagSlot, Stats = baseStats, Power = 100, AccuracyOffset = 0, Lie = "Fairway",
+		Slot = ClubDatabase.getSlot("DR") :: ClubDatabase.BagSlot, Stats = baseStats, Power = 100, AccuracyOffset = 0, Lie = "Fairway",
 	}, lakeTerrain, nil).Result
 	expect("Landing in water ends the shot with Outcome Water (no roll)", drowned.Outcome == "Water" and math.abs(drowned.RollYds) < 1e-6)
 
@@ -441,12 +448,12 @@ do
 	expect("Missing the line (late click) doesn't hole it", offLine.Outcome == "Rest")
 
 	-- Determinism.
-	local a = shot("D", baseStats, 83, -0.37, "Rough", SwingMath.windToLocal(12, 140, 20)).Result
-	local b = shot("D", baseStats, 83, -0.37, "Rough", SwingMath.windToLocal(12, 140, 20)).Result
+	local a = shot("DR", baseStats, 83, -0.37, "Rough", SwingMath.windToLocal(12, 140, 20)).Result
+	local b = shot("DR", baseStats, 83, -0.37, "Rough", SwingMath.windToLocal(12, 140, 20)).Result
 	expect("Identical inputs give bit-identical results (no RNG)", a.TotalYds == b.TotalYds and a.LateralYds == b.LateralYds and #a.Samples == #b.Samples)
 
 	-- Apex heights for the telemetry overlay.
-	print(`  apex heights (ft): D {math.floor(straight.ApexFeet)} | 7i {math.floor(shot("7i", baseStats, 100, 0).Result.ApexFeet)} | LW {math.floor(shot("LW", baseStats, 100, 0).Result.ApexFeet)}`)
+	print(`  apex heights (ft): DR {math.floor(straight.ApexFeet)} | SI {math.floor(shot("SI", baseStats, 100, 0).Result.ApexFeet)} | WG {math.floor(shot("WG", baseStats, 100, 0).Result.ApexFeet)}`)
 end
 
 
@@ -473,7 +480,7 @@ do
 			bagFull = false
 		end
 	end
-	expect("New profile: all 14 bag slots hold an owned starter club", bagFull)
+	expect("New profile: all 6 bag slots hold an owned starter club", bagFull)
 	local prepared = ProfileTemplate.prepare(TableUtil.deepCopy(fresh), 2000)
 	expect("A fresh profile survives prepare() unchanged", prepared ~= nil and prepared.Coins == fresh.Coins and prepared.Meta.CreatedAt == 1000)
 
@@ -485,21 +492,21 @@ do
 	dirty.OwnedItems["skin_crimson_driver"] = 2.9
 	dirty.OwnedItems["skin_nebula_driver"] = -1
 	dirty.EquippedItems["Driver"] = "skin_gold_rush_driver" -- not owned
-	dirty.EquippedItems["Iron"] = "skin_crimson_driver" -- wrong slot
-	dirty.EquippedClubs["D"] = "ghost_club"
+	dirty.EquippedItems["LongIron"] = "skin_crimson_driver" -- wrong slot
+	dirty.EquippedClubs["DR"] = "ghost_club"
 	dirty.OwnedClubs["ghost_club"] = true
-	dirty.ClubUpgrades["tatermade_swift_d"] = { Distance = 99, Accuracy = -4, Forgiveness = "x" }
-	dirty.ClubUpgrades["pong_gale_d"] = { Distance = 3, Accuracy = 3, Forgiveness = 3 } -- not owned
+	dirty.ClubUpgrades["tatermade_swift_dr"] = { Power = 99, Accuracy = -4, Spin = "x" }
+	dirty.ClubUpgrades["pong_gale_dr"] = { Power = 3, Accuracy = 3, Spin = 3 } -- not owned
 	dirty.Stats = nil
 	local repaired = ProfileTemplate.prepare(dirty, 3000)
 	expect("prepare() repairs a badly damaged profile instead of rejecting it", repaired ~= nil)
 	if repaired then
 		expect("Repair: negative/NaN balances become 0", repaired.Coins == 0 and repaired.Gems == 0)
 		expect("Repair: removed items dropped, fractional counts floored, negatives dropped", repaired.OwnedItems["skin_that_was_removed"] == nil and repaired.OwnedItems["skin_crimson_driver"] == 2 and repaired.OwnedItems["skin_nebula_driver"] == nil)
-		expect("Repair: unowned / wrong-slot equips reset to defaults", repaired.EquippedItems["Driver"] == "skin_midnight_driver" and repaired.EquippedItems["Iron"] == "skin_midnight_iron")
-		expect("Repair: unknown clubs removed, bag refilled with starters", repaired.OwnedClubs["ghost_club"] == nil and repaired.EquippedClubs["D"] == "tatermade_swift_d")
-		local lv = repaired.ClubUpgrades["tatermade_swift_d"]
-		expect("Repair: upgrade levels clamped to 0..Max, unowned club upgrades dropped", lv ~= nil and lv.Distance == Config.Clubs.MaxUpgradeLevel and lv.Accuracy == 0 and lv.Forgiveness == 0 and repaired.ClubUpgrades["pong_gale_d"] == nil)
+		expect("Repair: unowned / wrong-slot equips reset to defaults", repaired.EquippedItems["Driver"] == "skin_midnight_driver" and repaired.EquippedItems["LongIron"] == "skin_midnight_longiron")
+		expect("Repair: unknown clubs removed, bag refilled with starters", repaired.OwnedClubs["ghost_club"] == nil and repaired.EquippedClubs["DR"] == "tatermade_swift_dr")
+		local lv = repaired.ClubUpgrades["tatermade_swift_dr"]
+		expect("Repair: upgrade levels clamped to 0..Max, unowned club upgrades dropped", lv ~= nil and lv.Power == Config.Clubs.MaxUpgradeLevel and lv.Accuracy == 0 and lv.Spin == 0 and repaired.ClubUpgrades["pong_gale_dr"] == nil)
 		expect("Repair: missing Stats section rebuilt", repaired.Stats.Wins == 0 and repaired.Stats.CasesOpened == 0)
 	end
 
@@ -581,38 +588,38 @@ do
 	expect("After switching away, the old skin's last copy becomes spare", ProfileOps.removeItem(d, "skin_crimson_driver", 1) and d.OwnedItems["skin_crimson_driver"] == nil)
 
 	-- Clubs
-	local gale = "pong_gale_d"
+	local gale = "pong_gale_dr"
 	expect("Can't equip an unowned club", select(2, ProfileOps.equipClub(d, gale)) == "not_owned")
 	local _, whyBrokeClub = ProfileOps.buyClub(d, gale)
 	expect("Can't buy a club you can't afford (nothing taken)", whyBrokeClub == "insufficient_funds" and d.Coins == coins0 and not d.OwnedClubs[gale])
 	d.Coins = 20000
 	expect("buyClub charges the price and grants the club", ProfileOps.buyClub(d, gale) and d.Coins == 20000 - 12000 and d.OwnedClubs[gale] == true)
 	expect("Can't buy a club twice", select(2, ProfileOps.buyClub(d, gale)) == "already_owned")
-	expect("Starter clubs aren't for sale", select(2, ProfileOps.buyClub(d, "tatermade_swift_3w")) == "already_owned")
-	expect("equipClub fills the club's bag slot", ProfileOps.equipClub(d, gale) and d.EquippedClubs["D"] == gale)
+	expect("Starter clubs aren't for sale", select(2, ProfileOps.buyClub(d, "tatermade_swift_fw")) == "already_owned")
+	expect("equipClub fills the club's bag slot", ProfileOps.equipClub(d, gale) and d.EquippedClubs["DR"] == gale)
 
 	-- Upgrades
 	d.Coins = 100000
 	local stats0 = ProfileOps.clubStats(d, gale) :: ClubDatabase.Stats
-	expect("Unupgraded stats equal base stats", stats0.Distance == 78 and stats0.Accuracy == 72 and stats0.Forgiveness == 75)
-	local ok1, _, lvl1 = ProfileOps.upgradeClub(d, gale, "Distance")
+	expect("Unupgraded stats equal base stats", stats0.Power == 78 and stats0.Accuracy == 72 and stats0.Spin == 75)
+	local ok1, _, lvl1 = ProfileOps.upgradeClub(d, gale, "Power")
 	local afterFirst = d.Coins
-	expect("First upgrade costs 500 and gives +2 stat points", ok1 and lvl1 == 1 and afterFirst == 100000 - 500 and (ProfileOps.clubStats(d, gale) :: ClubDatabase.Stats).Distance == 80)
-	local ok2, _, lvl2 = ProfileOps.upgradeClub(d, gale, "Distance")
+	expect("First upgrade costs 500 and gives +2 stat points", ok1 and lvl1 == 1 and afterFirst == 100000 - 500 and (ProfileOps.clubStats(d, gale) :: ClubDatabase.Stats).Power == 80)
+	local ok2, _, lvl2 = ProfileOps.upgradeClub(d, gale, "Power")
 	expect("Second upgrade costs 700", ok2 and lvl2 == 2 and d.Coins == afterFirst - 700)
 	expect("Other stats are untouched", (ProfileOps.clubStats(d, gale) :: ClubDatabase.Stats).Accuracy == 72)
-	expect("Unknown stat / unknown club / unowned club rejected", select(2, ProfileOps.upgradeClub(d, gale, "Power")) == "bad_stat" and select(2, ProfileOps.upgradeClub(d, "ghost", "Distance")) == "unknown_club" and select(2, ProfileOps.upgradeClub(d, "pong_gale_3w", "Distance")) == "not_owned")
+	expect("Unknown stat / unknown club / unowned club rejected", select(2, ProfileOps.upgradeClub(d, gale, "Distance")) == "bad_stat" and select(2, ProfileOps.upgradeClub(d, "ghost", "Power")) == "unknown_club" and select(2, ProfileOps.upgradeClub(d, "pong_gale_fw", "Power")) == "not_owned")
 	local broke = ProfileTemplate.new(0)
 	broke.Coins = 100
-	local okBroke, whyBrokeUp = ProfileOps.upgradeClub(broke, "tatermade_swift_d", "Distance")
-	expect("Upgrade without enough coins is refused and free", not okBroke and whyBrokeUp == "insufficient_funds" and broke.Coins == 100 and broke.ClubUpgrades["tatermade_swift_d"] == nil)
+	local okBroke, whyBrokeUp = ProfileOps.upgradeClub(broke, "tatermade_swift_dr", "Power")
+	expect("Upgrade without enough coins is refused and free", not okBroke and whyBrokeUp == "insufficient_funds" and broke.Coins == 100 and broke.ClubUpgrades["tatermade_swift_dr"] == nil)
 	-- Spend every coin and max a stat: cost sequence and the cap.
 	local rich = ProfileTemplate.new(0)
 	rich.Coins = 1e9
 	local paid, lastReason = 0, ""
 	for _ = 1, Config.Clubs.MaxUpgradeLevel + 2 do
 		local start = rich.Coins
-		local ok, why = ProfileOps.upgradeClub(rich, "tatermade_swift_d", "Distance")
+		local ok, why = ProfileOps.upgradeClub(rich, "tatermade_swift_dr", "Power")
 		if ok then
 			paid += start - rich.Coins
 		else
@@ -621,22 +628,22 @@ do
 		end
 	end
 	expect("Maxing one stat costs the full table (sum 27,350) then reports max_level", paid == 27350 and lastReason == "max_level")
-	expect("Upgrade levels are stored in the profile", rich.ClubUpgrades["tatermade_swift_d"].Distance == Config.Clubs.MaxUpgradeLevel)
+	expect("Upgrade levels are stored in the profile", rich.ClubUpgrades["tatermade_swift_dr"].Power == Config.Clubs.MaxUpgradeLevel)
 	-- StatCap: a 98-Distance club caps at 100 after one upgrade and then refuses.
 	local capped = ProfileTemplate.new(0)
 	capped.Coins = 1e6
-	ProfileOps.grantClub(capped, "callaway_phoenix_d")
-	local c1 = ProfileOps.upgradeClub(capped, "callaway_phoenix_d", "Distance")
-	local c2, whyCap = ProfileOps.upgradeClub(capped, "callaway_phoenix_d", "Distance")
-	expect("Stat caps at 100 and further upgrades are refused (stat_capped)", c1 and not c2 and whyCap == "stat_capped" and (ProfileOps.clubStats(capped, "callaway_phoenix_d") :: ClubDatabase.Stats).Distance == 100)
+	ProfileOps.grantClub(capped, "callaway_phoenix_dr")
+	local c1 = ProfileOps.upgradeClub(capped, "callaway_phoenix_dr", "Power")
+	local c2, whyCap = ProfileOps.upgradeClub(capped, "callaway_phoenix_dr", "Power")
+	expect("Stat caps at 100 and further upgrades are refused (stat_capped)", c1 and not c2 and whyCap == "stat_capped" and (ProfileOps.clubStats(capped, "callaway_phoenix_dr") :: ClubDatabase.Stats).Power == 100)
 
 	-- OVR
 	local starterOvr = ProfileOps.playerOvr(ProfileTemplate.new(0))
-	expect("Starter bag OVR is the starter line's OVR (60)", starterOvr == ClubDatabase.overall({ Distance = 55, Accuracy = 60, Forgiveness = 65 }))
+	expect("Starter bag OVR is the starter line's OVR (60)", starterOvr == ClubDatabase.overall({ Power = 55, Accuracy = 60, Spin = 65 }))
 	local withDriver = ProfileTemplate.new(0)
 	withDriver.Coins = 1e6
-	ProfileOps.buyClub(withDriver, "tatermade_shadow_d")
-	ProfileOps.equipClub(withDriver, "tatermade_shadow_d")
+	ProfileOps.buyClub(withDriver, "tatermade_shadow_dr")
+	ProfileOps.equipClub(withDriver, "tatermade_shadow_dr")
 	expect("A better driver raises player OVR", ProfileOps.playerOvr(withDriver) > starterOvr)
 end
 
@@ -790,11 +797,11 @@ do
 	local s1 = storeFor(e2e, "job-1")
 	local pr = (s1.load("Player_9")).Profile :: ProfileStore.Profile
 	pr.Data.Coins = 50000
-	local bought = ProfileOps.buyClub(pr.Data, "titleless_tour_7i") and ProfileOps.equipClub(pr.Data, "titleless_tour_7i")
-	local upgraded = ProfileOps.upgradeClub(pr.Data, "titleless_tour_7i", "Accuracy")
+	local bought = ProfileOps.buyClub(pr.Data, "titleless_tour_si") and ProfileOps.equipClub(pr.Data, "titleless_tour_si")
+	local upgraded = ProfileOps.upgradeClub(pr.Data, "titleless_tour_si", "Accuracy")
 	pr.release()
 	local again = (storeFor(e2e, "job-2").load("Player_9")).Profile :: ProfileStore.Profile
-	expect("Purchase + equip + upgrade survive release and reload", bought and upgraded and again.Data.Coins == 50000 - 20000 - 500 and again.Data.EquippedClubs["7i"] == "titleless_tour_7i" and again.Data.ClubUpgrades["titleless_tour_7i"].Accuracy == 1 and again.Data.Meta.Sessions == 2)
+	expect("Purchase + equip + upgrade survive release and reload", bought and upgraded and again.Data.Coins == 50000 - 20000 - 500 and again.Data.EquippedClubs["SI"] == "titleless_tour_si" and again.Data.ClubUpgrades["titleless_tour_si"].Accuracy == 1 and again.Data.Meta.Sessions == 2)
 end
 
 
@@ -1043,7 +1050,7 @@ do
 				owned += d.OwnedItems[id]
 			end
 		end
-		expect("openCases: inventory gained exactly 3 club skins on top of the starters", owned == 3 + 5)
+		expect("openCases: inventory gained exactly 3 club skins on top of the starters", owned == 3 + #ItemDatabase.ClubClasses)
 		expect("openCases: IsNew is true for first copies", (function()
 			local d2 = fresh()
 			local r2 = Economy.openCases(d2, "animations_case", 1, { Now = NOW, Rng = function(): number
@@ -1194,20 +1201,20 @@ do
 	do
 		local d = fresh(0)
 		ProfileOps.grantItem(d, "skin_crimson_driver", 3) -- Rare, sells 600
-		ProfileOps.grantItem(d, "skin_slate_iron", 2) -- Common, sells 100
+		ProfileOps.grantItem(d, "skin_slate_longiron", 2) -- Common, sells 100
 		ProfileOps.equipItem(d, "skin_crimson_driver") -- 1 copy reserved
-		local r = Economy.sellItems(d, { "skin_crimson_driver", "skin_crimson_driver", "skin_slate_iron" }, ctx())
-		expect("sellItems: pays each rarity's SellValue (2x600 + 100 = 1300) and removes the copies", r.ok and r.CoinsGained == 1300 and d.Coins == 1300 and ProfileOps.ownedCount(d, "skin_crimson_driver") == 1 and ProfileOps.ownedCount(d, "skin_slate_iron") == 1)
+		local r = Economy.sellItems(d, { "skin_crimson_driver", "skin_crimson_driver", "skin_slate_longiron" }, ctx())
+		expect("sellItems: pays each rarity's SellValue (2x600 + 100 = 1300) and removes the copies", r.ok and r.CoinsGained == 1300 and d.Coins == 1300 and ProfileOps.ownedCount(d, "skin_crimson_driver") == 1 and ProfileOps.ownedCount(d, "skin_slate_longiron") == 1)
 		local before = TableUtil.deepCopy(d)
-		expect("sellItems: can't sell the equipped copy (nothing sold, even the valid part)", Economy.sellItems(d, { "skin_slate_iron", "skin_crimson_driver" }, ctx()).reason == "insufficient_spare" and deepEqual(before, d))
+		expect("sellItems: can't sell the equipped copy (nothing sold, even the valid part)", Economy.sellItems(d, { "skin_slate_longiron", "skin_crimson_driver" }, ctx()).reason == "insufficient_spare" and deepEqual(before, d))
 		expect("sellItems: can't sell a starter item", Economy.sellItems(d, { "skin_midnight_driver" }, ctx()).reason == "insufficient_spare" and deepEqual(before, d))
 		expect("sellItems: unowned item refused", Economy.sellItems(d, { "skin_gold_rush_driver" }, ctx()).reason == "not_owned" and deepEqual(before, d))
 		expect("sellItems: unknown id refused", Economy.sellItems(d, { "ghost" }, ctx()).reason == "unknown_item" and deepEqual(before, d))
 		local tooMany: { string } = {}
 		for _ = 1, Config.Economy.SellBatchMax + 1 do
-			table.insert(tooMany, "skin_slate_iron")
+			table.insert(tooMany, "skin_slate_longiron")
 		end
-		local bad = { {}, { "a", 5 }, { x = "skin_slate_iron" }, "skin_slate_iron", 5, tooMany }
+		local bad = { {}, { "a", 5 }, { x = "skin_slate_longiron" }, "skin_slate_longiron", 5, tooMany }
 		local allRefused = Economy.sellItems(d, nil, ctx()).reason == "bad_items"
 		for _, input in bad do
 			if Economy.sellItems(d, input, ctx()).reason ~= "bad_items" then
@@ -1278,8 +1285,8 @@ do
 		expect("tradeUp: garbage argument refused", Economy.tradeUp(d4, nil, ctx()).reason == "bad_inputs" and Economy.tradeUp(d4, "five", ctx()).reason == "bad_inputs" and Economy.tradeUp(d4, { 1, 2, 3, 4, 5 }, ctx()).reason == "bad_inputs")
 		local mixedRarity = fresh(0)
 		ProfileOps.grantItem(mixedRarity, "skin_crimson_driver", 4)
-		ProfileOps.grantItem(mixedRarity, "skin_slate_iron", 1)
-		expect("tradeUp: mixed rarities refused", Economy.tradeUp(mixedRarity, { "skin_crimson_driver", "skin_crimson_driver", "skin_crimson_driver", "skin_crimson_driver", "skin_slate_iron" }, ctx()).reason == "mixed_rarity")
+		ProfileOps.grantItem(mixedRarity, "skin_slate_longiron", 1)
+		expect("tradeUp: mixed rarities refused", Economy.tradeUp(mixedRarity, { "skin_crimson_driver", "skin_crimson_driver", "skin_crimson_driver", "skin_crimson_driver", "skin_slate_longiron" }, ctx()).reason == "mixed_rarity")
 		local mixedCategory = fresh(0)
 		ProfileOps.grantItem(mixedCategory, "skin_crimson_driver", 4)
 		ProfileOps.grantItem(mixedCategory, "swing_windup", 1)
@@ -1293,7 +1300,7 @@ do
 		expect("tradeUp: failed attempts changed nothing", deepEqual(before4, d4))
 		-- Mixed 5 distinct items of the same tier+category.
 		local distinct = fresh(0)
-		local ids = { "skin_crimson_driver", "skin_crimson_wood", "skin_crimson_iron", "skin_crimson_wedge", "skin_ocean_putter" }
+		local ids = { "skin_crimson_driver", "skin_crimson_fairwaywood", "skin_crimson_longiron", "skin_crimson_wedge", "skin_ocean_putter" }
 		for _, id in ids do
 			ProfileOps.grantItem(distinct, id, 1)
 		end
@@ -1303,11 +1310,11 @@ do
 	-- Clubs
 	do
 		local d = fresh(30000)
-		local up = Economy.upgradeClub(d, "tatermade_swift_d", "Distance")
+		local up = Economy.upgradeClub(d, "tatermade_swift_dr", "Power")
 		expect("upgradeClub: result reports level and cost", up.ok and up.NewLevel == 1 and up.Cost == 500 and d.Coins == 29500)
-		local buy = Economy.buyClub(d, "pong_gale_d")
+		local buy = Economy.buyClub(d, "pong_gale_dr")
 		expect("buyClub: result reports the coins spent", buy.ok and (buy.Spent :: Types.Price).Amount == 12000 and d.Coins == 17500)
-		expect("buyClub / upgradeClub failures carry the reason", Economy.buyClub(d, "pong_gale_d").reason == "already_owned" and Economy.upgradeClub(d, "pong_gale_d", "Power").reason == "bad_stat")
+		expect("buyClub / upgradeClub failures carry the reason", Economy.buyClub(d, "pong_gale_dr").reason == "already_owned" and Economy.upgradeClub(d, "pong_gale_dr", "Distance").reason == "bad_stat")
 	end
 
 	-- FUZZ: thousands of random valid and invalid operations; invariants after each.
@@ -1409,7 +1416,7 @@ do
 				if not data.OwnedClubs[id] then
 					return "upgrades for unowned club"
 				end
-				for _, stat in { levels.Distance, levels.Accuracy, levels.Forgiveness } do
+				for _, stat in { levels.Power, levels.Accuracy, levels.Spin } do
 					if not isInt(stat, 0, Config.Clubs.MaxUpgradeLevel) then
 						return "bad upgrade level"
 					end
@@ -1468,7 +1475,7 @@ do
 				opName = "upgradeClub"
 				local clubIds = TableUtil.sortedKeys(d.OwnedClubs :: any)
 				local clubId: any = if fz.next() < 0.85 then clubIds[fz.nextInt(#clubIds)] else randomItemId()
-				local stat: any = if fz.next() < 0.9 then ({ "Distance", "Accuracy", "Forgiveness" })[fz.nextInt(3)] else randomItemId()
+				local stat: any = if fz.next() < 0.9 then ({ "Power", "Accuracy", "Spin" })[fz.nextInt(3)] else randomItemId()
 				result = Economy.upgradeClub(d, clubId, stat)
 			elseif roll < 0.87 then
 				opName = "buyClub"
@@ -1572,7 +1579,7 @@ do
 	local gx, gz = terrain.slopeAt(h1.Pin.X, h1.Pin.Z)
 	expect("Slope rotates with the frame: (gx, gz) reads (gz, -gx) at heading 90deg, magnitude preserved", math.abs(sx - gz) < 1e-12 and math.abs(sz + gx) < 1e-12 and math.abs(math.sqrt(sx * sx + sz * sz) - math.sqrt(gx * gx + gz * gz)) < 1e-12)
 	local pondFrame = CourseTerrain.shotFrame(CourseTerrain.forHole(h2), 0, 0, 0)
-	local lwLaunch = SwingMath.computeLaunch({ Slot = ClubDatabase.getSlot("LW") :: ClubDatabase.BagSlot, Stats = { Distance = 50, Accuracy = 60, Forgiveness = 60 }, Power = 100, AccuracyOffset = 0, Lie = "Tee" })
+	local lwLaunch = SwingMath.computeLaunch({ Slot = ClubDatabase.getSlot("WG") :: ClubDatabase.BagSlot, Stats = { Power = 50, Accuracy = 60, Spin = 60 }, Power = 100, AccuracyOffset = 0, Lie = "Tee" })
 	expect("Physics + terrain: a lob wedge from the tee at the par 3 finds the pond", ShotPhysics.simulate(lwLaunch, pondFrame, nil, nil).Outcome == "Water")
 end
 
@@ -1689,7 +1696,7 @@ end
 -- Match engine ----------------------------------------------------------------------
 print("-- match engine")
 do
-	local mid: ClubDatabase.Stats = { Distance = 70, Accuracy = 70, Forgiveness = 70 }
+	local mid: ClubDatabase.Stats = { Power = 70, Accuracy = 70, Spin = 70 }
 	local function statsFor(_label: string): ClubDatabase.Stats
 		return mid
 	end
@@ -1724,7 +1731,7 @@ do
 	end
 
 	-- Structure, validation, turn order -------------------------------------------
-	local engine = MatchEngine.new({ Players = twoHumans(), Holes = CourseDatabase.sequence(1, 3), Seed = 42, Now = 0 })
+	local engine = MatchEngine.new({ IntroSeconds = 0, Players = twoHumans(), Holes = CourseDatabase.sequence(1, 3), Seed = 42, Now = 0 })
 	local snap = engine.snapshot(0)
 	expect("New match: Swing phase on hole 1 of 3 with an active player", snap.Phase == "Swing" and snap.HoleIndex == 1 and snap.HoleCount == 3 and engine.activeId() ~= nil and #snap.Players == 2)
 	expect("Snapshot: hole info, wind within the cap, full turn timer", snap.Hole.Par == 4 and math.abs(snap.Hole.Yards - 380) < 0.01 and snap.Wind.Mph >= 0 and snap.Wind.Mph <= Config.Match.MaxWindMph and snap.TurnSecondsLeft == Config.Match.TurnSeconds)
@@ -1761,9 +1768,9 @@ do
 	end)())
 
 	-- Water / out-of-bounds penalties ----------------------------------------------
-	local pondEngine = MatchEngine.new({ Players = twoHumans(), Holes = { CourseDatabase.hole(2) }, Seed = 7, Now = 0 })
+	local pondEngine = MatchEngine.new({ IntroSeconds = 0, Players = twoHumans(), Holes = { CourseDatabase.hole(2) }, Seed = 7, Now = 0 })
 	local shooter = pondEngine.activeId() :: string
-	pondEngine.setClub(shooter, "LW")
+	pondEngine.setClub(shooter, "WG")
 	local beforeSwing = playerView(pondEngine.snapshot(0), shooter)
 	pondEngine.submitSwing(shooter, 100, 0, 30)
 	local pondShot = eventsOfType(pondEngine.drainEvents(), "Shot")[1].Data
@@ -1771,9 +1778,9 @@ do
 	local afterSwing = playerView(pondEngine.snapshot(30), shooter)
 	expect("Water: the ball is replayed from the same spot with the same lie", beforeSwing.Position.X == afterSwing.Position.X and beforeSwing.Position.Z == afterSwing.Position.Z and afterSwing.Lie == "Tee")
 
-	local obEngine = MatchEngine.new({ Players = twoHumans(), Holes = { CourseDatabase.hole(1) }, Seed = 8, Now = 0 })
+	local obEngine = MatchEngine.new({ IntroSeconds = 0, Players = twoHumans(), Holes = { CourseDatabase.hole(1) }, Seed = 8, Now = 0 })
 	local obShooter = obEngine.activeId() :: string
-	obEngine.setClub(obShooter, "D")
+	obEngine.setClub(obShooter, "DR")
 	local aimOk = obEngine.setAim(obShooter, -Config.Match.MaxAimDegrees)
 	local aimBad = obEngine.setAim(obShooter, 200)
 	obEngine.submitSwing(obShooter, 100, 0, 30)
@@ -1793,7 +1800,7 @@ do
 		}
 	end
 	local function botDuel(hole: CourseDatabase.HoleDef, seed: number): MatchEngine.Engine
-		return MatchEngine.new({ Players = twoBots(), Holes = { hole }, Seed = seed, Now = 0 })
+		return MatchEngine.new({ IntroSeconds = 0, Players = twoBots(), Holes = { hole }, Seed = seed, Now = 0 })
 	end
 	local function scanPower(e: MatchEngine.Engine, id: string, wanted: (ShotPhysics.ShotResult) -> boolean): number?
 		for tenth = 10, 1000 do
@@ -1866,7 +1873,7 @@ do
 	expect("Equal totals draw (no winner)", pickResult.Draw and pickResult.WinnerId == nil and pickResult.Reason == "complete")
 
 	-- Timeouts ---------------------------------------------------------------------
-	local toEngine = MatchEngine.new({ Players = twoHumans(), Holes = CourseDatabase.sequence(1, 3), Seed = 5, Now = 0 })
+	local toEngine = MatchEngine.new({ IntroSeconds = 0, Players = twoHumans(), Holes = CourseDatabase.sequence(1, 3), Seed = 5, Now = 0 })
 	local victim = toEngine.activeId() :: string
 	toEngine.tick(Config.Match.TurnSeconds - 0.1)
 	expect("No timeout before the deadline", #eventsOfType(toEngine.drainEvents(), "Timeout") == 0 and toEngine.activeId() == victim)
@@ -1899,7 +1906,7 @@ do
 	expect("MaxTimeouts (3) timeouts forfeit the match; the opponent wins", toEngine.isFinished() and toResult.ForfeitedIds[1] == victim and toResult.Reason == "forfeit" and toResult.WinnerId ~= victim and timeoutsOfVictim >= Config.Match.MaxTimeouts - 1)
 
 	-- Forfeit ----------------------------------------------------------------------------
-	local ff = MatchEngine.new({ Players = twoHumans(), Holes = CourseDatabase.sequence(1, 3), Seed = 6, Now = 0 })
+	local ff = MatchEngine.new({ IntroSeconds = 0, Players = twoHumans(), Holes = CourseDatabase.sequence(1, 3), Seed = 6, Now = 0 })
 	ff.forfeit("H1", 10)
 	local ffResult = ff.result()
 	expect("Forfeit ends the match at once; the other player wins", ff.isFinished() and ffResult.WinnerId == "H2" and ffResult.Reason == "forfeit" and ffResult.ForfeitedIds[1] == "H1" and ff.phase() == "Finished" and ff.activeId() == nil)
@@ -1910,14 +1917,14 @@ do
 	ff.forfeit("H2", 11)
 	expect("Forfeiting again after the end is ignored", #ff.result().ForfeitedIds == 1 and ff.result().WinnerId == "H2")
 
-	local humanEngine = MatchEngine.new({ Players = twoHumans(), Holes = CourseDatabase.sequence(1, 1), Seed = 9, Now = 0 })
-	local _, whyHuman = humanEngine.submitBotSwing(humanEngine.activeId() :: string, "D", 0, 50, 0, 1)
+	local humanEngine = MatchEngine.new({ IntroSeconds = 0, Players = twoHumans(), Holes = CourseDatabase.sequence(1, 1), Seed = 9, Now = 0 })
+	local _, whyHuman = humanEngine.submitBotSwing(humanEngine.activeId() :: string, "DR", 0, 50, 0, 1)
 	expect("submitBotSwing refuses human players (no way to bypass the timing check)", whyHuman == "not_a_bot")
 
 	-- Honour: the lower score tees off first on the next hole ----------------------------------
 	local honourOk, honourChecked = true, 0
 	for seed = 1, 12 do
-		local e = MatchEngine.new({ Players = twoBots(), Holes = CourseDatabase.sequence(1, 2), Seed = seed, Now = 0 })
+		local e = MatchEngine.new({ IntroSeconds = 0, Players = twoBots(), Holes = CourseDatabase.sequence(1, 2), Seed = seed, Now = 0 })
 		local rngH = Prng.new(seed + 100)
 		local tH = 0.0
 		for _ = 1, 600 do
@@ -1963,7 +1970,7 @@ do
 			{ Id = "A", Name = "A", IsBot = true, StatsFor = BotBrain.statsFor(levelA) },
 			{ Id = "B", Name = "B", IsBot = true, StatsFor = BotBrain.statsFor(levelB) },
 		}
-		local match = MatchEngine.new({ Players = specs, Holes = holes, Seed = seed, Now = 0 })
+		local match = MatchEngine.new({ IntroSeconds = 0, Players = specs, Holes = holes, Seed = seed, Now = 0 })
 		local levels: { [string]: string } = { A = levelA, B = levelB }
 		local now2, steps, penalties, refused = 0.0, 0, 0, 0
 		while not match.isFinished() and steps < 3000 do
@@ -2026,7 +2033,7 @@ do
 	expect("A bot match replays identically from the same seeds", r1.Totals.A == r2.Totals.A and r1.Totals.B == r2.Totals.B and r1.WinnerId == r2.WinnerId)
 
 	-- Bot planning must not change the match.
-	local probe = MatchEngine.new({ Players = twoBots(), Holes = CourseDatabase.sequence(1, 3), Seed = 21, Now = 0 })
+	local probe = MatchEngine.new({ IntroSeconds = 0, Players = twoBots(), Holes = CourseDatabase.sequence(1, 3), Seed = 21, Now = 0 })
 	local probeId = probe.activeId() :: string
 	local beforeProbe = probe.snapshot(0)
 	for _ = 1, 3 do
@@ -2100,12 +2107,12 @@ do
 	signal.fire(3)
 	expect("Signal: disconnect stops delivery; count tracks listeners", calls[#calls] == "d3" and calls[#calls - 1] == "d2" and signal.count() == 2)
 
-	local mid: ClubDatabase.Stats = { Distance = 60, Accuracy = 60, Forgiveness = 60 }
+	local mid: ClubDatabase.Stats = { Power = 60, Accuracy = 60, Spin = 60 }
 	local function midStats(_label: string): ClubDatabase.Stats
 		return mid
 	end
-	expect("ClubAdvisor: 15 yards on the green -> putter; 60 yards on the green -> a wedge", ClubAdvisor.recommendClub(15, "Green", midStats) == "PT" and ClubAdvisor.recommendClub(60, "Green", midStats) ~= "PT")
-	expect("ClubAdvisor: a 320-yard tee shot takes the driver (longest club)", ClubAdvisor.recommendClub(320, "Tee", midStats) == "D")
+	expect("ClubAdvisor: auto-putter - any distance on the green -> putter; off the green never the putter", ClubAdvisor.recommendClub(15, "Green", midStats) == "PT" and ClubAdvisor.recommendClub(60, "Green", midStats) == "PT" and ClubAdvisor.recommendClub(5, "Fairway", midStats) ~= "PT")
+	expect("ClubAdvisor: a 320-yard tee shot takes the driver (longest club)", ClubAdvisor.recommendClub(320, "Tee", midStats) == "DR")
 	local last, mono = 0, true
 	for yardsAway = 20, 300, 10 do
 		local label = ClubAdvisor.recommendClub(yardsAway, "Fairway", midStats)
@@ -2116,8 +2123,8 @@ do
 		last = reach
 	end
 	expect("ClubAdvisor: the recommended club's reach never shrinks as the distance grows", mono)
-	local roughReach = ClubAdvisor.estimateCarry(ClubDatabase.getSlot("7i") :: ClubDatabase.BagSlot, mid, "Rough")
-	local fairReach = ClubAdvisor.estimateCarry(ClubDatabase.getSlot("7i") :: ClubDatabase.BagSlot, mid, "Fairway")
+	local roughReach = ClubAdvisor.estimateCarry(ClubDatabase.getSlot("SI") :: ClubDatabase.BagSlot, mid, "Rough")
+	local fairReach = ClubAdvisor.estimateCarry(ClubDatabase.getSlot("SI") :: ClubDatabase.BagSlot, mid, "Fairway")
 	expect("ClubAdvisor: the rough shortens a club's reach", roughReach < fairReach)
 end
 
@@ -2129,7 +2136,7 @@ do
 		{ Id = "A", Name = "A", IsBot = true, StatsFor = BotBrain.statsFor("Hard") },
 		{ Id = "B", Name = "B", IsBot = true, StatsFor = BotBrain.statsFor("Easy") },
 	}
-	local e = MatchEngine.new({ Players = specs, Holes = CourseDatabase.sequence(1, 3), Seed = 3, Now = 0 })
+	local e = MatchEngine.new({ IntroSeconds = 0, Players = specs, Holes = CourseDatabase.sequence(1, 3), Seed = 3, Now = 0 })
 	local tS = 0.0
 	for _ = 1, 2000 do
 		if e.isFinished() then
@@ -2193,7 +2200,7 @@ do
 		end
 		if shot.ClubLabel == "PT" then
 			kinds.putt += 1
-		elseif shot.ClubLabel == "D" then
+		elseif shot.ClubLabel == "DR" then
 			kinds.drive += 1
 		end
 	end
@@ -2205,7 +2212,7 @@ do
 	expect("The sample covers both drives and putts", kinds.drive >= 2 and kinds.putt >= 3)
 	local drive: any = nil
 	for _, shot in clientShots do
-		if shot.ClubLabel == "D" and drive == nil then
+		if shot.ClubLabel == "DR" and drive == nil then
 			drive = shot
 		end
 	end
@@ -2468,7 +2475,7 @@ end
 -- HUD view model --------------------------------------------------------------------------------------
 print("-- match view")
 do
-	local mid: ClubDatabase.Stats = { Distance = 70, Accuracy = 70, Forgiveness = 70 }
+	local mid: ClubDatabase.Stats = { Power = 70, Accuracy = 70, Spin = 70 }
 	local function statsFor(_label: string): ClubDatabase.Stats
 		return mid
 	end
@@ -2476,7 +2483,7 @@ do
 		{ Id = "me", Name = "Drew", IsBot = false, StatsFor = statsFor },
 		{ Id = "rival", Name = "Rival", IsBot = false, StatsFor = statsFor },
 	}
-	local engine = MatchEngine.new({ Players = specs, Holes = CourseDatabase.sequence(1, 3), Seed = 42, Now = 0 })
+	local engine = MatchEngine.new({ IntroSeconds = 0, Players = specs, Holes = CourseDatabase.sequence(1, 3), Seed = 42, Now = 0 })
 	local snap = engine.snapshot(12)
 	local hud = MatchView.hud(snap, "me", statsFor)
 	local active = engine.activeId()
@@ -2492,7 +2499,7 @@ do
 			recommended += 1
 		end
 	end
-	expect("HUD: 14 club options, exactly one selected and one recommended; putter has no reach", #hud.ClubOptions == 14 and selected == 1 and recommended == 1 and hud.ClubOptions[14].Label == "PT" and hud.ClubOptions[14].ReachYds == 0 and hud.ClubOptions[1].ReachYds > 200)
+	expect("HUD: 6 club options, exactly one selected and one recommended; putter has no reach", #hud.ClubOptions == 6 and selected == 1 and recommended == 1 and hud.ClubOptions[6].Label == "PT" and hud.ClubOptions[6].ReachYds == 0 and hud.ClubOptions[1].ReachYds > 200)
 	expect("HUD: score rows for both players with me flagged", #hud.Rows == 2 and hud.Me ~= nil and (hud.Me :: MatchView.Row).Id == "me" and hud.Rows[1].IsMe ~= hud.Rows[2].IsMe)
 	expect("HUD: wind text and a normalised arrow angle", hud.WindText == Format.mph(snap.Wind.Mph) and hud.WindRotationDeg > -180 and hud.WindRotationDeg <= 180)
 	expect("windRotation: tailwind 0, from-the-left 90, headwind 180, aim offset shifts it", math.abs(MatchView.windRotation(0, 0, 100, 0, 0, 0)) < 1e-9 and math.abs(MatchView.windRotation(0, 0, 100, 0, 0, 90) - 90) < 1e-9 and math.abs(MatchView.windRotation(0, 0, 100, 0, 0, 180) - 180) < 1e-9 and math.abs(MatchView.windRotation(0, 0, 100, 0, 0, -90) + 90) < 1e-9 and math.abs(MatchView.windRotation(0, 0, 100, 0, 20, 90) - 70) < 1e-9)
@@ -2508,7 +2515,7 @@ do
 	local summaryRival = MatchView.summary(finalSnap, "rival")
 	expect("Summary: the player who didn't forfeit sees VICTORY, the other DEFEAT", (forfeiter == "rival") == summaryMe.Won and summaryMe.Won ~= summaryRival.Won and ((summaryMe.Won and summaryMe.Title == "VICTORY") or (not summaryMe.Won and summaryMe.Title == "DEFEAT")))
 	expect("Summary lists forfeiters last", summaryMe.Rows[#summaryMe.Rows].Forfeited and summaryMe.Reason == "forfeit")
-	local drawEngine = MatchEngine.new({ Players = specs, Holes = { CourseDatabase.hole(5) }, Seed = 1, Now = 0 })
+	local drawEngine = MatchEngine.new({ IntroSeconds = 0, Players = specs, Holes = { CourseDatabase.hole(5) }, Seed = 1, Now = 0 })
 	local tD = 0.0
 	local guardD = 0
 	while not drawEngine.isFinished() and guardD < 400 do
@@ -2756,36 +2763,36 @@ end
 do
 	local profile = ProfileTemplate.new(0)
 	profile.Coins = 2500
-	local rows = LoadoutView.slots(profile, "7i")
+	local rows = LoadoutView.slots(profile, "SI")
 	local selectedCount, ovrOk = 0, true
 	for _, row in rows do
 		if row.Selected then
 			selectedCount += 1
 		end
-		if row.Ovr ~= ClubDatabase.overall({ Distance = 55, Accuracy = 60, Forgiveness = 65 }) then
+		if row.Ovr ~= ClubDatabase.overall({ Power = 55, Accuracy = 60, Spin = 65 }) then
 			ovrOk = false
 		end
 	end
-	expect("Loadout: 14 bag rows, exactly one selected, starter OVR everywhere", #rows == 14 and selectedCount == 1 and ovrOk and rows[1].Label == "D" and rows[14].Label == "PT")
-	local detail = LoadoutView.detail(profile, "tatermade_swift_d") :: LoadoutView.Detail
-	expect("Detail: three stat rows, first upgrade costs 500 and is allowed", #detail.Stats == 3 and detail.Stats[1].Stat == "Distance" and detail.Stats[1].UpgradeCost == 500 and detail.Stats[1].CanUpgrade and detail.Stats[1].Value == 55 and detail.Stats[1].MaxValue == 75)
+	expect("Loadout: 6 bag rows, exactly one selected, starter OVR everywhere", #rows == 6 and selectedCount == 1 and ovrOk and rows[1].Label == "DR" and rows[6].Label == "PT")
+	local detail = LoadoutView.detail(profile, "tatermade_swift_dr") :: LoadoutView.Detail
+	expect("Detail: three stat rows, first upgrade costs 500 and is allowed", #detail.Stats == 3 and detail.Stats[1].Stat == "Power" and detail.Stats[1].UpgradeCost == 500 and detail.Stats[1].CanUpgrade and detail.Stats[1].Value == 55 and detail.Stats[1].MaxValue == 75)
 	profile.Coins = 100
-	local poor = (LoadoutView.detail(profile, "tatermade_swift_d") :: LoadoutView.Detail).Stats[1]
+	local poor = (LoadoutView.detail(profile, "tatermade_swift_dr") :: LoadoutView.Detail).Stats[1]
 	expect("Detail: when short, the button explains how many coins are missing", not poor.CanUpgrade and poor.Reason == "Need 400 more coins")
 	profile.Coins = 1e9
 	for _ = 1, Config.Clubs.MaxUpgradeLevel do
-		ProfileOps.upgradeClub(profile, "tatermade_swift_d", "Distance")
+		ProfileOps.upgradeClub(profile, "tatermade_swift_dr", "Power")
 	end
-	local maxed = (LoadoutView.detail(profile, "tatermade_swift_d") :: LoadoutView.Detail).Stats[1]
+	local maxed = (LoadoutView.detail(profile, "tatermade_swift_dr") :: LoadoutView.Detail).Stats[1]
 	expect("Detail: a maxed stat shows Max level and no cost", maxed.Reason == "Max level" and maxed.UpgradeCost == nil and not maxed.CanUpgrade and maxed.Level == Config.Clubs.MaxUpgradeLevel and maxed.Value == 75)
-	expect("Detail agrees with the server's stats (Distance 75 after 10 upgrades)", (ProfileOps.clubStats(profile, "tatermade_swift_d") :: ClubDatabase.Stats).Distance == 75)
+	expect("Detail agrees with the server's stats (Distance 75 after 10 upgrades)", (ProfileOps.clubStats(profile, "tatermade_swift_dr") :: ClubDatabase.Stats).Power == 75)
 	expect("Detail of an unknown club is nil", LoadoutView.detail(profile, "ghost") == nil)
 
 	local fresh = ProfileTemplate.new(0)
 	fresh.Coins = 20000
-	local ownedDrivers = LoadoutView.ownedFor(fresh, "D")
-	expect("ownedFor: only the starter driver at first, flagged equipped", #ownedDrivers == 1 and ownedDrivers[1].ClubId == "tatermade_swift_d" and ownedDrivers[1].Equipped)
-	local shopDrivers = LoadoutView.shopFor(fresh, "D")
+	local ownedDrivers = LoadoutView.ownedFor(fresh, "DR")
+	expect("ownedFor: only the starter driver at first, flagged equipped", #ownedDrivers == 1 and ownedDrivers[1].ClubId == "tatermade_swift_dr" and ownedDrivers[1].Equipped)
+	local shopDrivers = LoadoutView.shopFor(fresh, "DR")
 	local priceSorted, noStarters = true, true
 	for i, club in shopDrivers do
 		if i > 1 and shopDrivers[i - 1].Price > club.Price then
@@ -2797,7 +2804,7 @@ do
 	end
 	expect("shopFor: unowned non-starter drivers, cheapest first, with affordability", #shopDrivers == 4 and priceSorted and noStarters and shopDrivers[1].CanAfford and not shopDrivers[4].CanAfford)
 	ProfileOps.buyClub(fresh, shopDrivers[1].ClubId)
-	expect("Buying a club moves it from the shop list to the owned list", #LoadoutView.shopFor(fresh, "D") == 3 and #LoadoutView.ownedFor(fresh, "D") == 2)
+	expect("Buying a club moves it from the shop list to the owned list", #LoadoutView.shopFor(fresh, "DR") == 3 and #LoadoutView.ownedFor(fresh, "DR") == 2)
 	local skins = LoadoutView.skinsFor(fresh, "Driver")
 	local lockedCount, equippedCount, ownedCount = 0, 0, 0
 	for _, skin in skins do
@@ -2910,8 +2917,8 @@ end
 do
 	local profile = ProfileTemplate.new(0)
 	ProfileOps.grantItem(profile, "skin_crimson_driver", 6) -- Rare skins
-	ProfileOps.grantItem(profile, "skin_ocean_iron", 2) -- Rare skins, another slot
-	ProfileOps.grantItem(profile, "skin_slate_wood", 1) -- Common skin
+	ProfileOps.grantItem(profile, "skin_ocean_longiron", 2) -- Rare skins, another slot
+	ProfileOps.grantItem(profile, "skin_slate_fairwaywood", 1) -- Common skin
 	ProfileOps.grantItem(profile, "skin_nebula_driver", 3) -- Mythical (can't trade up)
 	ProfileOps.grantItem(profile, "swing_windup", 5) -- Rare animation
 	ProfileOps.equipItem(profile, "skin_crimson_driver") -- one copy is locked in
@@ -2929,7 +2936,7 @@ do
 	local sel: { string } = {}
 	local okAdd = TradeUpView.canAdd(profile, sel, "skin_crimson_driver")
 	sel = TradeUpView.add(profile, sel, "skin_crimson_driver")
-	local _, whyRarity = TradeUpView.canAdd(profile, sel, "skin_slate_wood")
+	local _, whyRarity = TradeUpView.canAdd(profile, sel, "skin_slate_fairwaywood")
 	local _, whyCategory = TradeUpView.canAdd(profile, sel, "swing_windup")
 	local _, whyMythic = TradeUpView.canAdd(profile, {}, "skin_nebula_driver")
 	local _, whyUnknown = TradeUpView.canAdd(profile, sel, "ghost")
@@ -2941,8 +2948,8 @@ do
 	local _, whyFull = TradeUpView.canAdd(profile, sel, "skin_crimson_driver")
 	local overfilled = TradeUpView.add(profile, sel, "skin_crimson_driver")
 	expect("A full contract refuses more and add() leaves it unchanged", whyFull == "The contract is full" and #overfilled == 5)
-	local noSpare = { "skin_ocean_iron", "skin_ocean_iron" }
-	local _, whySpare = TradeUpView.canAdd(profile, noSpare, "skin_ocean_iron")
+	local noSpare = { "skin_ocean_longiron", "skin_ocean_longiron" }
+	local _, whySpare = TradeUpView.canAdd(profile, noSpare, "skin_ocean_longiron")
 	expect("You can't add more copies than you have spare", whySpare == "The contract is full" or whySpare == "No spare copies left")
 	local trimmed = TradeUpView.remove(sel, 5)
 	expect("remove() returns a new, shorter selection; bad indexes change nothing", #trimmed == 4 and #sel == 5 and #TradeUpView.remove(sel, 9) == 5 and #TradeUpView.remove(sel, 0) == 5)
@@ -3024,7 +3031,7 @@ do
 			facing = false
 		end
 	end
-	expect("Every sign's front face looks toward the plaza", facing and #layout.Signs == 2 and layout.Signs[1].Lines[1] == "PLAY" and layout.Signs[1].Lines[4] == "CUSTOMIZE" and layout.Signs[2].Lines[1] == "THE LINKS")
+	expect("Every sign's front face looks toward the plaza", facing and #layout.Signs >= 2 and layout.Signs[1].Lines[1] == "PLAY" and layout.Signs[1].Lines[4] == "CUSTOMIZE" and layout.Signs[2].Lines[1] == "THE LINKS")
 	-- The spawn must be standing room: above the ground, not inside any solid part.
 	local spawn = layout.Spawn
 	local blocked = false
@@ -3044,7 +3051,7 @@ do
 			lamps += 1
 		end
 	end
-	expect("Each lamp globe has a real light", lamps == #layout.Lights and lamps == 8)
+	expect("Each lamp globe has a real light (+ the range deck and the AFK cabana)", lamps == 8 and #layout.Lights == lamps + 2)
 	local treesClear = true
 	for _, part in layout.Parts do
 		if string.sub(part.Name, 1, 9) == "TreeTrunk" then
@@ -3064,11 +3071,433 @@ do
 	expect("The lobby is built identically every time", same)
 	local inBounds = true
 	for _, part in layout.Parts do
-		if math.abs(part.X) > 460 or math.abs(part.Z) > 460 then
+		local onPlate = math.abs(part.X) <= 460 and math.abs(part.Z) <= 460
+		local onRange = part.X >= LobbyLayout.RANGE_FAR_X and part.X < -100 and math.abs(part.Z - RangeRules.ORIGIN.Z) <= 260
+		if not onPlate and not onRange then
 			inBounds = false
 		end
 	end
-	expect("Everything sits on the ground plate", inBounds)
+	expect("Everything sits on the ground plate (or the range field to the west)", inBounds)
+end
+
+print("-- club categories (ClubStats)")
+do
+	local labels = {}
+	for _, category in ClubStats.Categories do
+		table.insert(labels, category.Label)
+	end
+	expect("Exactly six categories in bag order: DR FW LI SI WG PT", table.concat(labels, " ") == "DR FW LI SI WG PT" and ClubDatabase.BagSlots == ClubStats.Categories)
+	local descending = true
+	for i = 2, 5 do
+		if ClubStats.Categories[i].BaseCarryYds >= ClubStats.Categories[i - 1].BaseCarryYds then
+			descending = false
+		end
+	end
+	expect("Carries step down from Driver to Wedge; the putter has no carry", descending and ClubStats.get("PT") ~= nil and (ClubStats.get("PT") :: ClubStats.Category).BaseCarryYds == 0)
+	expect("Unknown / legacy / junk labels are not categories", ClubStats.get("D") == nil and ClubStats.get("7i") == nil and ClubStats.get(5) == nil and ClubDatabase.getSlot({}) == nil)
+	local everyClubFits = true
+	for _, club in ClubDatabase.Ordered do
+		if ClubStats.get(club.SlotLabel) == nil or (ClubStats.get(club.SlotLabel) :: ClubStats.Category).Class ~= club.Class then
+			everyClubFits = false
+		end
+	end
+	expect("Every club in the catalogue belongs to one of the six categories", everyClubFits and #ItemDatabase.ClubClasses == 6)
+
+	local base = ClubStats.baseline()
+	local calibrated = true
+	for _, category in ClubStats.Categories do
+		if category.Class ~= "Putter" then
+			local resolved = SwingMath.resolveShot({ Slot = category, Stats = base, Power = 100, AccuracyOffset = 0, Lie = "Fairway" }, ShotPhysics.flatTerrain("Fairway"), nil)
+			if math.abs(resolved.Result.CarryYds - category.BaseCarryYds) > category.BaseCarryYds * 0.02 then
+				calibrated = false
+				print(`  {category.Label}: carry {resolved.Result.CarryYds} vs {category.BaseCarryYds}`)
+			end
+		end
+	end
+	expect("Each category's full-power carry at baseline stats matches its BaseCarryYds (2%)", calibrated)
+
+	local function onGreen(spin: number): ShotPhysics.ShotResult
+		local stats = { Power = 50, Accuracy = 50, Spin = spin }
+		return SwingMath.resolveShot({ Slot = ClubStats.get("SI") :: ClubStats.Category, Stats = stats, Power = 100, AccuracyOffset = 0, Lie = "Fairway" }, ShotPhysics.flatTerrain("Green"), nil).Result
+	end
+	local lowSpin, highSpin = onGreen(10), onGreen(95)
+	expect("Spin never changes carry...", math.abs(lowSpin.CarryYds - highSpin.CarryYds) < 1e-6)
+	expect("...but a high-Spin club stops the ball faster on the green", highSpin.RollYds < lowSpin.RollYds - 1)
+	expect("Spin softens a bad lie's accuracy penalty; Power raises ball speed", ClubStats.liePenalty("Sand", 90) < ClubStats.liePenalty("Sand", 10) and ClubStats.speedFactor(90) > ClubStats.speedFactor(50) and ClubStats.gripFactor(50) == 1)
+	expect("Stat info covers Power, Accuracy and Spin", #ClubStats.StatInfo == 3 and ClubStats.StatInfo[1].Id == "Power" and ClubStats.StatInfo[3].Id == "Spin")
+end
+
+print("-- profile migration v1 -> v2")
+do
+	expect("Legacy club ids map to their category", ClubDatabase.migrateLegacyId("pong_gale_3w") == "pong_gale_fw" and ClubDatabase.migrateLegacyId("tatermade_swift_d") == "tatermade_swift_dr" and ClubDatabase.migrateLegacyId("titleless_tour_8i") == "titleless_tour_si" and ClubDatabase.migrateLegacyId("pong_zip_lw") == "pong_zip_wg")
+	expect("Legacy ids with no v2 club (or junk) map to nil", ClubDatabase.migrateLegacyId("pong_laser_d") == nil and ClubDatabase.migrateLegacyId("nonsense") == nil and ClubDatabase.migrateLegacyId(7) == nil)
+
+	local v1: any = {
+		SchemaVersion = 1, Coins = 5000, Gems = 3,
+		OwnedItems = { skin_crimson_iron = 2, skin_ocean_wood = 1, skin_midnight_driver = 1 },
+		EquippedItems = { Iron = "skin_crimson_iron", Wood = "skin_ocean_wood", Driver = "skin_midnight_driver" },
+		OwnedClubs = {
+			tatermade_swift_d = true, tatermade_swift_3w = true, tatermade_swift_5w = true, tatermade_swift_7i = true, tatermade_swift_pt = true,
+			pong_gale_3w = true, pong_gale_5w = true, titleless_tour_5i = true, titleless_tour_8i = true,
+		},
+		EquippedClubs = {
+			D = "tatermade_swift_d", ["3W"] = "pong_gale_3w", ["5W"] = "tatermade_swift_5w", ["5i"] = "titleless_tour_5i",
+			["7i"] = "tatermade_swift_7i", ["8i"] = "titleless_tour_8i", PT = "tatermade_swift_pt",
+		},
+		ClubUpgrades = {
+			pong_gale_3w = { Distance = 3, Accuracy = 1, Forgiveness = 2 },
+			pong_gale_5w = { Distance = 5, Accuracy = 0, Forgiveness = 1 },
+		},
+		Stats = { Wins = 4 },
+		Quests = {}, Shop = { Rotation = 0, Purchased = {} }, Meta = { CreatedAt = 1, Sessions = 3 },
+	}
+	local migrated, why = ProfileTemplate.prepare(v1, 100)
+	expect("A v1 profile loads as v2", migrated ~= nil and why == nil and (migrated :: any).SchemaVersion == 2)
+	if migrated then
+		expect("Owned clubs become their category clubs (merged ones kept once)", migrated.OwnedClubs.pong_gale_fw and migrated.OwnedClubs.titleless_tour_li and migrated.OwnedClubs.titleless_tour_si and migrated.OwnedClubs.pong_gale_3w == nil)
+		expect("The main legacy slot decides a merged category's club (3W->FW, 5i->LI, 7i->SI)", migrated.EquippedClubs.FW == "pong_gale_fw" and migrated.EquippedClubs.LI == "titleless_tour_li" and migrated.EquippedClubs.SI == "tatermade_swift_si" and migrated.EquippedClubs.DR == "tatermade_swift_dr" and migrated.EquippedClubs.WG == "tatermade_swift_wg")
+		local gale = migrated.ClubUpgrades.pong_gale_fw
+		expect("Upgrade levels renamed (Distance->Power, Forgiveness->Spin), best level kept on merge", gale ~= nil and gale.Power == 5 and gale.Accuracy == 1 and gale.Spin == 2)
+		expect("Iron skins go to BOTH iron slots; Wood skins to Fairway Wood", migrated.OwnedItems.skin_crimson_longiron == 2 and migrated.OwnedItems.skin_crimson_shortiron == 2 and migrated.OwnedItems.skin_ocean_fairwaywood == 1 and migrated.OwnedItems.skin_crimson_iron == nil)
+		expect("Equipped legacy skins move to the new slots", migrated.EquippedItems.LongIron == "skin_crimson_longiron" and migrated.EquippedItems.ShortIron == "skin_crimson_shortiron" and migrated.EquippedItems.FairwayWood == "skin_ocean_fairwaywood" and migrated.EquippedItems.Iron == nil)
+		expect("Balances, stats and the new Earnings section survive / appear", migrated.Coins == 5000 and migrated.Gems == 3 and migrated.Stats.Wins == 4 and migrated.Earnings.Day == 0 and migrated.Earnings.Range == 0)
+	end
+	local junk, junkWhy = ProfileTemplate.prepare({ SchemaVersion = 1, OwnedClubs = 5, EquippedClubs = "x", ClubUpgrades = { a = 1 }, OwnedItems = false, EquippedItems = { Iron = 3 } }, 0)
+	local junkOk = junk ~= nil and junkWhy == nil
+	if junk then
+		for _, category in ClubStats.Categories do
+			if junk.EquippedClubs[category.Label] == nil then
+				junkOk = false
+			end
+		end
+	end
+	expect("A garbage v1 profile still migrates into a full, valid starter bag", junkOk)
+	expect("A v3 profile is refused as too new", select(2, ProfileTemplate.prepare({ SchemaVersion = 3 }, 0)) == "too_new")
+end
+
+print("-- match flow: intro, swing lead, auto-putter")
+do
+	local mid: ClubDatabase.Stats = { Power = 70, Accuracy = 70, Spin = 70 }
+	local function statsFor(_label: string): ClubDatabase.Stats
+		return mid
+	end
+	local specs: { MatchEngine.PlayerSpec } = {
+		{ Id = "H1", Name = "One", IsBot = false, StatsFor = statsFor },
+		{ Id = "B1", Name = "Bot", IsBot = true, StatsFor = statsFor },
+	}
+	local intro = Config.Match.HoleIntroSeconds
+	local e = MatchEngine.new({ Players = specs, Holes = CourseDatabase.sequence(1, 2), Seed = 11, Now = 0 })
+	local first = e.snapshot(0)
+	expect("Each hole opens with the Intro phase (first player already shown)", e.phase() == "Intro" and first.ActiveId ~= nil and math.abs(first.IntroSecondsLeft - intro) < 1e-9 and first.TurnSecondsLeft == 0)
+	local ok, why = e.submitSwing("H1", 80, 0, 3)
+	local botOk = BotBrain.play(e, "B1", "Hard", function(): number
+		return 0.5
+	end, 3)
+	local noShots = true
+	for _, event in e.drainEvents() do
+		if event.Type == "Shot" then
+			noShots = false
+		end
+	end
+	expect("Nobody can swing during the intro - humans or bots", not ok and why == "not_your_turn" and not botOk and noShots)
+	e.tick(intro - 0.01)
+	local still = e.phase() == "Intro"
+	e.tick(intro)
+	local opened = e.snapshot(intro)
+	expect("The turn opens when the intro ends, with a full turn clock", still and e.phase() == "Swing" and math.abs(opened.TurnSecondsLeft - Config.Match.TurnSeconds) < 1e-9)
+	local active = e.activeId() :: string
+	local shotOk
+	if active == "H1" then
+		shotOk = e.submitSwing("H1", 80, 0, intro + 5)
+	else
+		shotOk = e.submitBotSwing("B1", "DR", 0, 80, 0, intro + 5)
+	end
+	local shot: any = nil
+	for _, event in e.drainEvents() do
+		if event.Type == "Shot" then
+			shot = event.Data
+		end
+	end
+	local lead = Config.Match.SwingLeadSeconds
+	expect("A shot carries the swing lead (ImpactDelay) for the clients' impact frame", shotOk and shot ~= nil and shot.ImpactDelay == lead)
+	if shot then
+		local landsAt = intro + 5 + lead + shot.TotalSeconds + Config.Match.FlightPadSeconds
+		e.tick(landsAt - 0.05)
+		local waiting = e.phase() == "Flight"
+		e.tick(landsAt)
+		expect("The engine waits swing lead + flight + pad before the next turn", waiting and e.phase() ~= "Flight")
+	end
+
+	-- Auto-putter: play two bots to the end; every turn that starts on the green
+	-- defaults to the putter, every turn off it never does.
+	local bots: { MatchEngine.PlayerSpec } = {
+		{ Id = "B1", Name = "A", IsBot = true, StatsFor = statsFor },
+		{ Id = "B2", Name = "B", IsBot = true, StatsFor = statsFor },
+	}
+	local seed = 99
+	local rng = function(): number
+		seed = (seed * 1103515245 + 12345) % 2147483648
+		return seed / 2147483648
+	end
+	local m = MatchEngine.new({ IntroSeconds = 0, Players = bots, Holes = CourseDatabase.sequence(1, 3), Seed = 4, Now = 0 })
+	local clock, greenTurns, puttsOk, offGreenOk = 0, 0, true, true
+	for _ = 1, 4000 do
+		if m.isFinished() then
+			break
+		end
+		clock += 0.25
+		m.tick(clock)
+		local id = m.activeId()
+		if id and m.phase() == "Swing" then
+			local snap = m.snapshot(clock)
+			for _, view in snap.Players do
+				if view.Id == id then
+					if view.Lie == "Green" then
+						greenTurns += 1
+						puttsOk = puttsOk and view.ClubLabel == "PT"
+					else
+						offGreenOk = offGreenOk and view.ClubLabel ~= "PT"
+					end
+				end
+			end
+			BotBrain.play(m, id, "Hard", rng, clock)
+		end
+		m.drainEvents()
+	end
+	expect(`Auto-putter: all {greenTurns} turns on the green start with the putter, none off it`, m.isFinished() and greenTurns > 0 and puttsOk and offGreenOk)
+	expect("Intro banner reads the hole and par", string.find(MatchView.hud(first, "H1", statsFor).Banner, "PAR") ~= nil)
+end
+
+print("-- aim guide")
+do
+	local base = ClubStats.baseline()
+	local dr = ClubStats.get("DR") :: ClubStats.Category
+	local guide = AimGuide.compute({ Terrain = ShotPhysics.flatTerrain("Fairway"), X = 10, Z = 5, HeadingRad = 0, Slot = dr, Stats = base, Lie = "Tee", Power = 100 })
+	local first, last = guide.Points[1], guide.Points[#guide.Points]
+	local apex = 0
+	for _, point in guide.Points do
+		apex = math.max(apex, point.Y)
+	end
+	expect("Driver arc: starts at the ball, ends on the ground at the carry", not guide.IsPutt and math.abs(first.X - 10) < 1 and math.abs(first.Z - 5) < 1 and last.Y < 0.5 and math.abs(guide.DistanceYds - dr.BaseCarryYds) < dr.BaseCarryYds * 0.02)
+	expect("Arc has a real apex and a bounded point count", apex > 15 and #guide.Points <= AimGuide.MAX_POINTS + 1 and #guide.Points >= 8)
+	local turned = AimGuide.compute({ Terrain = ShotPhysics.flatTerrain("Fairway"), X = 0, Z = 0, HeadingRad = math.rad(90), Slot = dr, Stats = base, Lie = "Tee", Power = 100 })
+	expect("The arc follows the aim heading", math.abs(turned.EndX) < 2 and turned.EndZ > 200)
+	local half = AimGuide.compute({ Terrain = ShotPhysics.flatTerrain("Fairway"), X = 0, Z = 0, HeadingRad = 0, Slot = dr, Stats = base, Lie = "Tee", Power = 50 })
+	expect("The arc grows with power (live while the gauge rises)", half.DistanceYds < guide.DistanceYds * 0.6 and half.DistanceYds > guide.DistanceYds * 0.4)
+	local pt = ClubStats.get("PT") :: ClubStats.Category
+	local putt = AimGuide.compute({ Terrain = ShotPhysics.flatTerrain("Green"), X = 0, Z = 0, HeadingRad = 0, Slot = pt, Stats = base, Lie = "Green", Power = 50 })
+	local flat = true
+	for _, point in putt.Points do
+		if point.Y > 1e-6 then
+			flat = false
+		end
+	end
+	expect("Putting line: on the ground, ~half the full-power roll at 50%", putt.IsPutt and flat and math.abs(putt.DistanceYds - Config.Swing.PuttFullPowerYards / 2) < 2.5)
+	local sloped: ShotPhysics.Terrain = {
+		heightAt = function(_x: number, _z: number): number
+			return 0
+		end,
+		lieAt = function(_x: number, _z: number): Types.LieId
+			return "Green"
+		end,
+		slopeAt = function(_x: number, _z: number): (number, number)
+			return 0, 0.03
+		end,
+	}
+	local breaking = AimGuide.compute({ Terrain = sloped, X = 0, Z = 0, HeadingRad = 0, Slot = pt, Stats = base, Lie = "Green", Power = 60 })
+	expect("Putting line bends with the green's slope (downhill to -Z here)", breaking.EndZ < -0.3)
+end
+
+print("-- driving range")
+do
+	local YD = Config.Physics.YardsToMeters
+	local overlap, ordered = false, true
+	for i, a in RangeRules.Targets do
+		local ax, az = RangeRules.centreOf(a)
+		for j, b in RangeRules.Targets do
+			if i < j then
+				local bx, bz = RangeRules.centreOf(b)
+				if math.sqrt((ax - bx) ^ 2 + (az - bz) ^ 2) < (a.RadiusYds + b.RadiusYds) * YD then
+					overlap = true
+				end
+			end
+		end
+		if i > 1 then
+			local prev = RangeRules.Targets[i - 1]
+			if not (a.DistanceYds > prev.DistanceYds and a.Coins > prev.Coins and a.RadiusYds >= prev.RadiusYds) then
+				ordered = false
+			end
+		end
+		if a.DistanceYds + a.RadiusYds > RangeRules.LengthYds or math.abs(a.LateralYds) + a.RadiusYds > RangeRules.HalfWidthYds then
+			ordered = false
+		end
+	end
+	expect("Targets don't overlap, sit on the range, and pay more the further out they are", not overlap and ordered)
+	local t = RangeRules.Targets[3]
+	local cx, cz = RangeRules.centreOf(t)
+	local hitCentre, bull = RangeRules.targetAt(cx, cz)
+	local hitEdge, edgeBull = RangeRules.targetAt(cx + t.RadiusYds * YD * 0.9, cz)
+	local miss = RangeRules.targetAt(cx + t.RadiusYds * YD * 1.1, cz + 30)
+	expect("targetAt: bullseye in the inner third, plain hit at the edge, miss outside", hitCentre == t and bull and hitEdge == t and not edgeBull and miss == nil)
+	expect("Bullseye pays the multiplier; a miss pays nothing", RangeRules.payout(t, true) == t.Coins * Config.Range.BullseyeMultiplier and RangeRules.payout(t, false) == t.Coins and RangeRules.payout(nil, true) == 0)
+	local wx, wz = RangeRules.toWorld(12.5, -3.25)
+	local bx, bz = RangeRules.fromWorld(wx, wz)
+	expect("Range frame <-> world round-trips; downrange is world -X", math.abs(bx - 12.5) < 1e-9 and math.abs(bz + 3.25) < 1e-9 and wx < RangeRules.ORIGIN.X)
+
+	-- Every target can actually be hit from a bay with a perfect strike.
+	local bay = RangeRules.bay(2) :: RangeRules.Bay
+	local teeX, teeZ = RangeRules.teeOf(bay)
+	local base = ClubStats.baseline()
+	local allReachable = true
+	for _, target in RangeRules.Targets do
+		local tx, tz = RangeRules.centreOf(target)
+		local aim = math.deg(math.atan2(tz - teeZ, tx - teeX))
+		local hit = false
+		for _, category in ClubStats.Categories do
+			if category.Class ~= "Putter" and not hit then
+				for power = 10, 100, 2 do
+					local shot = RangeRules.resolve(bay, category.Label, base, power, 0, aim)
+					if shot and shot.TargetId == target.Id then
+						hit = true
+						break
+					end
+				end
+			end
+		end
+		if not hit then
+			allReachable = false
+			print(`  unreachable target {target.Id}`)
+		end
+	end
+	expect("Every target green can be hit (and held) from a bay", allReachable)
+	expect("No putting at the range; unknown clubs/bays refused", RangeRules.resolve(bay, "PT", base, 50, 0, 0) == nil and RangeRules.resolve(bay, "7i", base, 50, 0, 0) == nil and RangeRules.bay(9) == nil)
+	local a = RangeRules.resolve(bay, "SI", base, 77, -0.2, 3) :: RangeRules.Shot
+	local b = RangeRules.resolve(bay, "SI", base, 77, -0.2, 3) :: RangeRules.Shot
+	expect("Range shots are deterministic and start at the bay tee", a.Final.X == b.Final.X and a.Coins == b.Coins and math.abs(a.Samples[1][2] - teeX) < 0.5 and math.abs(a.Samples[1][4] - teeZ) < 0.5)
+end
+
+print("-- lobby zone rewards")
+do
+	local day = 20000 * 86400
+	local d = ProfileTemplate.new(0)
+	d.Coins = 0
+	local cap = Config.Range.DailyCoinCap
+	local first = ZoneRewards.pay(d, "Range", cap - 100, day + 10)
+	local second = ZoneRewards.pay(d, "Range", 500, day + 20)
+	local third = ZoneRewards.pay(d, "Range", 50, day + 30)
+	expect("Range pays until the daily cap, then nothing", first == cap - 100 and second == 100 and third == 0 and d.Coins == cap and ZoneRewards.remaining(d, "Range", day + 40) == 0)
+	expect("Earnings count as coins earned", d.Stats.TotalCoinsEarned >= cap)
+	local afkStill = ZoneRewards.pay(d, "Afk", 30, day + 50)
+	expect("Each zone has its own cap", afkStill == 30 and ZoneRewards.earnedToday(d, "Afk", day + 60) == 30)
+	local tomorrow = ZoneRewards.pay(d, "Range", 40, day + 86400 + 5)
+	expect("A new UTC day resets the caps", tomorrow == 40 and d.Earnings.Range == 40 and d.Earnings.Afk == 0)
+	expect("Bad amounts pay nothing", ZoneRewards.pay(d, "Afk", -5, day) == 0 and ZoneRewards.pay(d, "Afk", 0 / 0, day) == 0 and ZoneRewards.pay(d, "Afk", 0.5, day) == 0)
+
+	local tick = Config.Afk.TickSeconds
+	local timer: ZoneRewards.AfkTimer = { NextPayAt = nil }
+	local due = 0
+	timer, due = ZoneRewards.afkStep(timer, true, 100)
+	local entered = due == 0 and timer.NextPayAt == 100 + tick
+	timer, due = ZoneRewards.afkStep(timer, true, 100 + tick - 1)
+	local early = due == 0
+	timer, due = ZoneRewards.afkStep(timer, true, 100 + tick)
+	expect("AFK: a full minute inside pays one tick; not before", entered and early and due == 1 and timer.NextPayAt == 100 + 2 * tick)
+	timer, due = ZoneRewards.afkStep(timer, false, 100 + tick + 30)
+	local left = due == 0 and timer.NextPayAt == nil
+	timer, due = ZoneRewards.afkStep(timer, true, 100 + tick + 31)
+	timer, due = ZoneRewards.afkStep(timer, true, 100 + 2 * tick + 30)
+	expect("AFK: stepping out restarts the timer (no partial-minute farming)", left and due == 0 and ZoneRewards.afkSecondsLeft(timer, 100 + 2 * tick + 30) == 1)
+
+	expect("The AFK lounge presence test matches the deck", LobbyLayout.insideAfk(LobbyLayout.AFK_LOUNGE.X, 3, LobbyLayout.AFK_LOUNGE.Z) and not LobbyLayout.insideAfk(0, 3, 100) and not LobbyLayout.insideAfk(LobbyLayout.AFK_LOUNGE.X, 40, LobbyLayout.AFK_LOUNGE.Z))
+	local layout = LobbyLayout.build()
+	local names: { [string]: CourseLayout.PartSpec } = {}
+	for _, part in layout.Parts do
+		names[part.Name] = part
+	end
+	local targetsBuilt = true
+	for _, target in RangeRules.Targets do
+		local part = names["RangeTarget_" .. target.Id]
+		local tx, tz = RangeRules.toWorld(RangeRules.centreOf(target))
+		if part == nil or math.abs(part.X - tx) > 1e-6 or math.abs(part.Z - tz) > 1e-6 then
+			targetsBuilt = false
+		end
+	end
+	local matsBuilt = true
+	for _, bay in RangeRules.Bays do
+		if names["RangeMat_" .. bay.Id] == nil then
+			matsBuilt = false
+		end
+	end
+	local clearOfTrees = true
+	for _, part in layout.Parts do
+		if string.sub(part.Name, 1, 9) == "TreeTrunk" then
+			local lounge = LobbyLayout.AFK_LOUNGE
+			if LobbyLayout.inRangeArea(part.X, part.Z) or math.sqrt((part.X - lounge.X) ^ 2 + (part.Z - lounge.Z) ^ 2) < lounge.Radius + 4 then
+				clearOfTrees = false
+			end
+		end
+	end
+	expect("The built range matches RangeRules (targets + bays) and the lounge exists", targetsBuilt and matsBuilt and names.AfkDeck ~= nil)
+	expect("No trees on the range or the lounge", clearOfTrees)
+end
+
+print("-- swing poses & podium")
+do
+	local impact = SwingPose.impactTime("Swing") :: number
+	local atImpact = SwingPose.sample("Swing", impact, 100)
+	local top = SwingPose.sample("Swing", 0.7, 100)
+	local softTop = SwingPose.sample("Swing", 0.7, 20)
+	expect("The club meets the ball at the server's swing lead", impact == Config.Match.SwingLeadSeconds and SwingPose.impactTime("Putt") == impact and SwingPose.impactTime("Victory") == nil)
+	expect("Swing keyframes stay ordered (lead must follow the top of the backswing)", Config.Match.SwingLeadSeconds > 0.8 and SwingPose.duration("Swing") > impact + 1)
+	expect("Impact pose: hands back down at the ball, chest opening to the target", atImpact.RArmPitch < 40 and atImpact.SpineYaw > 0 and atImpact.SpineYaw < 30)
+	expect("Backswing turns away from the target; less power = shorter backswing", top.SpineYaw < -60 and top.RArmPitch > 90 and softTop.SpineYaw > top.SpineYaw)
+	local finite = true
+	for _, kind in { "Idle", "Address", "PuttAddress", "Swing", "Putt", "Victory", "Defeat" } :: { SwingPose.Kind } do
+		for t = 0, 4, 0.05 do
+			for _, v in SwingPose.sample(kind, t, 70) :: any do
+				if v ~= v or math.abs(v) > 200 then
+					finite = false
+				end
+			end
+		end
+	end
+	expect("Every pose is finite and within joint limits at every time", finite)
+	local victory = SwingPose.sample("Victory", 0.45, nil)
+	local defeat = SwingPose.sample("Defeat", 1.0, nil)
+	expect("Victory raises the arms and hops; defeat hangs the head", victory.RArmPitch > 140 and victory.Hop > 0 and defeat.HeadPitch < -20 and defeat.Hop == 0)
+
+	local snap: any = {
+		HoleCount = 3,
+		Players = {
+			{ Id = "me", Name = "Me", IsBot = false, Total = 14, Forfeited = false },
+			{ Id = "bot", Name = "Rival Bot", IsBot = true, Total = 12, Forfeited = false },
+		},
+		Result = { WinnerId = "bot", Draw = false, Reason = "complete" },
+	}
+	local podium = PodiumView.build(snap, "me")
+	local winner, loser = podium.Entries[1], podium.Entries[2]
+	expect("Podium: winner on the top step playing Victory, loser lower playing Defeat", winner.Id == "bot" and winner.Animation == "Victory" and winner.Place == 1 and loser.Id == "me" and loser.Animation == "Defeat" and winner.StepHeight > loser.StepHeight and loser.IsMe)
+	expect("Podium title is from my point of view", podium.Title == "DEFEAT" and string.find(podium.Subtitle, "Rival Bot") ~= nil)
+	snap.Result = { WinnerId = nil, Draw = true, Reason = "complete" }
+	local drawn = PodiumView.build(snap, "me")
+	expect("Draw: equal steps, side by side, no gloating", drawn.Title == "DRAW" and drawn.Entries[1].StepHeight == drawn.Entries[2].StepHeight and drawn.Entries[1].SlotX ~= drawn.Entries[2].SlotX and drawn.Entries[1].Animation == "Idle")
+	snap.Players[1].Forfeited = true
+	snap.Players[1].Total = 3
+	snap.Result = { WinnerId = "bot", Draw = false, Reason = "forfeit" }
+	local ff = PodiumView.build(snap, "bot")
+	expect("Forfeit: the forfeiter is the loser whatever their strokes", ff.Entries[1].Id == "bot" and ff.Entries[2].TotalText == "forfeited" and ff.Title == "VICTORY" and string.find(ff.Subtitle, "forfeit") ~= nil)
+end
+
+print("-- assets")
+do
+	local allBlank = true
+	for _, id in Assets.Images :: { [string]: string } do
+		if Assets.isSet(id) then
+			allBlank = false
+		end
+	end
+	expect("Placeholder asset ids are detected as missing (UI falls back)", Assets.isSet("") == false and Assets.isSet("rbxassetid://0") == false and Assets.isSet((nil :: any)) == false and Assets.isSet("rbxassetid://12345") and Assets.image("CoinIcon") == nil)
+	expect("No real asset ids are required to run (all fallbacks)", allBlank and Assets.animation("Swing") == nil)
 end
 
 for _, caseId in CaseDatabase.Order do

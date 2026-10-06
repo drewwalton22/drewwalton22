@@ -191,7 +191,7 @@ end
 -- Bots use their difficulty's stats on every club.
 function BotBrain.statsFor(difficulty: string): (string) -> ClubDatabase.Stats
 	local stats = Config.Bots[difficulty].Stats
-	local copy: ClubDatabase.Stats = { Distance = stats.Distance, Accuracy = stats.Accuracy, Forgiveness = stats.Forgiveness }
+	local copy: ClubDatabase.Stats = { Power = stats.Power, Accuracy = stats.Accuracy, Spin = stats.Spin }
 	return function(_label: string): ClubDatabase.Stats
 		return copy
 	end

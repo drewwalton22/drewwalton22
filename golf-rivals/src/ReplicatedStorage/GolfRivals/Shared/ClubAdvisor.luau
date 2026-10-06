@@ -9,13 +9,14 @@
 	REACH ESTIMATE
 	  Carry grows slightly faster than ball speed (~speed^1.1), so
 	      reach = BaseCarryYds * (speedFactor ^ 1.1)
-	      speedFactor = (1 + DistanceSpeedPerPoint * (Distance - Baseline)) * LieSpeedMult
+	      speedFactor = ClubStats.speedFactor(Power) * LieSpeedMult
 	  It is an estimate for UI and club choice; the real shot is always simulated.
 ]]
 
 local Types = require(script.Parent.Types)
 local Config = require(script.Parent.Config)
 local ClubDatabase = require(script.Parent.ClubDatabase)
+local ClubStats = require(script.Parent.ClubStats)
 
 local ClubAdvisor = {}
 
@@ -33,16 +34,16 @@ ClubAdvisor.ClubsByReach = byReach
 
 -- Rough full-power carry of a slot for given stats and lie, in yards.
 function ClubAdvisor.estimateCarry(slot: ClubDatabase.BagSlot, stats: ClubDatabase.Stats, lie: Types.LieId): number
-	local S = Config.Swing
-	local speedFactor = (1 + S.DistanceSpeedPerPoint * (stats.Distance - S.DistanceStatBaseline)) * Config.Lies[lie].SpeedMult
+	local speedFactor = ClubStats.speedFactor(stats.Power) * Config.Lies[lie].SpeedMult
 	return slot.BaseCarryYds * speedFactor ^ 1.1
 end
 
--- Shortest club that reaches `distanceYds` (4% margin for roll), the putter on
--- the green when a putt can cover it, else the longest club.
+-- On the green: ALWAYS the putter (the "auto-putter" rule - nobody chips on a
+-- green in Golf Rivals). Elsewhere: the shortest club that reaches `distanceYds`
+-- (4% margin for roll), else the longest club.
 function ClubAdvisor.recommendClub(distanceYds: number, lie: Types.LieId, statsFor: (string) -> ClubDatabase.Stats): string
-	if lie == "Green" and distanceYds <= Config.Swing.PuttFullPowerYards * 0.95 then
-		return "PT"
+	if lie == "Green" then
+		return ClubStats.PUTTER
 	end
 	for _, slot in byReach do
 		if ClubAdvisor.estimateCarry(slot, statsFor(slot.Label), lie) * 1.04 >= distanceYds then
