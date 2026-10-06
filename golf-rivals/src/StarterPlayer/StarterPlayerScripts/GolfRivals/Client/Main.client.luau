@@ -15,5 +15,9 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Shared = ReplicatedStorage:WaitForChild("GolfRivals"):WaitForChild("Shared")
 local Logger = require(Shared:WaitForChild("Logger"))
 local ItemDatabase = require(Shared:WaitForChild("ItemDatabase"))
+local Remotes = require(Shared:WaitForChild("Remotes"))
+
+-- The server creates the remotes at boot; wait so no controller races them.
+Remotes.waitUntilReady()
 
 Logger.info("Client", string.format("Client loaded. %d cosmetics in the catalogue.", #ItemDatabase.Ordered))

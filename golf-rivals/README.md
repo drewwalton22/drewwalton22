@@ -13,7 +13,7 @@ Competitive 3-click-swing golf with ranked leagues, loot cases, a daily shop and
 ## Build progress
 
 - [x] 1. Project scaffold + global item / case / club databases + boot-time validator
-- [ ] 2. Network remotes
+- [x] 2. Network remotes (declarative RemoteDefs, rate limiting, input validation)
 - [ ] 3. Swing physics (3-click, wind, slope, lie)
 - [ ] 4. DataStore + inventory
 - [ ] 5. Economy (shop rotation, cases, trade-up, upgrades)
@@ -28,7 +28,7 @@ Download the [Luau CLI](https://github.com/luau-lang/luau/releases) then:
 LUAU_BIN=/path/to/luau/bin tools/check.sh
 ```
 
-This strict-type-checks `Shared/` and runs `DatabaseValidator` plus spot checks.
+This strict-type-checks the pure `Shared/` modules, syntax-checks the Roblox-only ones (`ROBLOX-ONLY` tag), and runs the database validator, network helpers and spot checks. `Remotes.luau` and the entry scripts have not been run in Studio yet.
 
 ## Sync into Studio
 
