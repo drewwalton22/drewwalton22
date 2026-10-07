@@ -3632,6 +3632,21 @@ do
 	P.MagnetAccel = savedAccel
 	local withMagnet = putt(nearMiss)
 	expect("The magnet curls in a near-miss just outside the capture radius that would otherwise roll past", noMagnet.Outcome ~= "Holed" and withMagnet.Outcome == "Holed")
+
+	-- Cup capture vs lip-out, by the speed the ball has when it reaches the cup.
+	local function arriving(speedAtCup: number, lateral: number): ShotPhysics.ShotResult
+		local d = 3
+		local v0 = math.sqrt(speedAtCup * speedAtCup + 2 * mu * P.Gravity * d)
+		return ShotPhysics.simulate({
+			BallSpeed = v0, LaunchAngleRad = 0, BackspinRpm = 0, SidespinRpm = 0, AimOffsetRad = math.atan2(lateral, d), IsPutt = true,
+		}, green, nil, { X = d, Z = 0 })
+	end
+	expect("A ball rolling over the cup at a reasonable speed (1.2 m/s) drops in", arriving(1.2, 0).Outcome == "Holed")
+	expect("A firm putt (1.8 m/s, just under the capture speed) still drops if it's on line", arriving(P.CupCaptureSpeed * 0.9, 0).Outcome == "Holed")
+	local tooFast = arriving(P.CupCaptureSpeed * 1.6, 0)
+	expect("A ball much faster than the capture speed rolls over the cup (lips out) and carries on past it", tooFast.Outcome == "Rest" and tooFast.FinalX > 3.5)
+	local edge = arriving(1.2, P.CupCaptureRadius * 0.8)
+	expect("A slow ball catching the edge of the cup drops in", edge.Outcome == "Holed")
 	expect("A clearly missed putt (40 cm wide) still misses", putt(0.4).Outcome ~= "Holed")
 	local blast = ShotPhysics.simulate({
 		BallSpeed = math.sqrt(2 * mu * P.Gravity * 30), LaunchAngleRad = 0, BackspinRpm = 0, SidespinRpm = 0, AimOffsetRad = 0, IsPutt = true,
@@ -3798,12 +3813,24 @@ do
 	local green = partBy.Green_1
 	expect("Greens and the tee are smooth turf parts tagged with their lie; the green tilts with the hole's slope",
 		green ~= nil and green.Lie == "Green" and green.SlopeX == hole.GreenSlope.X and green.SlopeZ == hole.GreenSlope.Z and partBy.TeeBox.Lie == "Tee" and partBy.Fringe_1.Lie == nil)
-	local cup = partBy.Cup
-	expect("The visual cup is much bigger than the (smaller) ball, with a white rim; out-of-bounds stakes are placed",
-		cup ~= nil and CourseLayout.BALL_DIAMETER < 1.7 and cup.SY >= 1.6 * CourseLayout.BALL_DIAMETER and partBy.CupRim.SY > cup.SY and partBy.OBStake_1 ~= nil)
+	local hole1 = (green :: TerrainPlan.SurfacePart).Hole
+	local plug, bottom, pole = partBy.CupPlug, partBy.CupBottom, partBy.PinPole
+	expect("A real cup: the green part carries a pocket deeper than the ball, centred on the pin, with a dark bottom inside it",
+		hole1 ~= nil and math.abs(hole1.X - hole.Pin.X * SPM) < 1e-9 and math.abs(hole1.Z - hole.Pin.Z * SPM) < 1e-9
+			and hole1.Depth > CourseLayout.BALL_DIAMETER and hole1.Diameter == CourseLayout.CUP_DIAMETER
+			and bottom ~= nil and bottom.Y < plan.Pin.Y - CourseLayout.BALL_DIAMETER and bottom.CanQuery == false)
+	expect("An invisible cup plug keeps raycasts reading a flat green (lie Green), but nothing collides with it",
+		plug ~= nil and plug.Lie == "Green" and plug.CanQuery and not plug.CanCollide and plug.Transparency == 1)
+	expect("The flagstick is thin, centred in the cup, and can't stop the ball (no collision, no raycast hits)",
+		pole ~= nil and pole.SX <= 0.2 and math.abs(pole.X - hole.Pin.X * SPM) < 1e-9 and not pole.CanCollide and not pole.CanQuery)
+	expect("The ball is small (like real golf) and the cup ~2-3x its size; out-of-bounds stakes are placed",
+		CourseLayout.BALL_DIAMETER <= 0.9 and CourseLayout.CUP_DIAMETER >= 2 * CourseLayout.BALL_DIAMETER and CourseLayout.CUP_DIAMETER <= 3 * CourseLayout.BALL_DIAMETER and partBy.OBStake_1 ~= nil)
 	local captureStuds = Config.Physics.CupCaptureRadius * SPM
-	expect("A captured ball always overlaps the visual hole (capture radius < cup radius + ball radius)",
-		captureStuds < CourseLayout.CUP_DIAMETER / 2 + CourseLayout.BALL_DIAMETER / 2 - 0.3 and captureStuds > CourseLayout.CUP_DIAMETER / 4)
+	expect("A captured ball's centre is over the hole (capture radius < cup radius), so it can visibly drop in",
+		captureStuds < CourseLayout.CUP_DIAMETER / 2 and captureStuds > CourseLayout.CUP_DIAMETER / 4)
+	local onGreen = TerrainPlan.column(hole, hole.Pin.X * SPM, hole.Pin.Z * SPM)
+	expect("Terrain under the green is carved below the turf part (no grass poking through, room for the cup)",
+		onGreen.Top < plan.Pin.Y - TerrainPlan.CUP_DEPTH and onGreen.Top > plan.Pin.Y - TerrainPlan.GREEN_PART_THICKNESS - 0.5)
 	local lo, hi = CourseRelief.range(hole, hole.Bounds.MinX, hole.Bounds.MaxX, hole.Bounds.MinZ, hole.Bounds.MaxZ, 4)
 	expect("The sculpt region covers the bounds plus apron, from below the lowest ground to above the highest",
 		plan.Min.X < hole.Bounds.MinX * SPM and plan.Max.X > hole.Bounds.MaxX * SPM and plan.Min.Y < lo * SPM - 8 and plan.Max.Y > hi * SPM + 8)

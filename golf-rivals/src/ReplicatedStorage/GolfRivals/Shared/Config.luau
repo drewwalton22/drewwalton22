@@ -205,10 +205,9 @@ Config.Physics = {
 	CupRadius = 0.054, -- metres (4.25 in hole) - a real cup (reference only)
 	-- Forgiving, arcade-size hole: a ball whose centre passes within
 	-- CupCaptureRadius of the cup centre drops if it is slower than
-	-- CupCaptureSpeed; faster than that it lips over. Sized with the VISUAL cup
-	-- (CourseLayout.CUP_DIAMETER, 2.2 studs = 0.31 m radius) so a captured ball
-	-- always visibly overlaps the black hole, and a ball that misses rolls past
-	-- its edge.
+	-- CupCaptureSpeed; faster than that it lips out / rolls over. Sized with the
+	-- VISUAL cup (CourseLayout.CUP_DIAMETER 1.9 studs, ball 0.8 studs): a captured
+	-- ball's centre is over the hole, so it can visibly drop in.
 	CupCaptureRadius = 0.16,
 	CupCaptureSpeed = 2.0,
 	-- Ball magnet: a slow ball within MagnetRadius of the cup is pulled toward it,

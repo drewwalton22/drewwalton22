@@ -12,9 +12,16 @@
 	                       (ponds) - TerrainBuilder fills each 4-stud voxel from that
 	  build(hole)          the region to sculpt / clear, plus the PARTS a course
 	                       needs: smooth-turf green (tilted to the green's slope) on
-	                       a fringe ring, the tee box, the cup (black, with a white
-	                       rim), pin and flag, and white OUT-OF-BOUNDS stakes along
-	                       the bounds and around OB zones
+	                       a fringe ring, the tee box, a REAL CUP (the green part
+	                       carries a `Hole` that TerrainBuilder cuts out of it with
+	                       SubtractAsync: white liner walls, a dark bottom, an
+	                       invisible "CupPlug" so raycasts still read a flat green),
+	                       a thin flagstick centred in the cup (no collision), and
+	                       white OUT-OF-BOUNDS stakes along the bounds and OB zones
+
+	UNDER THE GREEN the terrain is carved GREEN_CARVE studs below the green's plane,
+	so the smooth turf part is the only surface there (no grass poking through it
+	and room for the cup's pocket).
 
 	MATERIALS (SurfaceMaterials.BuildMaterials)
 	  fairway / tee / under the green  LeafyGrass   short turf, no grass blades
@@ -53,6 +60,8 @@ export type SurfacePart = {
 	CanCollide: boolean,
 	CanQuery: boolean,
 	Transparency: number,
+	-- A cup pocket to cut out of this part (studs, same frame as X / Z).
+	Hole: { X: number, Z: number, Diameter: number, Depth: number }?,
 }
 
 export type Plan = {
@@ -72,7 +81,9 @@ local M = SurfaceMaterials.BuildMaterials
 TerrainPlan.GROUND_THICKNESS = 12 -- studs of soil under the lowest surface
 TerrainPlan.APRON = 140 -- studs sculpted beyond the bounds
 TerrainPlan.HEADROOM = 16 -- studs of air cleared above the highest surface
-TerrainPlan.GREEN_PART_THICKNESS = 1.4 -- the turf part sinks into the terrain
+TerrainPlan.GREEN_PART_THICKNESS = 2.2 -- the turf part (deep enough for the cup pocket)
+TerrainPlan.GREEN_CARVE = 1.8 -- studs the terrain under a green sits below its plane
+TerrainPlan.CUP_DEPTH = 1.3 -- studs: depth of the cup pocket (> the ball's diameter)
 TerrainPlan.GREEN_LIFT = 0.12 -- studs the turf's top sits above the green plane
 TerrainPlan.FRINGE = 1.2 -- metres of fringe ring around the green
 TerrainPlan.CUP_DIAMETER = CourseLayout.CUP_DIAMETER -- studs: the VISUAL cup
@@ -129,8 +140,17 @@ function TerrainPlan.column(hole: CourseDatabase.HoleDef, x: number, z: number):
 			end
 		end
 	end
+	local top = ground * SPM
+	-- Under a green: carve below the turf part so only the smooth part shows.
+	if not (water and water > ground) then
+		for i, green in hole.Greens do
+			if (xm - green.X) ^ 2 + (zm - green.Z) ^ 2 <= green.R * green.R then
+				top = math.min(top, CourseRelief.greenPlane(hole, i, xm, zm) * SPM - TerrainPlan.GREEN_CARVE)
+			end
+		end
+	end
 	return {
-		Top = ground * SPM,
+		Top = top,
 		Material = material,
 		WaterTop = if water and water > ground then water * SPM else nil,
 	}
@@ -176,10 +196,21 @@ function TerrainPlan.build(hole: CourseDatabase.HoleDef): Plan
 		table.insert(parts, surfacePart(name, shape, nil, x, y, z, sx, sy, sz, slopeX, slopeZ, color, material, false))
 	end
 	local cup = TerrainPlan.CUP_DIAMETER
-	decor("CupRim", "Disc", pinX, pinTop + 0.01, pinZ, 0.03, cup + 0.35, cup + 0.35, gx, gz, { 236, 236, 236 }, "SmoothPlastic")
-	decor("Cup", "Disc", pinX, pinTop + 0.03, pinZ, 0.03, cup, cup, gx, gz, { 12, 12, 14 }, "SmoothPlastic")
-	decor("PinPole", "Block", pinX, pinTop + H / 2, pinZ, 0.25, H, 0.25, 0, 0, { 240, 240, 240 }, "SmoothPlastic")
-	decor("PinFlag", "Block", pinX + 1.4, pinTop + H - 0.9, pinZ, 2.8, 1.8, 0.1, 0, 0, { 230, 50, 60 }, "Fabric")
+	-- The cup: cut into the green part (its Hole), a dark bottom inside the pocket,
+	-- and an invisible plug at the surface so the physics raycasts still see green.
+	for _, part in parts do
+		if part.Name == "Green_1" then
+			part.Hole = { X = pinX, Z = pinZ, Diameter = cup, Depth = TerrainPlan.CUP_DEPTH }
+		end
+	end
+	decor("CupBottom", "Disc", pinX, pinTop - TerrainPlan.CUP_DEPTH + 0.06, pinZ, 0.05, cup - 0.04, cup - 0.04, gx, gz, { 14, 14, 16 }, "SmoothPlastic")
+	local plug = surfacePart("CupPlug", "Disc", "Green", pinX, pinTop - 0.1, pinZ, 0.2, cup, cup, gx, gz, SurfaceMaterials.Turf.Green.Color, SurfaceMaterials.Turf.Green.Material, false)
+	plug.CanQuery = true -- raycasts hit it (flat green); nothing collides with it
+	plug.Transparency = 1
+	table.insert(parts, plug)
+	-- Flagstick: thin, centred in the cup, standing on the cup's bottom.
+	decor("PinPole", "Block", pinX, pinTop - TerrainPlan.CUP_DEPTH + H / 2, pinZ, 0.14, H + TerrainPlan.CUP_DEPTH, 0.14, 0, 0, { 245, 245, 245 }, "SmoothPlastic")
+	decor("PinFlag", "Block", pinX + 0.85, pinTop + H - 0.7, pinZ, 1.6, 1.1, 0.06, 0, 0, { 230, 50, 60 }, "Fabric")
 
 	-- Out-of-bounds stakes: around the bounds and around each OB zone.
 	local stakeCount = 0

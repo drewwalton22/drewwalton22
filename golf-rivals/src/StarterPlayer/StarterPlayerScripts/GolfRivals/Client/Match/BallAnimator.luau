@@ -15,14 +15,15 @@
 	a lagging Beam ribbon). `burst` is a plain particle pop (water splash etc.);
 	hole-drop effects use CosmeticBuilder.holeEffect.
 
-	SIZE: CourseLayout.BALL_DIAMETER (1.25 studs - a touch smaller than before, so
-	it sits inside the bigger cup).
+	SIZE: CourseLayout.BALL_DIAMETER (0.8 studs - small like real golf). So it stays
+	easy to see, it keeps its trail and gets a white OUTLINE (a Highlight) whenever
+	it's more than OUTLINE_DISTANCE studs from the camera.
 
-	HOLE DROP: when a shot is holed the ball doesn't stop flat on top of the cup -
-	after its last sample it slides to the cup centre and FALLS: an accelerating
-	downward velocity (gravity) carries it below the green surface, through the
-	black cup, before it disappears. The ball is anchored and CanCollide = false,
-	so nothing physical can catch it on the way down.
+	HOLE DROP: when a shot is holed the ball doesn't stop on top of the cup - after
+	its last sample it slides to the cup centre and FALLS into the real pocket cut
+	in the green (TerrainPlan.CUP_DEPTH deep), with a rattle sound
+	(Assets.sound("CupDrop")). The ball is anchored and CanCollide = false, so
+	nothing physical can catch it on the way down; it stays visible in the cup.
 ]]
 
 local Debris = game:GetService("Debris")
@@ -33,6 +34,8 @@ local Shared = ReplicatedStorage.GolfRivals.Shared
 local CosmeticsData = require(Shared.CosmeticsData)
 local CourseLayout = require(Shared.CourseLayout)
 local TelemetryView = require(Shared.TelemetryView)
+local TerrainPlan = require(Shared.TerrainPlan)
+local Assets = require(Shared.Assets)
 
 local CosmeticBuilder = require(script.Parent.Parent.Golf.CosmeticBuilder)
 
@@ -52,10 +55,24 @@ export type Animator = {
 
 local BallAnimator = {}
 
-local BALL_DIAMETER = CourseLayout.BALL_DIAMETER -- studs: bigger than a real ball so it reads on screen
-local LIFT = BALL_DIAMETER / 2
-local DROP_GRAVITY = 140 -- studs/s^2 for the drop into the cup (stylised, snappy)
-local DROP_DEPTH = BALL_DIAMETER * 1.6 -- studs below the surface before it vanishes
+local BALL_DIAMETER = CourseLayout.BALL_DIAMETER
+local LIFT = BALL_DIAMETER / 2 + 0.1 -- centre above the ground (the green turf sits 0.1 proud)
+local DROP_GRAVITY = 120 -- studs/s^2 for the drop into the cup (stylised, snappy)
+local DROP_DEPTH = TerrainPlan.CUP_DEPTH - 0.08 -- to the bottom of the cup's pocket
+local OUTLINE_DISTANCE = 35 -- studs from the camera before the outline turns on
+
+local function playSound(parent: Instance, id: string, volume: number)
+	if id == "" then
+		return
+	end
+	local sound = Instance.new("Sound")
+	sound.SoundId = id
+	sound.Volume = volume
+	sound.RollOffMaxDistance = 120
+	sound.Parent = parent
+	sound:Play()
+	Debris:AddItem(sound, 3)
+end
 
 function BallAnimator.new(parent: Instance, appearance: Appearance, name: string): Animator
 	local ball = Instance.new("Part")
@@ -70,6 +87,23 @@ function BallAnimator.new(parent: Instance, appearance: Appearance, name: string
 	ball.Parent = parent
 	CosmeticBuilder.dressBall(ball, appearance.Ball)
 	local trail = CosmeticBuilder.trail(ball, appearance.Trail)
+
+	-- Far away the small ball gets a bright outline so it never gets lost.
+	local outline = Instance.new("Highlight")
+	outline.Name = "FarOutline"
+	outline.Adornee = ball
+	outline.FillTransparency = 1
+	outline.OutlineColor = Color3.new(1, 1, 1)
+	outline.OutlineTransparency = 0.1
+	outline.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+	outline.Enabled = false
+	outline.Parent = ball
+	local outlineConnection = RunService.RenderStepped:Connect(function()
+		local camera = workspace.CurrentCamera
+		if camera then
+			outline.Enabled = ball.Transparency < 1 and (camera.CFrame.Position - ball.Position).Magnitude > OUTLINE_DISTANCE
+		end
+	end)
 
 	local connection: RBXScriptConnection? = nil
 
@@ -110,6 +144,7 @@ function BallAnimator.new(parent: Instance, appearance: Appearance, name: string
 					local last = samples[#samples]
 					local cup = if shot.End then toWorld(shot.End.X, last[3], shot.End.Z) + Vector3.new(0, LIFT, 0) else rest
 					local fall = 0.0
+					playSound(ball, Assets.sound("CupDrop"), 0.9)
 					connection = RunService.RenderStepped:Connect(function(dt: number)
 						fall += dt
 						local slide = math.clamp(fall / 0.08, 0, 1)
@@ -117,8 +152,7 @@ function BallAnimator.new(parent: Instance, appearance: Appearance, name: string
 						local depth = math.min(DROP_DEPTH, 0.5 * DROP_GRAVITY * fall * fall)
 						ball.CFrame = CFrame.new(centre - Vector3.new(0, depth, 0))
 						if depth >= DROP_DEPTH then
-							stop()
-							ball.Transparency = 1 -- in the hole
+							stop() -- resting in the bottom of the cup
 							if onDone then
 								onDone()
 							end
@@ -143,6 +177,7 @@ function BallAnimator.new(parent: Instance, appearance: Appearance, name: string
 		stop = stop,
 		destroy = function()
 			stop()
+			outlineConnection:Disconnect()
 			trail.destroy()
 			ball:Destroy()
 		end,

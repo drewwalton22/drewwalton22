@@ -17,8 +17,12 @@
 	       fairways, raised / banked greens), with the column's material; above a
 	       pond's bed it writes Water up to the pond's level
 	    3. places the course parts: smooth-turf green + fringe (tilted), tee box,
-	       cup with rim, pin, flag, out-of-bounds stakes (GolfLie attributes on the
-	       playable ones)
+	       pin, flag, out-of-bounds stakes (GolfLie attributes on the playable ones)
+	    4. cuts the REAL CUP: the green part's Hole is subtracted with
+	       SubtractAsync (white liner walls from the cutter's colour, a dark bottom
+	       part inside). It runs in the background - until it's done (or if CSG is
+	       unavailable) a dark disc marks the cup - so building never waits on it.
+	       An invisible CupPlug keeps the physics raycasts reading a flat green.
 	  built.destroy()  clears the sculpted region back to Air and removes the parts
 
 	Terrain replicates to every client, so the course players see is exactly the one
@@ -157,6 +161,45 @@ local function clear(minW: Vector3, maxW: Vector3)
 	end
 end
 
+-- Cut the cup pocket out of the green (background). `marker` is the temporary
+-- dark disc shown until the cut is in place.
+local function cutCup(green: Part, spec: TerrainPlan.SurfacePart, pinTop: number, origin: Vector3, marker: BasePart)
+	local hole = spec.Hole
+	if hole == nil then
+		return
+	end
+	task.spawn(function()
+		local cutter = Instance.new("Part")
+		cutter.Shape = Enum.PartType.Cylinder
+		cutter.Anchored = true
+		cutter.Color = Color3.fromRGB(240, 240, 240) -- the cup liner (white walls)
+		cutter.Material = Enum.Material.SmoothPlastic
+		local height = hole.Depth + 0.6
+		cutter.Size = Vector3.new(height, hole.Diameter, hole.Diameter)
+		local centre = origin + Vector3.new(hole.X, pinTop - hole.Depth + height / 2, hole.Z)
+		cutter.CFrame = frameFor(centre, spec.SlopeX, spec.SlopeZ) * CFrame.Angles(0, 0, math.pi / 2)
+		local ok, result = pcall(function(): any
+			return green:SubtractAsync({ cutter }, Enum.CollisionFidelity.PreciseConvexDecomposition)
+		end)
+		cutter:Destroy()
+		if not ok or typeof(result) ~= "Instance" or green.Parent == nil then
+			return -- keep the solid green + the dark disc marker
+		end
+		local union = result :: UnionOperation
+		union.Name = green.Name
+		union.UsePartColor = false -- turf faces stay green, the pocket walls white
+		union.Anchored = true
+		union.CanCollide = green.CanCollide
+		union.CanQuery = green.CanQuery
+		union.CanTouch = false
+		union.CastShadow = false
+		union:SetAttribute(SurfaceMaterials.ATTRIBUTE, green:GetAttribute(SurfaceMaterials.ATTRIBUTE))
+		union.Parent = green.Parent
+		green:Destroy()
+		marker:Destroy()
+	end)
+end
+
 function TerrainBuilder.build(hole: CourseDatabase.HoleDef, origin: Vector3, name: string): Built
 	TerrainBuilder.applyLook()
 	local plan = TerrainPlan.build(hole)
@@ -167,6 +210,7 @@ function TerrainBuilder.build(hole: CourseDatabase.HoleDef, origin: Vector3, nam
 
 	local folder = Instance.new("Folder")
 	folder.Name = name
+	local holeSpecs: { [Part]: TerrainPlan.SurfacePart } = {}
 	for _, spec in plan.Parts do
 		local part = Instance.new("Part")
 		part.Name = spec.Name
@@ -192,8 +236,28 @@ function TerrainBuilder.build(hole: CourseDatabase.HoleDef, origin: Vector3, nam
 			part:SetAttribute(SurfaceMaterials.ATTRIBUTE, spec.Lie)
 		end
 		part.Parent = folder
+		if spec.Hole then
+			holeSpecs[part] = spec
+		end
 	end
 	folder.Parent = workspace
+	-- Real cups: a dark disc marks each cup until its pocket is cut.
+	for green, spec in holeSpecs do
+		local hole = spec.Hole :: { X: number, Z: number, Diameter: number, Depth: number }
+		local marker = Instance.new("Part")
+		marker.Name = "CupMarker"
+		marker.Shape = Enum.PartType.Cylinder
+		marker.Anchored = true
+		marker.CanCollide = false
+		marker.CanQuery = false
+		marker.CanTouch = false
+		marker.CastShadow = false
+		marker.Color = Color3.fromRGB(14, 14, 16)
+		marker.Size = Vector3.new(0.04, hole.Diameter, hole.Diameter)
+		marker.CFrame = frameFor(origin + Vector3.new(hole.X, plan.Pin.Y + 0.02, hole.Z), spec.SlopeX, spec.SlopeZ) * CFrame.Angles(0, 0, math.pi / 2)
+		marker.Parent = folder
+		cutCup(green, spec, plan.Pin.Y, origin, marker)
+	end
 
 	local destroyed = false
 	return {
