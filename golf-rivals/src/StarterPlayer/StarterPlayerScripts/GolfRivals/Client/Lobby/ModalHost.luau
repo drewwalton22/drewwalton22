@@ -65,7 +65,7 @@ function ModalHost.new(): Host
 	-- A thin accent line under the title bar.
 	Kit.new("Frame", { Size = UDim2.new(1, -32, 0, 2), Position = UDim2.fromOffset(16, 52), BackgroundColor3 = Theme.Colors.StrokeSoft, BorderSizePixel = 0, Parent = window })
 
-	local titleLabel = Kit.label("", { Size = UDim2.new(1, -90, 0, 52), Position = UDim2.fromOffset(20, 0), TextSize = 24, Font = Theme.Fonts.Title, TextTruncate = Enum.TextTruncate.AtEnd, Parent = window })
+	local titleLabel = Kit.label("", { Size = UDim2.new(1, -90, 0, 52), Position = UDim2.fromOffset(20, 0), TextSize = 30, Font = Theme.Fonts.Display, TextTruncate = Enum.TextTruncate.AtEnd, Parent = window })
 	local content = Kit.new("Frame", { Size = UDim2.new(1, -24, 1, -70), Position = UDim2.fromOffset(12, 62), BackgroundTransparency = 1, Parent = window }) :: Frame
 
 	local factories: { [string]: Factory } = {}

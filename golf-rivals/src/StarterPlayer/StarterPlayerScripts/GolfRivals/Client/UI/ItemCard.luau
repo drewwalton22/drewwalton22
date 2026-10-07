@@ -119,11 +119,11 @@ function ItemCard.new(props: Props): Frame
 		})
 	end
 	if props.Badge then
-		Kit.label(props.Badge, {
-			Size = UDim2.fromOffset(46, 18), Position = UDim2.new(1, -52, 0, 10), TextSize = 11, Font = Theme.Fonts.Title,
-			BackgroundTransparency = 0.15, BackgroundColor3 = rarity, TextXAlignment = Enum.TextXAlignment.Center, TextColor3 = Color3.new(0, 0, 0),
-			Parent = card,
-		}).ZIndex = 3
+		local isNew = string.sub(props.Badge, 1, 3) == "NEW"
+		Kit.badge(if isNew then "NEW!" else props.Badge, if isNew then Theme.Colors.Pink else rarity, {
+			Size = UDim2.fromOffset(if isNew then 50 else 40, 22), Position = UDim2.new(1, -8, 0, -6), AnchorPoint = Vector2.new(1, 0),
+			Rotation = if isNew then 8 else 0, Parent = card,
+		}, isNew)
 	end
 	if props.OnClick then
 		local button = Kit.new("TextButton", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", ZIndex = 5, Parent = card }) :: TextButton

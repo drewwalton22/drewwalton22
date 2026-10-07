@@ -22,6 +22,7 @@
 ]]
 
 local Players = game:GetService("Players")
+local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage.GolfRivals.Shared
@@ -94,25 +95,30 @@ function LobbyHud.new(): Hud
 	}) :: Frame
 	local ovrLabel = Kit.label("OVR --", { Size = UDim2.fromScale(1, 1), TextSize = 14, Font = Theme.Fonts.Title, TextColor3 = Color3.fromRGB(40, 24, 0), TextXAlignment = Enum.TextXAlignment.Center, Parent = ovrPill })
 
-	-- ---- currency (top-right) -----------------------------------------------------------------------
-	local bar = Kit.new("Frame", { Size = UDim2.fromOffset(360, 46), Position = UDim2.fromScale(1, 0), AnchorPoint = Vector2.new(1, 0), BackgroundTransparency = 1, Parent = safe }, {
-		Kit.list(Enum.FillDirection.Horizontal, 8, { HorizontalAlignment = Enum.HorizontalAlignment.Right, VerticalAlignment = Enum.VerticalAlignment.Center }),
+	-- ---- currency (top-right): big bold counters, each with its own "+" ---------------------------
+	local bar = Kit.new("Frame", { Size = UDim2.fromOffset(440, 58), Position = UDim2.fromScale(1, 0), AnchorPoint = Vector2.new(1, 0), BackgroundTransparency = 1, Parent = safe }, {
+		Kit.list(Enum.FillDirection.Horizontal, 10, { HorizontalAlignment = Enum.HorizontalAlignment.Right, VerticalAlignment = Enum.VerticalAlignment.Center }),
 	}) :: Frame
-	local function pill(currency: string, order: number): TextLabel
-		local frame = Kit.panel({ Size = UDim2.fromOffset(150, 44), LayoutOrder = order, Parent = bar })
-		local icon = Icons.currency(currency, UDim2.fromOffset(28, 28))
-		icon.Position = UDim2.fromOffset(10, 8)
+	local function pill(currency: string, order: number, onPlus: () -> ()): TextLabel
+		local frame = Kit.panel({ Size = UDim2.fromOffset(204, 54), LayoutOrder = order, BackgroundColor3 = C.PanelDark, Parent = bar })
+		local icon = Icons.currency(currency, UDim2.fromOffset(40, 40))
+		icon.Position = UDim2.fromOffset(6, 7)
 		icon.Parent = frame
-		return Kit.label("0", {
-			Size = UDim2.new(1, -52, 1, 0), Position = UDim2.fromOffset(46, 0), TextSize = 20, Font = Theme.Fonts.Title,
+		local label = Kit.label("0", {
+			Size = UDim2.new(1, -100, 1, 0), Position = UDim2.fromOffset(50, 0), TextSize = 28, Font = Theme.Fonts.Display,
 			TextColor3 = if currency == "Gems" then C.Gem else C.Gold, TextTruncate = Enum.TextTruncate.AtEnd, Parent = frame,
 		})
+		Kit.button("+", "primary", onPlus, {
+			Size = UDim2.fromOffset(40, 40), Position = UDim2.new(1, -46, 0.5, -20), TextSize = 30, Font = Theme.Fonts.Display, Parent = frame,
+		})
+		return label
 	end
-	local coinLabel = pill("Coins", 1)
-	local gemLabel = pill("Gems", 2)
-	Kit.button("+", "primary", function()
+	local coinLabel = pill("Coins", 1, function()
+		opened.fire("Shop")
+	end)
+	local gemLabel = pill("Gems", 2, function()
 		getGems.fire()
-	end, { Size = UDim2.fromOffset(40, 40), LayoutOrder = 3, TextSize = 26, Font = Theme.Fonts.Title, Parent = bar })
+	end)
 
 	-- ---- tile menu (left) ------------------------------------------------------------------------------
 	local menu = Kit.new("Frame", { Size = UDim2.fromOffset(180, 4 * 88 + 3 * 10), Position = UDim2.new(0, 0, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), BackgroundTransparency = 1, Parent = safe }, {
@@ -124,49 +130,76 @@ function LobbyHud.new(): Hud
 		local button = Kit.button("", tile.Variant, function()
 			opened.fire(tile.Screen)
 		end, { LayoutOrder = index, Parent = menu })
-		Kit.stroke(Color3.new(1, 1, 1), 1.5).Parent = button
 		local art = AssetLoader.image(tile.Asset, UDim2.fromOffset(52, 52), function(size: UDim2): GuiObject
 			return Kit.label(tile.Glyph, { Size = size, TextSize = 36, TextXAlignment = Enum.TextXAlignment.Center })
 		end)
 		art.Position = UDim2.new(0.5, -26, 0, 4)
 		art.Parent = button
-		Kit.label(tile.Label, { Size = UDim2.new(1, -6, 0, 22), Position = UDim2.new(0, 3, 1, -26), TextSize = 12, Font = Theme.Fonts.Title, TextXAlignment = Enum.TextXAlignment.Center, Parent = button })
+		Kit.label(tile.Label, { Size = UDim2.new(1, -6, 0, 22), Position = UDim2.new(0, 3, 1, -26), TextScaled = true, Font = Theme.Fonts.Display, TextXAlignment = Enum.TextXAlignment.Center, Parent = button })
 		if tile.Screen == "Quests" then
-			local badge = Kit.label("0", {
-				Size = UDim2.fromOffset(26, 26), Position = UDim2.new(1, -18, 0, -8), TextSize = 14, Font = Theme.Fonts.Title, BackgroundColor3 = C.Danger,
-				BackgroundTransparency = 0, TextXAlignment = Enum.TextXAlignment.Center, Visible = false, ZIndex = 3, Parent = button,
-			})
-			Kit.corner(13).Parent = badge
-			Kit.stroke(Color3.new(1, 1, 1), 2).Parent = badge
-			questBadge = badge
+			questBadge = Kit.badge("0", C.Danger, {
+				Size = UDim2.fromOffset(28, 28), Position = UDim2.new(1, -18, 0, -8), TextSize = 15, Visible = false, Parent = button,
+			}, true)
 		elseif tile.Screen == "Wheel" then
-			local badge = Kit.label("FREE", {
-				Size = UDim2.fromOffset(44, 22), Position = UDim2.new(1, -30, 0, -8), TextSize = 12, Font = Theme.Fonts.Title, BackgroundColor3 = C.Good,
-				BackgroundTransparency = 0, TextXAlignment = Enum.TextXAlignment.Center, Visible = false, ZIndex = 3, Parent = button,
-			})
-			Kit.corner(11).Parent = badge
-			Kit.stroke(Color3.new(1, 1, 1), 2).Parent = badge
-			wheelBadge = badge
+			wheelBadge = Kit.badge("FREE!", C.Pink, {
+				Size = UDim2.fromOffset(54, 24), Position = UDim2.new(1, -38, 0, -10), Rotation = 8, Visible = false, Parent = button,
+			}, true)
 		end
 	end
 
-	-- ---- bottom buttons ------------------------------------------------------------------------------------
-	local bottom = Kit.new("Frame", { Size = UDim2.new(0, 640, 0, 92), Position = UDim2.fromScale(0.5, 1), AnchorPoint = Vector2.new(0.5, 1), BackgroundTransparency = 1, Parent = safe }, {
-		Kit.list(Enum.FillDirection.Horizontal, 14, { HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Bottom }),
+	-- ---- bottom buttons: big, slanted, glossy, with a shine sweeping across ----------------------------
+	local bottom = Kit.new("Frame", { Size = UDim2.new(0, 760, 0, 120), Position = UDim2.fromScale(0.5, 1), AnchorPoint = Vector2.new(0.5, 1), BackgroundTransparency = 1, Parent = safe }, {
+		Kit.list(Enum.FillDirection.Horizontal, 22, { HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Bottom }),
 	}) :: Frame
-	local function bigButton(title: string, subtitle: string, variant: string, width: number, height: number, order: number, onClick: () -> ())
-		local button = Kit.button("", variant, onClick, { Size = UDim2.fromOffset(width, height), LayoutOrder = order, Parent = bottom })
-		Kit.stroke(Color3.new(1, 1, 1), 2).Parent = button
-		Kit.label(title, { Size = UDim2.new(1, -12, 0.6, 0), Position = UDim2.fromOffset(6, 4), TextSize = if height > 80 then 34 else 20, Font = Theme.Fonts.Title, TextXAlignment = Enum.TextXAlignment.Center, Parent = button })
-		Kit.label(subtitle, { Size = UDim2.new(1, -12, 0.3, 0), Position = UDim2.new(0, 6, 0.62, 0), TextSize = 13, Font = Theme.Fonts.Bold, TextColor3 = Color3.fromRGB(230, 240, 255), TextXAlignment = Enum.TextXAlignment.Center, Parent = button })
+	local function bigButton(title: string, subtitle: string, glyph: string, asset: string, variant: string, width: number, height: number, order: number, onClick: () -> ())
+		-- A transparent slot keeps the list layout straight while the button inside leans.
+		local slot = Kit.new("Frame", { Size = UDim2.fromOffset(width, height), BackgroundTransparency = 1, LayoutOrder = order, Parent = bottom }) :: Frame
+		local button = Kit.button("", variant, onClick, {
+			Size = UDim2.fromScale(1, 1), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), Rotation = -5, Parent = slot,
+		})
+		local art = AssetLoader.image(asset, UDim2.fromOffset(height * 0.55, height * 0.55), function(size: UDim2): GuiObject
+			return Kit.label(glyph, { Size = size, TextScaled = true, TextXAlignment = Enum.TextXAlignment.Center })
+		end)
+		art.Position = UDim2.new(0, 10, 0.5, -height * 0.275)
+		art.Parent = button
+		local left = height * 0.55 + 16
+		Kit.label(title, {
+			Size = UDim2.new(1, -left - 10, 0.58, 0), Position = UDim2.new(0, left, 0.06, 0), TextScaled = true, Font = Theme.Fonts.Display,
+			TextXAlignment = Enum.TextXAlignment.Left, Parent = button,
+		})
+		Kit.label(subtitle, {
+			Size = UDim2.new(1, -left - 10, 0.26, 0), Position = UDim2.new(0, left, 0.64, 0), TextScaled = true, Font = Theme.Fonts.Bold,
+			TextColor3 = Color3.fromRGB(255, 255, 255), TextXAlignment = Enum.TextXAlignment.Left, Parent = button,
+		})
+		-- Shine: a bright diagonal band sliding across every few seconds (a gradient
+		-- offset tween, so it never spills outside the rotated button).
+		local shine = Kit.new("Frame", { Name = "Shine", Size = UDim2.fromScale(1, 1), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.35, BorderSizePixel = 0, Active = false, Parent = button }, {
+			Kit.corner(12),
+		}) :: Frame
+		local band = Kit.new("UIGradient", {
+			Rotation = 20,
+			Transparency = NumberSequence.new({
+				NumberSequenceKeypoint.new(0, 1), NumberSequenceKeypoint.new(0.42, 1), NumberSequenceKeypoint.new(0.5, 0.2),
+				NumberSequenceKeypoint.new(0.58, 1), NumberSequenceKeypoint.new(1, 1),
+			}),
+			Offset = Vector2.new(-1, 0),
+			Parent = shine,
+		}) :: UIGradient
+		task.spawn(function()
+			while button.Parent do
+				band.Offset = Vector2.new(-1, 0)
+				TweenService:Create(band, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut), { Offset = Vector2.new(1, 0) }):Play()
+				task.wait(3.2 + order * 0.4)
+			end
+		end)
 	end
-	bigButton("DRIVING RANGE", "Hit targets · earn coins", "secondary", 190, 70, 1, function()
+	bigButton("DRIVING RANGE", "Hit targets, earn coins", "🎯", "RangeButton", "secondary", 230, 84, 1, function()
 		travel.fire("Range")
 	end)
-	bigButton("PLAY", "Ranked & practice", "primary", 220, 90, 2, function()
+	bigButton("PLAY", "Ranked & practice", "⛳", "PlayButton", "orange", 270, 112, 2, function()
 		opened.fire("Play")
 	end)
-	bigButton("AFK LOUNGE", "Relax · earn coins", "teal", 190, 70, 3, function()
+	bigButton("AFK LOUNGE", "Relax, earn coins", "🌴", "AfkButton", "purple", 230, 84, 3, function()
 		travel.fire("Afk")
 	end)
 

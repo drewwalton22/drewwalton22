@@ -30,9 +30,12 @@ local LobbyController = require(script.Parent.Lobby.LobbyController)
 local WheelController = require(script.Parent.Lobby.WheelController)
 local MatchController = require(script.Parent.Match.MatchController)
 local RangeController = require(script.Parent.Zones.RangeController)
+local TextOutline = require(script.Parent.UI.TextOutline)
 local Toast = require(script.Parent.UI.Toast)
 
 Logger.info("Client", "Starting Golf Rivals client...")
+
+TextOutline.start() -- dark cartoon outline on every piece of on-screen text
 
 ClientState.init() -- waits for the server's remotes, then loads the profile
 

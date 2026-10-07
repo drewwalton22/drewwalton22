@@ -11,6 +11,9 @@
 	loud error, which is what we want), `Parent` is applied last so a screen is never
 	shown half-built, and children can be passed in the third argument.
 
+	STYLE: Kit.button / Kit.panel / Kit.badge give the cartoon look (see Theme);
+	UI/TextOutline adds the dark outline to every text object automatically.
+
 	TOPBAR SAFETY: every ScreenGui ignores the GUI inset (so dim backdrops cover the
 	whole screen), and HUD content goes inside Kit.safeArea(gui): a frame padded by
 	GuiService.TopbarInset (the height of Roblox's own top-bar buttons, kept live if
@@ -121,7 +124,7 @@ function Kit.sheen(shade: number?): Instance
 	})
 end
 
--- A rounded, semi-translucent dark glass panel: sheen gradient + soft glow border.
+-- A rounded, colourful cartoon panel: top-lit gradient + thick dark outline.
 function Kit.panel(props: Props?, children: { any }?): Frame
 	local merged: Props = { BackgroundColor3 = Theme.Colors.Panel, BackgroundTransparency = Theme.PanelTransparency, BorderSizePixel = 0 }
 	if props then
@@ -131,9 +134,71 @@ function Kit.panel(props: Props?, children: { any }?): Frame
 	end
 	local frame = Kit.new("Frame", merged, children) :: Frame
 	Kit.corner().Parent = frame
-	Kit.glow().Parent = frame
-	Kit.sheen().Parent = frame
+	Kit.new("UIStroke", {
+		Color = Theme.Colors.Stroke,
+		Thickness = Theme.OutlineThickness,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		LineJoinMode = Enum.LineJoinMode.Round,
+		Parent = frame,
+	})
+	Kit.sheen(0.7).Parent = frame
 	return frame
+end
+
+-- Hover / press "bounce" on any GuiButton (a UIScale tween).
+function Kit.bounce(button: GuiButton)
+	local scale = Kit.new("UIScale", { Name = "Bounce", Parent = button }) :: UIScale
+	local function to(value: number, seconds: number)
+		TweenService:Create(scale, TweenInfo.new(seconds, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = value }):Play()
+	end
+	button.MouseEnter:Connect(function()
+		to(1.06, 0.15)
+	end)
+	button.MouseLeave:Connect(function()
+		to(1, 0.15)
+	end)
+	button.MouseButton1Down:Connect(function()
+		to(0.92, 0.08)
+	end)
+	button.MouseButton1Up:Connect(function()
+		to(1.06, 0.18)
+	end)
+	button.Activated:Connect(function()
+		-- Touch screens never send MouseLeave: settle back after a tap.
+		task.delay(0.25, function()
+			to(1, 0.2)
+		end)
+	end)
+end
+
+-- A small glossy pill badge ("NEW!", "FREE", "x3"). `pulse` makes it throb.
+function Kit.badge(text: string, color: Color3, props: Props?, pulse: boolean?): TextLabel
+	local merged: Props = {
+		Text = text,
+		BackgroundColor3 = color,
+		BackgroundTransparency = 0,
+		TextColor3 = Color3.new(1, 1, 1),
+		Font = Theme.Fonts.Display,
+		TextSize = 13,
+		ZIndex = 6,
+		TextXAlignment = Enum.TextXAlignment.Center,
+		TextStrokeTransparency = 0,
+		TextStrokeColor3 = Theme.Colors.Stroke,
+	}
+	if props then
+		for k, v in props do
+			merged[k] = v
+		end
+	end
+	local badge = Kit.new("TextLabel", merged) :: TextLabel
+	Kit.new("UICorner", { CornerRadius = UDim.new(1, 0), Parent = badge })
+	Kit.new("UIStroke", { Color = Theme.Colors.Stroke, Thickness = 2.5, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, Parent = badge })
+	Kit.sheen(0.75).Parent = badge
+	if pulse then
+		local scale = Kit.new("UIScale", { Parent = badge }) :: UIScale
+		TweenService:Create(scale, TweenInfo.new(0.55, Enum.EasingStyle.Sine, Enum.EasingDirection.InOut, -1, true), { Scale = 1.18 }):Play()
+	end
+	return badge
 end
 
 function Kit.label(text: string, props: Props?): TextLabel
@@ -154,10 +219,15 @@ function Kit.label(text: string, props: Props?): TextLabel
 	return Kit.new("TextLabel", merged) :: TextLabel
 end
 
--- A button that calls onClick when pressed. `variant` picks the colour pair from
--- Theme.Variants: "primary" (green), "secondary" (blue), "ghost" (dark), "danger"
--- (red), "gold", "purple", "teal", "orange". Buttons get a soft top-to-bottom
--- gradient (white -> shade, multiplied over the base colour) and a press scale.
+-- A chunky cartoon button that calls onClick when pressed. `variant` picks the
+-- colour pair from Theme.Variants: "primary" (green), "secondary" (blue), "ghost",
+-- "danger" (red), "gold", "purple", "teal", "orange", "pink". Each button gets:
+--   * a vertical gradient from the pair's bright top to its deep bottom (applied
+--     as a tint, so changing BackgroundColor3 later still works)
+--   * a thick dark outline ("Rim" child frame, so the TEXT keeps its own outline
+--     from UI/TextOutline)
+--   * a glossy highlight strip across the top and a darker lip along the bottom
+--   * a bouncy hover / press animation (Kit.bounce)
 function Kit.button(text: string, variant: string?, onClick: (() -> ())?, props: Props?): TextButton
 	local pair = Theme.Variants[variant or "primary"] or Theme.Variants.primary
 	local merged: Props = {
@@ -165,7 +235,7 @@ function Kit.button(text: string, variant: string?, onClick: (() -> ())?, props:
 		AutoButtonColor = true,
 		BackgroundColor3 = pair[1],
 		TextColor3 = Theme.Colors.Text,
-		Font = Theme.Fonts.Bold,
+		Font = Theme.Fonts.Title,
 		TextSize = 16,
 		BorderSizePixel = 0,
 	}
@@ -175,13 +245,36 @@ function Kit.button(text: string, variant: string?, onClick: (() -> ())?, props:
 		end
 	end
 	local button = Kit.new("TextButton", merged) :: TextButton
-	Kit.corner(10).Parent = button
-	-- Gradient as a tint so changing BackgroundColor3 later (enable/disable) still works.
+	Kit.corner(12).Parent = button
+	local top, bottom = pair[1], pair[2]
+	local function ratio(a: number, b: number): number
+		return if a > 0.01 then math.clamp(b / a, 0, 1) else 1
+	end
 	Kit.new("UIGradient", {
-		Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.new(0.78, 0.78, 0.82)),
+		Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.new(ratio(top.R, bottom.R), ratio(top.G, bottom.G), ratio(top.B, bottom.B))),
 		Rotation = 90,
 		Parent = button,
 	})
+	local gloss = Kit.new("Frame", {
+		Name = "Gloss", Size = UDim2.new(1, -10, 0.34, 0), Position = UDim2.fromOffset(5, 3), BackgroundColor3 = Color3.new(1, 1, 1),
+		BackgroundTransparency = 0.55, BorderSizePixel = 0, Active = false, Parent = button,
+	}, { Kit.corner(8) }) :: Frame
+	Kit.new("UIGradient", {
+		Transparency = NumberSequence.new(0.2, 1),
+		Rotation = 90,
+		Parent = gloss,
+	})
+	Kit.new("Frame", {
+		Name = "Lip", Size = UDim2.new(1, 0, 0, 5), Position = UDim2.new(0, 0, 1, -5), BackgroundColor3 = Color3.new(0, 0, 0),
+		BackgroundTransparency = 0.72, BorderSizePixel = 0, Active = false, Parent = button,
+	}, { Kit.corner(4) })
+	Kit.new("Frame", {
+		Name = "Rim", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Active = false, Parent = button,
+	}, {
+		Kit.corner(12),
+		Kit.new("UIStroke", { Color = Theme.Colors.Stroke, Thickness = Theme.OutlineThickness, ApplyStrokeMode = Enum.ApplyStrokeMode.Border, LineJoinMode = Enum.LineJoinMode.Round }),
+	})
+	Kit.bounce(button)
 	if onClick then
 		button.Activated:Connect(onClick)
 	end

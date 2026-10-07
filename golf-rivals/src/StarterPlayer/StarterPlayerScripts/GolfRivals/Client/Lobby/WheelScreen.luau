@@ -135,7 +135,7 @@ WheelScreen.factory = {
 		local resultGradient = Kit.new("UIGradient", { Rotation = 90, Parent = result }) :: UIGradient
 		local resultScale = Kit.new("UIScale", { Scale = 1, Parent = result }) :: UIScale
 		local resultTitle = Kit.label("YOU WON!", {
-			Size = UDim2.fromScale(0.9, 0.2), Position = UDim2.fromScale(0.05, 0.04), TextScaled = true, Font = Theme.Fonts.Title,
+			Size = UDim2.fromScale(0.9, 0.2), Position = UDim2.fromScale(0.05, 0.04), TextScaled = true, Font = Theme.Fonts.Display,
 			TextColor3 = Color3.new(1, 1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 52, Parent = result,
 		})
 		Kit.new("UIStroke", { Color = Color3.fromRGB(24, 18, 40), Thickness = 3, Parent = resultTitle })
@@ -185,9 +185,9 @@ WheelScreen.factory = {
 		Kit.new("UITextSizeConstraint", { MaxTextSize = 26, Parent = status }) -- shrinks on narrow screens instead of overflowing
 		local sub = Kit.label("", { Size = UDim2.new(1, -28, 0, 22), Position = UDim2.fromOffset(14, 48), TextSize = 15, TextColor3 = C.TextDim, Parent = statusCard })
 
-		local spinButton = Kit.button("SPIN!", "primary", nil, { Size = UDim2.new(1, 0, 0, 64), Position = UDim2.fromOffset(0, 96), TextSize = 30, Font = Theme.Fonts.Title, Parent = side })
+		local spinButton = Kit.button("SPIN!", "primary", nil, { Size = UDim2.new(1, 0, 0, 64), Position = UDim2.fromOffset(0, 96), TextSize = 30, Font = Theme.Fonts.Display, Parent = side })
 		local spinGlow = Kit.glow(C.GlowAccent, 3, 0.25) :: UIStroke
-		spinGlow.Parent = spinButton
+		spinGlow.Parent = spinButton:FindFirstChild("Rim") or spinButton -- one stroke per object: glow the rim frame
 		local gemButton = Kit.priceButton("BUY A SPIN", "Gems", tostring(Config.Wheel.GemSpinPrice), "purple", nil, {
 			Size = UDim2.new(0.5, -5, 0, 46), Position = UDim2.fromOffset(0, 172), TextSize = 16, Parent = side,
 		})

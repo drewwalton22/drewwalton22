@@ -3126,7 +3126,7 @@ do
 			lamps += 1
 		end
 	end
-	expect("Each lamp globe has a real light (+ the range deck, the AFK cabana and the wheel stand)", lamps == 8 and #layout.Lights == lamps + 3)
+	expect("Each lamp globe has a real light (+ the range deck, the AFK cabana, the wheel stand and the spawn pad)", lamps == 8 and #layout.Lights == lamps + 4)
 	local treesClear = true
 	for _, part in layout.Parts do
 		if string.sub(part.Name, 1, 9) == "TreeTrunk" then

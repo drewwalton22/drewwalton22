@@ -223,6 +223,8 @@ function LobbyLayout.addAfkLounge(parts: { PartSpec }, signs: { Sign }, lights: 
 	table.insert(lights, { X = lounge.X, Y = 12, Z = lounge.Z, Range = 30, Brightness = 1.3, Color = { 160, 220, 255 } })
 end
 
+local BENCH_COLOURS: { Types.RGB } = { { 255, 120, 90 }, { 70, 190, 230 }, { 250, 200, 70 }, { 160, 110, 230 } }
+
 function LobbyLayout.build(): Layout
 	local parts: { PartSpec } = {}
 	local signs: { Sign } = {}
@@ -232,9 +234,16 @@ function LobbyLayout.build(): Layout
 	table.insert(parts, block("Ground", 0, -2, 0, 900, 4, 900, { 78, 128, 60 }, "Grass"))
 	table.insert(parts, disc("Plaza", 0, 0.3, 40, LobbyLayout.PLAZA_RADIUS, 1, { 196, 188, 172 }, "Cobblestone"))
 	table.insert(parts, disc("PlazaRing", 0, 0.45, 40, 30, 1, { 150, 142, 128 }, "Slate"))
+	-- Neon accents: a glowing edge round the inner plaza ring and the fountain,
+	-- and a glowing spawn pad (Neon parts colour-cycle in the client's LobbyAmbience).
+	table.insert(parts, disc("PlazaNeonRing", 0, 0.42, 40, 31.2, 0.9, { 80, 255, 240 }, "Neon"))
+	table.insert(parts, disc("SpawnPadGlow", 0, 0.4, 100, 8.6, 0.9, { 255, 120, 220 }, "Neon"))
+	table.insert(parts, disc("SpawnPad", 0, 0.46, 100, 7.4, 0.9, { 70, 60, 150 }, "SmoothPlastic"))
+	table.insert(lights, { X = 0, Y = 3, Z = 100, Range = 18, Brightness = 1.2, Color = { 255, 140, 230 } })
 
 	-- Fountain at the plaza centre.
 	table.insert(parts, disc("FountainBasin", 0, 2.2, 40, 14, 2, { 170, 164, 150 }, "Concrete"))
+	table.insert(parts, disc("FountainNeon", 0, 1.9, 40, 14.6, 1.2, { 120, 200, 255 }, "Neon"))
 	table.insert(parts, disc("FountainWater", 0, 2.5, 40, 12, 1, { 70, 150, 230 }, "Glass", 0.3))
 	table.insert(parts, block("FountainSpout", 0, 6, 40, 2.5, 7, 2.5, { 190, 184, 170 }, "Concrete"))
 
@@ -247,6 +256,7 @@ function LobbyLayout.build(): Layout
 	table.insert(parts, block("Porch", 0, 1.5, houseZ + 46, 150, 3, 36, { 190, 176, 152 }, "WoodPlanks"))
 	for i, x in { -66, -22, 22, 66 } do
 		table.insert(parts, block(`Column_{i}`, x, 14, houseZ + 62, 4, 28, 4, { 236, 230, 218 }, "Concrete"))
+		table.insert(parts, block(`ColumnNeon_{i}`, x, 14, houseZ + 64.1, 0.6, 24, 0.3, { 255, 200, 70 }, "Neon", false))
 	end
 	-- Stairs down from the porch to the plaza.
 	for i = 1, 4 do
@@ -282,8 +292,9 @@ function LobbyLayout.build(): Layout
 		local angle = math.rad(200 + i * 28)
 		local bx, bz = math.cos(angle) * benchRadius, 40 + math.sin(angle) * benchRadius
 		local yaw = math.deg(math.atan2(-(bx), -(bz - 40))) -- seat faces the fountain
-		table.insert(parts, block(`Bench_{i}`, bx, 1.9, bz, 10, 1, 3, { 120, 84, 56 }, "WoodPlanks", true, yaw))
-		table.insert(parts, block(`BenchBack_{i}`, bx, 3.4, bz, 10, 2.6, 0.6, { 100, 70, 48 }, "WoodPlanks", false, yaw))
+		local paint = BENCH_COLOURS[i % #BENCH_COLOURS + 1] -- cheerful painted benches
+		table.insert(parts, block(`Bench_{i}`, bx, 1.9, bz, 10, 1, 3, paint, "WoodPlanks", true, yaw))
+		table.insert(parts, block(`BenchBack_{i}`, bx, 3.4, bz, 10, 2.6, 0.6, paint, "WoodPlanks", false, yaw))
 	end
 	for i = 0, 7 do
 		local angle = math.rad(i * 45)

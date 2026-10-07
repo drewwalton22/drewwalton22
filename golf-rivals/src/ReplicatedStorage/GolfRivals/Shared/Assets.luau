@@ -35,11 +35,15 @@ Assets.Images = {
 	ShopTile = "",
 	CasesTile = "",
 	LoadoutTile = "",
+	InventoryTile = "",
 	TradeUpTile = "",
 	QuestsTile = "",
+	WheelTile = "",
 	LeaderboardTile = "",
-	-- Big bottom buttons
+	-- Big bottom buttons (icon on the left of each)
 	PlayButton = "",
+	RangeButton = "",
+	AfkButton = "",
 }
 
 -- Character animations (Animation.AnimationId) per rig type. "" = procedural.

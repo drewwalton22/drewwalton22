@@ -7,6 +7,7 @@
 
 	  DEPTH OF FIELD  a gentle cinematic blur on the far background while in the
 	                  lobby (off in matches, where you need to read the course)
+	  COLOUR GRADE    a brighter, more saturated look in the lobby only
 	  NEON ACCENTS    every part the server tagged "GolfRivalsNeon" (lamp caps,
 	                  signs, the wheel stand trim) slowly cycles through the accent
 	                  palette, each part phase-shifted so the plaza shimmers
@@ -82,6 +83,17 @@ function LobbyAmbience.start()
 	dof.NearIntensity = 0
 	dof.Parent = Lighting
 
+	-- ---- brighter, more colourful lobby grade ---------------------------------------------------------
+	-- Its own ColorCorrection layered on the course look (effects stack), switched
+	-- off in matches and on the range so the course keeps its natural colours.
+	local grade = Instance.new("ColorCorrectionEffect")
+	grade.Name = "GR_LobbyGrade"
+	grade.Brightness = 0.05
+	grade.Contrast = 0.06
+	grade.Saturation = 0.28
+	grade.TintColor = Color3.fromRGB(255, 250, 244)
+	grade.Parent = Lighting
+
 	-- ---- ambient particles (a big invisible volume over the plaza) ------------------------------------
 	local volume = Instance.new("Part")
 	volume.Name = "GR_AmbientVolume"
@@ -117,6 +129,7 @@ function LobbyAmbience.start()
 	local function setActive(on: boolean)
 		active = on
 		dof.Enabled = on
+		grade.Enabled = on
 		pollen.Enabled = on
 		fireflies.Enabled = on
 	end
