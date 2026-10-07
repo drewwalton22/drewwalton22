@@ -247,8 +247,11 @@ function Kit.button(text: string, variant: string?, onClick: (() -> ())?, props:
 	local button = Kit.new("TextButton", merged) :: TextButton
 	Kit.corner(12).Parent = button
 	local top, bottom = pair[1], pair[2]
+	-- The tint also colours the button's text, so it goes only halfway to the
+	-- deep colour (the gloss strip and lip add the rest of the depth).
 	local function ratio(a: number, b: number): number
-		return if a > 0.01 then math.clamp(b / a, 0, 1) else 1
+		local full = if a > 0.01 then math.clamp(b / a, 0, 1) else 1
+		return 0.5 + 0.5 * full
 	end
 	Kit.new("UIGradient", {
 		Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.new(ratio(top.R, bottom.R), ratio(top.G, bottom.G), ratio(top.B, bottom.B))),

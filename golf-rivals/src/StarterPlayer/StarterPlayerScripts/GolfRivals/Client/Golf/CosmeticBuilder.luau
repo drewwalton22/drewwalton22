@@ -112,8 +112,8 @@ local function ensureSole(model: Model, grip: BasePart)
 	end
 	local sole = Instance.new("Attachment")
 	sole.Name = "Sole"
+	sole.Parent = lowest -- parent first: WorldPosition is only world-space once attached
 	sole.WorldPosition = lowest.Position - grip.CFrame.UpVector * (lowest.Size.Y / 2)
-	sole.Parent = lowest
 end
 
 -- ---- animated bits (one shared loop) ------------------------------------------

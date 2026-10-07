@@ -142,6 +142,21 @@ function ItemPreview.build(itemId: string): (Instance?, Vector3, number)
 	return nil, Vector3.zero, 1
 end
 
+-- False when the preview or any parent frame is hidden, or its ScreenGui is off
+-- (a closed window keeps its frames but shouldn't keep spinning them).
+local function shown(object: Instance): boolean
+	local node: Instance? = object
+	while node do
+		if node:IsA("GuiObject") and not node.Visible then
+			return false
+		elseif node:IsA("LayerCollector") then
+			return node.Enabled
+		end
+		node = node.Parent
+	end
+	return false
+end
+
 local function ensureLoop()
 	if loop then
 		return
@@ -162,7 +177,7 @@ local function ensureLoop()
 				table.remove(live, i)
 			else
 				local position, size = viewport.AbsolutePosition, viewport.AbsoluteSize
-				local onScreen = size.X > 1 and position.X < screen.X and position.Y < screen.Y and position.X + size.X > 0 and position.Y + size.Y > 0
+				local onScreen = size.X > 1 and position.X < screen.X and position.Y < screen.Y and position.X + size.X > 0 and position.Y + size.Y > 0 and shown(viewport)
 				if onScreen then
 					entry.Angle += step * entry.Speed
 					local offset = Vector3.new(math.cos(entry.Angle), 0.42, math.sin(entry.Angle)).Unit * entry.Distance
@@ -199,7 +214,10 @@ function ItemPreview.attach(host: GuiObject, itemId: string, options: Options?):
 	camera.FieldOfView = 36
 	camera.Parent = viewport
 	viewport.CurrentCamera = camera
-	model.Parent = viewport
+	-- A WorldModel lets welds solve inside the viewport (the Black Hole's disc spins).
+	local world = Instance.new("WorldModel")
+	world.Parent = viewport
+	model.Parent = world
 	local distance = radius / math.tan(math.rad(18))
 	local angle = math.rad(35)
 	camera.CFrame = CFrame.lookAt(focus + Vector3.new(math.cos(angle), 0.42, math.sin(angle)).Unit * distance, focus)

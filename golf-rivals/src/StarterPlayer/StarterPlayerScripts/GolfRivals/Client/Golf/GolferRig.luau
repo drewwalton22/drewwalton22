@@ -302,6 +302,32 @@ local function wrap(model: Model, isBot: boolean): Rig
 		resumeDefault()
 	end
 
+	-- The procedural move (SwingPose), written after the Animator's step every frame.
+	local function runProcedural(kind: SwingPose.Kind, power: number?, onImpact: (() -> ())?)
+		local start = os.clock()
+		local impact = SwingPose.impactTime(kind)
+		local duration = SwingPose.duration(kind, power)
+		local fired = impact == nil
+		stepConnection = RunService.PreSimulation:Connect(function()
+			local t = os.clock() - start
+			applyPose(SwingPose.sample(kind, t, power))
+			if not fired and impact and t >= impact then
+				fired = true
+				if onImpact then
+					task.spawn(onImpact)
+				end
+			end
+			if not LOOPED[kind] and t >= duration then
+				-- One-shot finished: hold the final (idle) pose until the next move.
+				if stepConnection then
+					stepConnection:Disconnect()
+					stepConnection = nil
+				end
+				clearPose()
+			end
+		end)
+	end
+
 	-- Plays an uploaded animation; returns false when none is configured/loadable.
 	local function playAsset(kind: SwingPose.Kind, onImpact: (() -> ())?, override: string?): boolean
 		if isBot then
@@ -341,21 +367,26 @@ local function wrap(model: Model, isBot: boolean): Rig
 		end
 		newTrack:Play(0.1)
 		-- An asset that fails to load (moderated, wrong rig, not owned) never
-		-- reaches a length: fall back to the procedural pose.
-		task.delay(1.5, function()
-			if myGeneration == generation and track == newTrack and newTrack.Length <= 0 then
-				newTrack:Stop(0)
-				track = nil
-				generation += 1
-				local procedural = generation
-				local start = os.clock()
-				stepConnection = RunService.PreSimulation:Connect(function()
-					if procedural == generation then
-						applyPose(SwingPose.sample(kind, os.clock() - start + 1.5, nil))
-					end
-				end)
-				fire()
+		-- reaches a length: after a short wait, play the procedural move from the
+		-- start instead (it fires the impact itself if the shot hasn't gone yet).
+		task.spawn(function()
+			local waited = 0
+			while waited < 0.6 do
+				task.wait(0.1)
+				waited += 0.1
+				if myGeneration ~= generation or track ~= newTrack or newTrack.Length > 0 then
+					return -- replaced, stopped, or loaded fine
+				end
 			end
+			newTrack:Stop(0)
+			track = nil
+			generation += 1 -- cancels the marker / timer impact of the failed track
+			runProcedural(kind, nil, if fired then nil else function()
+				fired = true
+				if onImpact then
+					onImpact()
+				end
+			end)
 		end)
 		return true
 	end
@@ -373,29 +404,7 @@ local function wrap(model: Model, isBot: boolean): Rig
 		if playAsset(kind, onImpact, animationId) then
 			return
 		end
-		-- Procedural fallback, written after the Animator's step every frame.
-		local start = os.clock()
-		local impact = SwingPose.impactTime(kind)
-		local duration = SwingPose.duration(kind, power)
-		local fired = impact == nil
-		stepConnection = RunService.PreSimulation:Connect(function()
-			local t = os.clock() - start
-			applyPose(SwingPose.sample(kind, t, power))
-			if not fired and impact and t >= impact then
-				fired = true
-				if onImpact then
-					task.spawn(onImpact)
-				end
-			end
-			if not LOOPED[kind] and t >= duration then
-				-- One-shot finished: hold the final (idle) pose until the next move.
-				if stepConnection then
-					stepConnection:Disconnect()
-					stepConnection = nil
-				end
-				clearPose()
-			end
-		end)
+		runProcedural(kind, power, onImpact)
 	end
 
 	-- Height of the root above the feet.
@@ -436,6 +445,11 @@ local function wrap(model: Model, isBot: boolean): Rig
 			model:PivotTo(model:GetPivot() + toward * seat.Shift)
 		end
 		local newGrip = gripPos + toward * seat.Shift
+		local weld = clubWeld
+		if weld then
+			weld:Destroy() -- free the club from the hand before resizing / re-posing it
+			clubWeld = nil
+		end
 		if seat.Scale > 1.001 then
 			c:ScaleTo(c:GetScale() * seat.Scale)
 		end
@@ -444,10 +458,6 @@ local function wrap(model: Model, isBot: boolean): Rig
 		up = if up.Magnitude > 1e-4 then up.Unit else Vector3.yAxis
 		local xAxis = forward - up * forward:Dot(up)
 		xAxis = if xAxis.Magnitude > 1e-4 then xAxis.Unit else toward:Cross(up).Unit
-		local weld = clubWeld
-		if weld then
-			weld:Destroy()
-		end
 		-- Re-pivot so the grip sits at the hand and the sole on the target point.
 		local frame = CFrame.fromMatrix(newGrip, xAxis, up)
 		local soleLocal = grip.CFrame:PointToObjectSpace(sole.WorldPosition)

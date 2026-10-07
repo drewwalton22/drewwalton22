@@ -187,7 +187,9 @@ WheelScreen.factory = {
 
 		local spinButton = Kit.button("SPIN!", "primary", nil, { Size = UDim2.new(1, 0, 0, 64), Position = UDim2.fromOffset(0, 96), TextSize = 30, Font = Theme.Fonts.Display, Parent = side })
 		local spinGlow = Kit.glow(C.GlowAccent, 3, 0.25) :: UIStroke
-		spinGlow.Parent = spinButton:FindFirstChild("Rim") or spinButton -- one stroke per object: glow the rim frame
+		-- One UIStroke per object: the glow gets its own transparent frame.
+		local glowRim = Kit.new("Frame", { Name = "GlowRim", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Active = false, Parent = spinButton }, { Kit.corner(12) })
+		spinGlow.Parent = glowRim
 		local gemButton = Kit.priceButton("BUY A SPIN", "Gems", tostring(Config.Wheel.GemSpinPrice), "purple", nil, {
 			Size = UDim2.new(0.5, -5, 0, 46), Position = UDim2.fromOffset(0, 172), TextSize = 16, Parent = side,
 		})

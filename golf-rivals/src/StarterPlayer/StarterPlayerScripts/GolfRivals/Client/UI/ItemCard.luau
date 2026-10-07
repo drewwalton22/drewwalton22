@@ -96,6 +96,7 @@ function ItemCard.new(props: Props): Frame
 		local lock = Icons.lock(UDim2.fromOffset(22, 26))
 		lock.AnchorPoint = Vector2.new(0.5, 0.5)
 		lock.Position = UDim2.fromScale(0.5, 0.5)
+		lock.ZIndex = 10 -- above the 3D preview
 		lock.Parent = tile
 	end
 
