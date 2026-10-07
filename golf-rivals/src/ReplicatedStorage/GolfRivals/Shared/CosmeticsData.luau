@@ -14,7 +14,12 @@
 	                       plus each club skin's colours / material; or a ready-made
 	                       template in ReplicatedStorage.GolfRivalsAssets.Clubs
 	  SWINGS / STANCES     AnimationId (with an "Impact" marker) or the procedural
-	  VICTORY EMOTES       SwingPose fallback
+	                       SwingPose fallback
+	  VICTORY EMOTES       played by the podium winner: your own AnimationId if set,
+	                       else one of ROBLOX'S BUILT-IN EMOTES (cheer, dances, wave;
+	                       owned by Roblox, so they load in every game), else the
+	                       procedural Victory pose. The default Fist Pump uses your
+	                       published Victory animation (Assets.Animations) once set.
 	  HOLE EFFECTS         particle burst style, colour and size
 
 	Every asset id ships blank: the game renders each cosmetic with procedural
@@ -24,6 +29,7 @@
 	to the golfer during the swing sequence.
 ]]
 
+local Assets = require(script.Parent.Assets)
 local ItemDatabase = require(script.Parent.ItemDatabase)
 local Types = require(script.Parent.Types)
 
@@ -63,8 +69,10 @@ export type ClubLook = {
 
 export type AnimationLook = {
 	AnimationId: string, -- "" = procedural
-	Pose: string, -- SwingPose kind used when no animation id is set
+	Pose: string, -- SwingPose kind used when no animation id is set (or it fails to load)
 	Speed: number,
+	Source: string, -- what plays, for the UI ("Roblox Cheer emote", "Custom animation", ...)
+	Effect: string, -- extra podium flair: "None" | "Sparkle" | "Aura"
 }
 
 export type HoleEffectLook = {
@@ -94,7 +102,45 @@ CosmeticsData.BallMeshes = {} :: { [string]: { MeshId: string, TextureId: string
 CosmeticsData.TrailTextures = {} :: { [string]: string }
 CosmeticsData.AnimationIds = {
 	-- e.g. swing_samurai = "rbxassetid://1234567890",
+	-- Works for victory emotes too (emote_moonwalk = "rbxassetid://..."): your own
+	-- animation then replaces the built-in Roblox emote below.
 } :: { [string]: string }
+
+-- Roblox's own default emote animations (the ones the default Animate script
+-- plays for /e cheer, /e dance ...). Roblox owns them, so they play in any game.
+CosmeticsData.BuiltInEmotes = {
+	R15 = {
+		cheer = "rbxassetid://507770677",
+		dance = "rbxassetid://507771019",
+		dance2 = "rbxassetid://507776043",
+		dance3 = "rbxassetid://507777268",
+		wave = "rbxassetid://507770239",
+		point = "rbxassetid://507770453",
+		laugh = "rbxassetid://507770818",
+	},
+	R6 = {
+		cheer = "rbxassetid://129423030",
+		dance = "rbxassetid://182435998",
+		dance2 = "rbxassetid://182436842",
+		dance3 = "rbxassetid://182436935",
+		wave = "rbxassetid://128777973",
+		point = "rbxassetid://128853357",
+		laugh = "rbxassetid://129423131",
+	},
+} :: { [string]: { [string]: string } }
+
+-- Victory emote item -> built-in emote it plays, plus podium flair.
+local EMOTES: { [string]: { BuiltIn: string, Label: string, Effect: string } } = {
+	emote_fistpump = { BuiltIn = "cheer", Label = "Cheer", Effect = "None" },
+	emote_twirl = { BuiltIn = "dance", Label = "Dance", Effect = "None" },
+	emote_moonwalk = { BuiltIn = "dance2", Label = "Dance 2", Effect = "None" },
+	emote_hio_dance = { BuiltIn = "dance3", Label = "Dance 3", Effect = "Sparkle" },
+	emote_trophy = { BuiltIn = "point", Label = "Point", Effect = "Sparkle" },
+	emote_ascension = { BuiltIn = "wave", Label = "Wave", Effect = "Aura" },
+}
+
+-- The free default victory emote everyone owns.
+CosmeticsData.DEFAULT_EMOTE = "emote_fistpump"
 
 -- ---------------------------------------------------------------------------
 -- Style tables (pure presentation, safe to tweak)
@@ -189,14 +235,36 @@ function CosmeticsData.club(skinItemId: string?, class: string): ClubLook
 	}
 end
 
-function CosmeticsData.animation(itemId: string?): AnimationLook
+-- `rigType` ("R15" / "R6" / "Bot") picks the built-in emote that fits the body;
+-- bots (and unknown rigs) always get the procedural pose.
+function CosmeticsData.animation(itemId: string?, rigType: string?): AnimationLook
 	local item = ItemDatabase.get(itemId)
 	local slot = if item then item.Slot else "Swing"
-	return {
-		AnimationId = CosmeticsData.AnimationIds[itemId or ""] or "",
-		Pose = ANIMATION_POSES[slot] or "Swing",
-		Speed = 1,
-	}
+	local pose = ANIMATION_POSES[slot] or "Swing"
+	local own = CosmeticsData.AnimationIds[itemId or ""] or ""
+	local look: AnimationLook = { AnimationId = "", Pose = pose, Speed = 1, Source = `Procedural "{pose}" pose`, Effect = "None" }
+	local emote = if slot == "Emote" then EMOTES[itemId or ""] else nil
+	if emote then
+		look.Effect = emote.Effect
+	end
+	if rigType == "Bot" then
+		return look
+	end
+	if Assets.isSet(own) then
+		look.AnimationId = own
+		look.Source = "Custom animation"
+	elseif emote then
+		local rig = if rigType == "R6" then "R6" else "R15"
+		local published = if itemId == CosmeticsData.DEFAULT_EMOTE then Assets.animation("Victory", rig) else nil
+		if published then
+			look.AnimationId = published
+			look.Source = "Your published Victory animation"
+		else
+			look.AnimationId = CosmeticsData.BuiltInEmotes[rig][emote.BuiltIn] or ""
+			look.Source = `Roblox {emote.Label} emote`
+		end
+	end
+	return look
 end
 
 function CosmeticsData.holeEffect(itemId: string?): HoleEffectLook

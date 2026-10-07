@@ -4,7 +4,7 @@
 # Roblox modules use `require(script.Parent.X)`, which standalone Luau can't
 # resolve. This script copies Shared/ to a temp dir, rewrites those requires to
 # `require("./X")`, then runs `luau-analyze` (strict type check) and executes
-# tools/verify_shared.luau.
+# tools/verify_shared.luau and tools/verify_features.luau.
 #
 # Usage: LUAU_BIN=/path/to/dir/with/luau-and-luau-analyze tools/check.sh
 #        (or put `luau` and `luau-analyze` on PATH)
@@ -47,9 +47,10 @@ for f in "$SHARED"/*.luau "$SERVER"/*.luau; do
 	if grep -q "ROBLOX-ONLY" "$f"; then ROBLOX_ONLY+=("$out"); else PURE+=("$out"); fi
 done
 cp "$ROOT/tools/verify_shared.luau" "$TMP/verify_shared.luau"
+cp "$ROOT/tools/verify_features.luau" "$TMP/verify_features.luau"
 
 echo "== luau-analyze (strict) on ${#PURE[@]} pure modules =="
-ANALYZE_OUT="$("$ANALYZE" "${PURE[@]}" "$TMP/verify_shared.luau" 2>&1 || true)"
+ANALYZE_OUT="$("$ANALYZE" "${PURE[@]}" "$TMP/verify_shared.luau" "$TMP/verify_features.luau" 2>&1 || true)"
 if [ -n "$ANALYZE_OUT" ]; then
 	echo "$ANALYZE_OUT"
 	echo "analyze: FAILED (errors or lint warnings above)"
@@ -90,3 +91,4 @@ fi
 
 echo "== run verification =="
 "$LUAU" "$TMP/verify_shared.luau"
+"$LUAU" "$TMP/verify_features.luau"

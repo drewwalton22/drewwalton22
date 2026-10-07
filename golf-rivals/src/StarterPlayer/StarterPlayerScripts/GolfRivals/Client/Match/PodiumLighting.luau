@@ -3,20 +3,30 @@
 --[[
 	PodiumLighting.luau  (Client/Match)
 
-	POST-GAME LIGHTING FIX. The end-of-match podium floats high above the arena in
-	open sky, where the golden-hour sun, Bloom, SunRays, positive exposure and the
-	stage lights (Future lighting) stacked up into a blinding white screen. While
-	the podium is showing, this module:
+	WHAT WAS LIGHTING THE PODIUM. The stage floats 900 studs above the arena in
+	open sky, so it was lit by the course's outdoor setup (LightingDirector):
+	a low golden-hour SUN (Brightness 2.6) raking in from one side, the
+	ATMOSPHERE's haze 1.6 + glare 0.35 glowing white right behind the stage, BLOOM
+	(threshold 0.92) blowing out every bright surface, SUNRAYS, +0.15 exposure and
+	the sky's environment light, all stacked on the stage's own lights. Clamping
+	some of those (the old fix) still left one avatar orange and the other in
+	shadow with a glowing haze behind them.
 
-	  * lowers Lighting.Brightness and ExposureCompensation
-	  * tames the post effects: Bloom intensity way down (higher threshold),
-	    SunRays off, ColorCorrection slightly darker with a touch more contrast
-	  * disables every bright local light (Brightness > 1) within PODIUM_RADIUS of
-	    the stage that isn't the stage's own soft key light
+	THE FIX. PodiumStage now builds a closed studio room around the stage AND the
+	camera, so the sun and sky can't reach inside, and lights it with its own
+	key / fill / rim lights. While the podium shows, this module sets known-good
+	values (not "clamp whatever is there"):
+
+	  Lighting   Brightness 1, ExposureCompensation 0, neutral indoor Ambient
+	             (an even base light on every face), environment light down
+	  Atmosphere Density / Haze / Glare 0 (no white haze inside the room)
+	  Bloom      very gentle (only the neon strips glow), SunRays off
+	  Colour     neutral ColorCorrection (no tint, light contrast)
+	  Lights     every other bright light near the stage is switched off
 
 	restore() puts every saved value back exactly (also called when leaving the
-	match). Changes are client-side only: Lighting edits on a client don't
-	replicate, so other players are unaffected.
+	match). Lighting edits made by a client don't replicate, so other players are
+	unaffected.
 ]]
 
 local Lighting = game:GetService("Lighting")
@@ -25,46 +35,59 @@ local PodiumLighting = {}
 
 local PODIUM_RADIUS = 160 -- studs around the podium whose bright lights are switched off
 
+-- Known-good values while the podium is on screen.
+local SCENE: { [string]: any } = {
+	Brightness = 1,
+	ExposureCompensation = 0,
+	Ambient = Color3.fromRGB(118, 116, 130),
+	OutdoorAmbient = Color3.fromRGB(128, 128, 136),
+	EnvironmentDiffuseScale = 0.25,
+	EnvironmentSpecularScale = 0.35,
+}
+local EFFECTS: { [string]: { [string]: any } } = {
+	Atmosphere = { Density = 0, Haze = 0, Glare = 0 },
+	BloomEffect = { Intensity = 0.25, Threshold = 1.8, Size = 18 },
+	SunRaysEffect = { Enabled = false },
+	ColorCorrectionEffect = { Brightness = 0, Contrast = 0.06, Saturation = 0.12, TintColor = Color3.new(1, 1, 1) },
+}
+
 type Saved = {
-	Brightness: number,
-	Exposure: number,
+	Scene: { [string]: any },
 	Effects: { [Instance]: { [string]: any } },
 	Lights: { [Light]: boolean },
 }
 
 local saved: Saved? = nil
 
-local function remember(store: { [Instance]: { [string]: any } }, instance: Instance, props: { string })
-	local values: { [string]: any } = {}
-	for _, prop in props do
-		values[prop] = (instance :: any)[prop]
+local function apply(target: Instance, values: { [string]: any }, store: { [string]: any })
+	for prop, value in values do
+		local ok, old = pcall(function(): any
+			return (target :: any)[prop]
+		end)
+		if ok then
+			store[prop] = old
+			pcall(function()
+				(target :: any)[prop] = value
+			end)
+		end
 	end
-	store[instance] = values
 end
 
--- Dim the scene for the podium at `origin`. `keep` lists lights that stay on.
+-- Light the podium at `origin`. `keep` lists the stage's own lights (left on).
 function PodiumLighting.apply(origin: Vector3, keep: { Light }?)
 	if saved then
 		PodiumLighting.restore()
 	end
-	local state: Saved = { Brightness = Lighting.Brightness, Exposure = Lighting.ExposureCompensation, Effects = {}, Lights = {} }
+	local state: Saved = { Scene = {}, Effects = {}, Lights = {} }
 	saved = state
 
-	Lighting.Brightness = math.min(Lighting.Brightness, 1.3)
-	Lighting.ExposureCompensation = math.min(Lighting.ExposureCompensation, -0.4)
-
+	apply(Lighting, SCENE, state.Scene)
 	for _, effect in Lighting:GetChildren() do
-		if effect:IsA("BloomEffect") then
-			remember(state.Effects, effect, { "Intensity", "Threshold", "Size" })
-			effect.Intensity = math.min(effect.Intensity, 0.12)
-			effect.Threshold = math.max(effect.Threshold, 1.6)
-		elseif effect:IsA("SunRaysEffect") then
-			remember(state.Effects, effect, { "Enabled" })
-			effect.Enabled = false
-		elseif effect:IsA("ColorCorrectionEffect") then
-			remember(state.Effects, effect, { "Brightness", "Contrast" })
-			effect.Brightness = math.min(effect.Brightness, -0.06)
-			effect.Contrast = math.max(effect.Contrast, 0.14)
+		local values = EFFECTS[effect.ClassName]
+		if values then
+			local store: { [string]: any } = {}
+			apply(effect, values, store)
+			state.Effects[effect] = store
 		end
 	end
 
@@ -91,12 +114,17 @@ function PodiumLighting.restore()
 		return
 	end
 	saved = nil
-	Lighting.Brightness = state.Brightness
-	Lighting.ExposureCompensation = state.Exposure
+	for prop, value in state.Scene do
+		pcall(function()
+			(Lighting :: any)[prop] = value
+		end)
+	end
 	for effect, values in state.Effects do
 		if effect.Parent then
 			for prop, value in values do
-				(effect :: any)[prop] = value
+				pcall(function()
+					(effect :: any)[prop] = value
+				end)
 			end
 		end
 	end

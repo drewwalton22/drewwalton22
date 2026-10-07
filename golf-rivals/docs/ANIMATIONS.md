@@ -80,3 +80,26 @@ LUAU_BIN=/path/to/luau/bin tools/gen_animations.sh
 ```
 
 and publish them again.
+
+## Victory emotes (podium)
+
+The podium winner plays their **equipped victory emote** (Inventory > Animations > Emote).
+These work straight away with no publishing, because each one uses one of **Roblox's own
+built-in emotes** (cheer, dance, dance 2, dance 3, point, wave), which Roblox owns and lets every
+game play:
+
+| Item | Rarity | Plays | Extra |
+|---|---|---|---|
+| Fist Pump (free, everyone owns it) | Common | Cheer, or **your published `Victory`** once set | |
+| Club Twirl | Uncommon | Dance | |
+| Moonwalk | Rare | Dance 2 | |
+| Hole-in-One Dance | Unique | Dance 3 | gold sparkles |
+| Trophy Lift | Legendary | Point | gold sparkles |
+| Golden Ascension | Mythical | Wave | glowing gold aura |
+
+All but Fist Pump are sold in the daily shop and drop from the Player Animations case. To give
+one your own animation, publish it as above and add it to `CosmeticsData.AnimationIds` in
+`src/ReplicatedStorage/GolfRivals/Shared/CosmeticsData.luau`, e.g.
+`emote_moonwalk = "rbxassetid://1234567890",`. If an animation ever fails to load, the golfer
+falls back to the built-in procedural victory pose. The loser plays your published `Defeat`
+animation, or the procedural one until you publish it.

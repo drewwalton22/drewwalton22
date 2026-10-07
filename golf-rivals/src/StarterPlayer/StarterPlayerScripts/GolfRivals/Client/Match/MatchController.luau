@@ -642,11 +642,11 @@ local function showPodium(snapshot: any)
 	if podium then
 		podium.destroy()
 	end
+	-- Each golfer's equipped victory emote item (PodiumStage resolves it per rig).
 	local emotes: { [string]: string } = {}
 	for id, equipped in cosmeticsById do
-		local look = CosmeticsData.animation(equipped.Emote)
-		if look.AnimationId ~= "" then
-			emotes[id] = look.AnimationId
+		if type(equipped.Emote) == "string" then
+			emotes[id] = equipped.Emote
 		end
 	end
 	local base = if course then course.Origin else Vector3.new(30000, 0, 0)

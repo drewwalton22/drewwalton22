@@ -202,7 +202,7 @@ InventoryScreen.factory = {
 				local look = CosmeticsData.animation(item.Id)
 				setPreview(nil, 3)
 				table.insert(lines, ANIMATION_NOTES[item.Slot])
-				table.insert(lines, if look.AnimationId ~= "" then "Custom animation" else `Procedural "{look.Pose}" pose (no AnimationId set yet)`)
+				table.insert(lines, look.Source)
 			else
 				local class = item.Slot
 				local model = CosmeticBuilder.club(CosmeticsData.club(item.Id, class), class == "Putter")
