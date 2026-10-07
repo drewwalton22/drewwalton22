@@ -36,6 +36,7 @@ export type Request = {
 	Stats: ClubDatabase.Stats,
 	Lie: Types.LieId,
 	Power: number, -- 0..100
+	PuttRangeMeters: number?, -- putts: the auto-scaled meter range (SwingMath.puttRange)
 }
 
 export type Guide = {
@@ -59,6 +60,7 @@ function AimGuide.compute(request: Request): Guide
 		Power = power,
 		AccuracyOffset = 0,
 		Lie = request.Lie,
+		PuttRangeMeters = request.PuttRangeMeters,
 	})
 	local frame = CourseTerrain.shotFrame(request.Terrain, request.X, request.Z, request.HeadingRad)
 	local result = ShotPhysics.simulate(launch, frame, nil, nil, { CarryOnly = not launch.IsPutt, KeepSamples = true })

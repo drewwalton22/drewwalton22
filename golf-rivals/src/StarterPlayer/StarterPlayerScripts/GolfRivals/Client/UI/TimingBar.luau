@@ -15,6 +15,10 @@
 	The thin bar under the accuracy track is the 5-SECOND TIMEOUT: it drains, turns
 	red, and when it runs out the shot fires with a random hook or slice.
 
+	PUTTS: the power track becomes a distance scale - tick marks labelled in feet,
+	a HOLE flag where the hole distance falls (the meter auto-scales so that's
+	about 2/3 of the way), and the readout in feet.
+
 	It draws a GaugeView.Layout (shared, tested); it owns no timing logic.
 ]]
 
@@ -76,6 +80,43 @@ function TimingBar.new(props: Kit.Props): Bar
 	local target = Kit.new("Frame", { Size = UDim2.new(0, 3, 1, 0), BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, Visible = false, ZIndex = 3, Parent = powerTrack }, {
 		Kit.glow(Color3.new(1, 1, 1), 1, 0.5),
 	}) :: Frame
+	-- Putting scale: tick marks + feet labels under the track, and a HOLE flag.
+	local tickHost = Kit.new("Frame", {
+		Size = UDim2.new(1, -(TRACK_LEFT + TRACK_RIGHT_PAD), 0, 12), Position = UDim2.fromOffset(TRACK_LEFT, 60), BackgroundTransparency = 1, Visible = false, Parent = frame,
+	}) :: Frame
+	local flagHost = Kit.new("Frame", {
+		Size = UDim2.new(1, -(TRACK_LEFT + TRACK_RIGHT_PAD), 0, 14), Position = UDim2.fromOffset(TRACK_LEFT, 17), BackgroundTransparency = 1, ZIndex = 6, Parent = frame,
+	}) :: Frame
+	local holeFlag = Kit.label("⛳ HOLE", {
+		Size = UDim2.fromOffset(60, 14), AnchorPoint = Vector2.new(0.5, 0), TextSize = 11, Font = Theme.Fonts.Title,
+		TextColor3 = Color3.new(1, 1, 1), TextXAlignment = Enum.TextXAlignment.Center, Visible = false, ZIndex = 6, Parent = flagHost,
+	})
+	local tickKey = ""
+	local function drawTicks(ticks: { GaugeView.PuttTick }?)
+		local key = ""
+		if ticks then
+			for _, t in ticks do
+				key ..= t.Label .. ","
+			end
+		end
+		if key == tickKey then
+			return
+		end
+		tickKey = key
+		Kit.clear(tickHost)
+		tickHost.Visible = ticks ~= nil
+		if ticks == nil then
+			return
+		end
+		for _, t in ticks do
+			Kit.new("Frame", { Size = UDim2.fromOffset(2, 5), Position = UDim2.new(t.X, -1, 0, -3), BackgroundColor3 = Color3.new(1, 1, 1), BackgroundTransparency = 0.3, BorderSizePixel = 0, Parent = tickHost })
+			Kit.label(t.Label, {
+				Size = UDim2.fromOffset(30, 10), Position = UDim2.new(t.X, 0, 0, 2), AnchorPoint = Vector2.new(0.5, 0), TextSize = 9,
+				Font = Theme.Fonts.Bold, TextColor3 = C.TextDim, TextXAlignment = Enum.TextXAlignment.Center, Parent = tickHost,
+			})
+		end
+	end
+
 	local percent = Kit.label("0%", {
 		Size = UDim2.fromOffset(80, 30), Position = UDim2.new(1, -88, 0, 31), TextSize = 24, Font = Theme.Fonts.Title,
 		TextXAlignment = Enum.TextXAlignment.Right, Parent = frame,
@@ -142,7 +183,12 @@ function TimingBar.new(props: Kit.Props): Bar
 		if layout.TargetPower then
 			target.Position = UDim2.new(layout.TargetPower, -1, 0, 0)
 		end
-		percent.Text = `{math.floor(layout.PowerPercent + 0.5)}%`
+		percent.Text = layout.PowerLabel
+		drawTicks(layout.PuttTicks)
+		holeFlag.Visible = layout.HoleX ~= nil
+		if layout.HoleX then
+			holeFlag.Position = UDim2.fromScale(layout.HoleX, 0) -- above the track, at the hole's distance
+		end
 		percent.TextColor3 = if layout.Locked then C.Gold else C.Text
 
 		good.Position = UDim2.fromScale(layout.GoodLeft, 0)

@@ -134,6 +134,12 @@ Config.Swing = {
 	AccuracySweepSeconds = 1.6, -- full swings: needle crosses the whole track (sweet spot at half-way)
 	PuttPowerSweepSeconds = 3.2, -- putts: much slower for fine pace control
 	PuttAccuracySweepSeconds = 2.6,
+	-- Putter meter (auto-scaled, linear): full scale = PuttMeterScale x the
+	-- distance to the hole, kept between the min and max (feet).
+	PuttMeterScale = 1.5,
+	PuttMeterMinFeet = 10,
+	PuttMeterMaxFeet = 150,
+	MetersPerFoot = 0.3048,
 	-- Stage 2 (accuracy): the needle ping-pongs until click 2; after this many
 	-- seconds the shot fires by itself with a random penalty offset of
 	-- TimeoutPenaltyMin..TimeoutPenaltyMax (randomly a hook or a slice).
@@ -259,6 +265,9 @@ Config.Match = {
 	-- Bots plan a putt as well as a chip from short grass (fringe / fairway)
 	-- within this distance of the pin, and keep the better one.
 	FringePuttYds = 25,
+	-- Within this distance on fairway / fringe, AUTO (and the turn's default club)
+	-- picks the putter instead of a wedge.
+	FringeAutoPutterYds = 8,
 	BotThinkSeconds = { Min = 1.5, Max = 3.5 }, -- bots pause like a person would
 	EndScreenSeconds = 6, -- results screen before the match is cleaned up
 }

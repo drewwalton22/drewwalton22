@@ -2197,7 +2197,10 @@ do
 	local function midStats(_label: string): ClubDatabase.Stats
 		return mid
 	end
-	expect("ClubAdvisor: auto-putter - any distance on the green -> putter; off the green never the putter", ClubAdvisor.recommendClub(15, "Green", midStats) == "PT" and ClubAdvisor.recommendClub(60, "Green", midStats) == "PT" and ClubAdvisor.recommendClub(5, "Fairway", midStats) ~= "PT")
+	expect("ClubAdvisor: auto-putter - any distance on the green -> putter; short grass just off it -> putter; rough / sand / farther -> never",
+		ClubAdvisor.recommendClub(15, "Green", midStats) == "PT" and ClubAdvisor.recommendClub(60, "Green", midStats) == "PT"
+			and ClubAdvisor.recommendClub(5, "Fairway", midStats) == "PT" and ClubAdvisor.recommendClub(5, "Rough", midStats) ~= "PT"
+			and ClubAdvisor.recommendClub(5, "Sand", midStats) ~= "PT" and ClubAdvisor.recommendClub(20, "Fairway", midStats) ~= "PT")
 	expect("ClubAdvisor: a 320-yard tee shot takes the driver (longest club)", ClubAdvisor.recommendClub(320, "Tee", midStats) == "DR")
 	local last, mono = 0, true
 	for yardsAway = 20, 300, 10 do
@@ -4091,6 +4094,40 @@ do
 	end
 	expect("Every golf move has an R15 and an R6 animation slot (blank = procedural pose)", slotsOk)
 	expect("Sounds fall back to built-in Roblox sounds until uploaded", string.sub(Assets.sound("CupDrop"), 1, 9) == "rbxasset:" and Assets.sound("Nope") == "")
+end
+
+print("-- putter meter (auto-scaled, linear)")
+do
+	local FT = Config.Swing.MetersPerFoot
+	expect("The putter meter's full scale is 1.5x the putt, between 10 and 150 feet",
+		math.abs(SwingMath.puttRange(20 * FT) - 30 * FT) < 1e-9 and math.abs(SwingMath.puttRange(2 * FT) - 10 * FT) < 1e-9 and math.abs(SwingMath.puttRange(300 * FT) - 150 * FT) < 1e-9)
+	local flat = ShotPhysics.flatTerrain("Green")
+	local putter = ClubDatabase.getSlot("PT") :: ClubDatabase.BagSlot
+	local function rolled(power: number, holeFeet: number): number
+		local shot = SwingMath.resolveShot({ Slot = putter, Stats = ClubStats.baseline(), Power = power, AccuracyOffset = 0, Lie = "Green", PuttRangeMeters = SwingMath.puttRange(holeFeet * FT) }, flat, nil)
+		return shot.Result.FinalX / FT
+	end
+	local linear = true
+	for _, holeFeet in { 4, 20, 60 } do
+		local range = SwingMath.puttRange(holeFeet * FT) / FT
+		for _, power in { 20, 50, 80, 100 } do
+			if math.abs(rolled(power, holeFeet) - power / 100 * range) > range * 0.02 + 0.1 then
+				linear = false
+			end
+		end
+	end
+	expect("Putter power is LINEAR in distance: p% rolls p% of the meter's range on a flat green (4, 20 and 60 ft putts)", linear)
+	local tapIn = rolled(100 / 1.5, 3)
+	expect("A 3-foot putt is no longer squeezed into the start of the meter: the hole sits at 2/3 power on a 10-ft scale", math.abs(tapIn - 6.67) < 0.3)
+	local layout = GaugeView.layout({ Phase = "Power", Mode = "Putt", Power = 0.5, Needle = 0, LockedPower = nil }, 0.1, nil, { RangeFeet = 30, HoleFeet = 20 })
+	local ticks = layout.PuttTicks :: { GaugeView.PuttTick }
+	expect("Putt meter: tick marks labelled in feet at a round step, the hole marker at its distance, readout in feet",
+		ticks ~= nil and #ticks == 7 and ticks[2].Label == "5" and math.abs(ticks[7].X - 1) < 1e-9
+			and math.abs((layout.HoleX :: number) - 20 / 30) < 1e-9 and layout.PowerLabel == "15 FT" and layout.TargetPower == layout.HoleX)
+	local wide = GaugeView.puttTicks(150)
+	expect("Long putt scales use a wider tick step (never more than 8 ticks)", #wide <= 8 and #wide >= 4)
+	local full = GaugeView.layout({ Phase = "Power", Mode = "Full", Power = 0.62, Needle = 0, LockedPower = nil }, 0.1, nil)
+	expect("Full swings keep the percent readout and no putt ticks", full.PowerLabel == "62%" and full.PuttTicks == nil and full.HoleX == nil)
 end
 
 print("-- club seat (clubhead on the ground)")

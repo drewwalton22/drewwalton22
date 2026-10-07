@@ -58,7 +58,7 @@ export type Hud = {
 	setTarget: (ballX: number, ballZ: number, targetX: number, targetZ: number) -> (), -- minimap reticle
 	clearTarget: () -> (),
 	onBackToAim: Signal.Signal, -- SWING stage -> AIM stage
-	setAimStage: (stage: AimStage?, info: string?) -> (), -- nil hides the panel
+	setAimStage: (stage: AimStage?, info: string?, allowView: boolean?) -> (), -- nil hides the panel; allowView=false hides VIEW (putts)
 	setTimer: (seconds: number, running: boolean) -> (),
 	update: (model: MatchView.HudModel) -> (),
 	setHole: (hole: CourseDatabase.HoleDef) -> (),
@@ -160,7 +160,7 @@ function MatchHud.new(): Hud
 		end
 	end, { Size = UDim2.fromOffset(170, 42), Position = UDim2.new(1, -180, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), TextSize = 18, Parent = aimPanel })
 	-- In the swing stage the panel shrinks to a small "back to aim" chip beside the bar.
-	local function setAimStage(stage: AimStage?, info: string?)
+	local function setAimStage(stage: AimStage?, info: string?, allowView: boolean?)
 		aimStage = stage
 		aimPanel.Visible = stage ~= nil
 		if stage == "Aim" then
@@ -168,7 +168,7 @@ function MatchHud.new(): Hud
 			aimPanel.Position = UDim2.new(0.5, 0, 1, -102)
 			aimPanel.AnchorPoint = Vector2.new(0.5, 1)
 			aimInfo.Visible = true
-			viewButton.Visible = true
+			viewButton.Visible = allowView ~= false
 			aimInfo.Text = info or "DRAG THE TARGET  ·  SPACE TO SWING"
 			stageButton.Text = "SWING ▶"
 			stageButton.Size = UDim2.fromOffset(170, 42)

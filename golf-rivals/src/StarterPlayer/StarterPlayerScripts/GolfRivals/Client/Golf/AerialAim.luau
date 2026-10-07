@@ -26,6 +26,11 @@
 
 	The reticle tilts to the ground under it, so it lies flat on slopes.
 
+	PUTT MODE (setPuttMode(true)): no aerial view for putts. The camera sits low
+	behind the golfer and the ball looking down the line (third person), the
+	reticle and reach markers are hidden - the ground-projected putting line that
+	bends with the slope is the read - and left / right still aim.
+
 	Coordinates: everything is in the course frame (metres) of whoever uses it - the
 	match hole frame or the driving-range frame - through the `Frame` callbacks.
 ]]
@@ -64,6 +69,7 @@ export type Aim = {
 	focusCamera: () -> (), -- (re)frame the camera for the current view
 	view: () -> View,
 	toggleView: () -> View,
+	setPuttMode: (on: boolean) -> (),
 	hide: () -> (),
 	destroy: () -> (),
 }
@@ -143,6 +149,7 @@ function AerialAim.new(parent: Instance, frame: Frame, onChanged: (reticle: AimM
 	local zoom = 1.0
 	local visible = false
 	local view: View = "Aerial"
+	local puttMode = false
 
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Include
@@ -151,10 +158,11 @@ function AerialAim.new(parent: Instance, frame: Frame, onChanged: (reticle: AimM
 
 	local function setVisible(on: boolean)
 		visible = on
-		ring.Transparency = if on then 0.15 else 1
-		core.Transparency = if on then 0.1 else 1
-		label.Enabled = on
-		if not on then
+		local show = on and not puttMode
+		ring.Transparency = if show then 0.15 else 1
+		core.Transparency = if show then 0.1 else 1
+		label.Enabled = show
+		if not show then
 			for _, dot in markers do
 				dot.Transparency = 1
 			end
@@ -186,7 +194,7 @@ function AerialAim.new(parent: Instance, frame: Frame, onChanged: (reticle: AimM
 
 	local function render()
 		local l, r = limits, current
-		if l == nil or r == nil or not visible then
+		if l == nil or r == nil or not visible or puttMode then
 			return
 		end
 		-- The reticle scales with the camera height so it reads at any zoom.
@@ -233,7 +241,12 @@ function AerialAim.new(parent: Instance, frame: Frame, onChanged: (reticle: AimM
 			return
 		end
 		local ball, target = ballWorld(l), frame.groundAt(r.X, r.Z)
-		if view == "Aerial" then
+		if puttMode then
+			-- Low, behind the golfer and the ball, looking down the putting line.
+			local flat = Vector3.new(target.X - ball.X, 0, target.Z - ball.Z)
+			local dir = if flat.Magnitude > 1e-3 then flat.Unit else Vector3.xAxis
+			CameraController.golfer(ball, dir.X, dir.Z, true)
+		elseif view == "Aerial" then
 			CameraController.aerial(target, ball, zoom, peakBetween(l, r))
 		else
 			CameraController.behind(ball, target)
@@ -316,7 +329,7 @@ function AerialAim.new(parent: Instance, frame: Frame, onChanged: (reticle: AimM
 		if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 			dragging = true
 			dragTo(input.Position, false)
-		elseif input.KeyCode == Enum.KeyCode.V then
+		elseif input.KeyCode == Enum.KeyCode.V and not puttMode then
 			setView(if view == "Aerial" then "Behind" else "Aerial")
 		elseif input.KeyCode == Enum.KeyCode.Left then
 			nudge(-NUDGE_DEG, 0)
@@ -332,7 +345,7 @@ function AerialAim.new(parent: Instance, frame: Frame, onChanged: (reticle: AimM
 		if not interactive then
 			return
 		end
-		if input.UserInputType == Enum.UserInputType.MouseWheel and view == "Aerial" then
+		if input.UserInputType == Enum.UserInputType.MouseWheel and view == "Aerial" and not puttMode then
 			zoom = math.clamp(zoom * (if input.Position.Z > 0 then 0.88 else 1.14), 0.4, 2.5)
 			render()
 			focusCamera()
@@ -394,8 +407,21 @@ function AerialAim.new(parent: Instance, frame: Frame, onChanged: (reticle: AimM
 			return view
 		end,
 		toggleView = function(): View
-			setView(if view == "Aerial" then "Behind" else "Aerial")
+			if not puttMode then
+				setView(if view == "Aerial" then "Behind" else "Aerial")
+			end
 			return view
+		end,
+		setPuttMode = function(on: boolean)
+			if on == puttMode then
+				return
+			end
+			puttMode = on
+			setVisible(visible)
+			render()
+			if interactive then
+				focusCamera()
+			end
 		end,
 		hide = function()
 			interactive = false

@@ -70,6 +70,7 @@ local AimMath = require(Shared.AimMath)
 local ClubAdvisor = require(Shared.ClubAdvisor)
 local ClubDatabase = require(Shared.ClubDatabase)
 local ClubStats = require(Shared.ClubStats)
+local CourseLayout = require(Shared.CourseLayout)
 local Config = require(Shared.Config)
 local CosmeticsData = require(Shared.CosmeticsData)
 local Format = require(Shared.Format)
@@ -321,8 +322,31 @@ local function maxYdsFor(view: any): number
 	return ClubStats.maxDistanceYds(category, statsFor(view.ClubLabel))
 end
 
--- Power (0..1) a perfect strike needs to reach my reticle; nil without a reticle.
+local function isPutting(view: any): boolean
+	return view.ClubLabel == ClubStats.PUTTER
+end
+
+-- Ball -> hole distance in metres (the same number the server scales putts by).
+local function holeMeters(view: any): number
+	local pin = lastSnapshot.Hole.Pin
+	return math.sqrt((pin.X - view.Position.X) ^ 2 + (pin.Z - view.Position.Z) ^ 2)
+end
+
+-- The putting meter's scale for my putt (feet), or nil for full swings.
+local function puttScale(view: any): GaugeView.PuttScale?
+	if not isPutting(view) then
+		return nil
+	end
+	local range = SwingMath.puttRange(holeMeters(view))
+	return { RangeFeet = range / Config.Swing.MetersPerFoot, HoleFeet = holeMeters(view) / Config.Swing.MetersPerFoot }
+end
+
+-- Power (0..1) a perfect strike needs: putts - where the hole sits on the linear,
+-- auto-scaled meter; full swings - the reticle's distance vs the club's reach.
 local function targetPower(view: any): number?
+	if isPutting(view) then
+		return math.clamp(holeMeters(view) / SwingMath.puttRange(holeMeters(view)), 0, 1)
+	end
 	local r = if aerial then aerial.reticle() else nil
 	if r == nil then
 		return nil
@@ -368,10 +392,13 @@ local function refreshAim(force: boolean)
 		Stats = statsFor(view.ClubLabel),
 		Lie = view.Lie,
 		Power = power,
+		PuttRangeMeters = if isPutting(view) then SwingMath.puttRange(holeMeters(view)) else nil,
 	})
+	-- Guide points carry their height ABOVE THE GROUND: draw them over the real
+	-- (elevated, sloped) ground so the putting line hugs the green and bends.
 	local points: { Vector3 } = {}
 	for _, p in guide.Points do
-		table.insert(points, built.toWorld(p.X, p.Y, p.Z) + Vector3.new(0, if guide.IsPutt then 0.14 else 0.85, 0))
+		table.insert(points, built.ground(p.X, p.Z) + Vector3.new(0, p.Y * CourseLayout.STUDS_PER_METER + (if guide.IsPutt then 0.2 else 0.85), 0))
 	end
 	local tint = if guide.IsPutt then Color3.fromRGB(255, 255, 255) else Color3.fromRGB(120, 230, 255)
 	visual.show(points, guide.IsPutt, tint)
@@ -391,7 +418,7 @@ local function onGauge(g: SwingStateMachine.Gauge)
 	if hud == nil or view == nil or stage ~= "Swing" then
 		return
 	end
-	hud.setGauge(GaugeView.layout(g, greenFor(view), targetPower(view)), nil)
+	hud.setGauge(GaugeView.layout(g, greenFor(view), targetPower(view), puttScale(view)), nil)
 	refreshAim(false)
 end
 
@@ -402,7 +429,7 @@ local function limitsFor(view: any): AerialAim.Limits
 		BallX = view.Position.X,
 		BallZ = view.Position.Z,
 		PinHeadingRad = pinHeadingOf(view),
-		MaxMeters = maxYdsFor(view) * Config.Physics.YardsToMeters,
+		MaxMeters = if isPutting(view) then SwingMath.puttRange(holeMeters(view)) else maxYdsFor(view) * Config.Physics.YardsToMeters,
 		MaxAimDeg = Config.Match.MaxAimDegrees,
 	}
 end
@@ -414,6 +441,10 @@ local function aimInfo(view: any): string
 	end
 	local power = math.floor((targetPower(view) or 1) * 100 + 0.5)
 	local sign = if r.AimDeg > 0.05 then "+" else ""
+	if isPutting(view) then
+		local feet = math.floor(holeMeters(view) / Config.Swing.MetersPerFoot + 0.5)
+		return `PUTT  ·  {feet} FT TO THE HOLE  ·  AIM {sign}{string.format("%.1f", r.AimDeg)}°\nRead the break on the line  ·  ←/→ aim  ·  Space to putt`
+	end
 	return `TARGET {math.floor(r.DistanceYds + 0.5)} YDS  ·  AIM {sign}{string.format("%.1f", r.AimDeg)}°  ·  POWER {power}%\nDrag the target  ·  Space to swing`
 end
 
@@ -443,7 +474,7 @@ local function onReticle(r: AimMath.Reticle, final: boolean)
 	if hud and view then
 		hud.setTarget(view.Position.X, view.Position.Z, r.X, r.Z) -- the minimap reticle
 		if stage == "Aim" then
-			hud.setAimStage("Aim", aimInfo(view))
+			hud.setAimStage("Aim", aimInfo(view), not isPutting(view))
 		end
 	end
 	refreshAim(final)
@@ -477,9 +508,10 @@ local function enterAimStage()
 		a.setInteractive(true)
 	else
 		local pin = lastSnapshot.Hole.Pin
+		a.setPuttMode(isPutting(view)) -- putts: no aerial view, third person + putting line
 		a.begin(limitsFor(view), pin.X, pin.Z) -- starts on the pin (or the club's max distance)
 	end
-	hud.setAimStage("Aim", aimInfo(view))
+	hud.setAimStage("Aim", aimInfo(view), not isPutting(view))
 	refreshAim(true)
 end
 
@@ -500,7 +532,7 @@ local function enterSwingStage()
 	armToken += 1
 	local token = armToken
 	local mode: SwingStateMachine.Mode = if view.ClubLabel == ClubStats.PUTTER then "Putt" else "Full"
-	hud.setGauge(GaugeView.layout({ Phase = "Idle", Mode = mode, Power = 0, Needle = 0, LockedPower = nil }, greenFor(view), targetPower(view)), nil)
+	hud.setGauge(GaugeView.layout({ Phase = "Idle", Mode = mode, Power = 0, Needle = 0, LockedPower = nil }, greenFor(view), targetPower(view), puttScale(view)), nil)
 	-- The delay also stops the Space press that chose SWING from counting as click 1.
 	task.delay(ARM_DELAY, function()
 		if armToken == token and isStage("Swing") and armed and swing then
@@ -686,10 +718,11 @@ function MatchController.apply(snapshot: any)
 				local key = `{shooter.ClubLabel}|{shooter.Lie}|{shooter.Position.X}|{shooter.Position.Z}`
 				if key ~= limitsKey and aerial then
 					limitsKey = key
+					aerial.setPuttMode(isPutting(shooter))
 					aerial.setLimits(limitsFor(shooter))
 				end
 				if stage == "Aim" and hud then
-					hud.setAimStage("Aim", aimInfo(shooter))
+					hud.setAimStage("Aim", aimInfo(shooter), not isPutting(shooter))
 				end
 			end
 			if stage == "Swing" then

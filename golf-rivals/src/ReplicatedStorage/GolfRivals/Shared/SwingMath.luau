@@ -25,9 +25,15 @@
 	     grip       = ClubStats.gripFactor(Spin stat)  (landing check only - no carry change)
 	  6. launch angle = slot.LaunchDeg
 
-	Putter: speed is calibrated so a 100% putt rolls PuttFullPowerYards on a
-	flat green (v = sqrt(2 * mu * g * d)); with the 0.5 exponent, distance is
-	then linear in power. A timing miss becomes an aim error instead of curve.
+	PUTTER - AUTO-SCALED, LINEAR: the putting meter's full scale is
+	    range = clamp(PuttMeterScale * distanceToHole, PuttMeterMinFeet, PuttMeterMaxFeet)
+	(SwingMath.puttRange), and a putt struck at power p rolls exactly p% of that
+	range on a flat green:  v = sqrt(2 * mu_green * g * (p / 100) * range)
+	(a rolling ball decelerates at mu*g, so d = v^2 / (2 mu g)). With the hole at
+	~2/3 of the meter, a 3-foot tap-in and a 60-foot lag are equally easy to time.
+	Slopes and slower fringe grass still change the roll - that's reading the
+	break. A timing miss becomes an aim error instead of curve. Without a range
+	(old callers) the fixed PuttFullPowerYards scale is used.
 ]]
 
 local Types = require(script.Parent.Types)
@@ -49,6 +55,7 @@ export type ShotInput = {
 	AccuracyOffset: number, -- -1..1
 	Lie: Types.LieId, -- lie the ball is hit FROM
 	Wind: ShotPhysics.Wind?, -- local frame, m/s
+	PuttRangeMeters: number?, -- putts: the meter's full-scale distance (puttRange)
 }
 
 export type ResolvedShot = {
@@ -80,6 +87,19 @@ function SwingMath.fullSpeed(slot: ClubDatabase.BagSlot): number
 	end
 	fullSpeedCache[slot.Label] = speed
 	return speed
+end
+
+-- The putting meter's full-scale distance (metres) for a putt of `distanceMeters`.
+function SwingMath.puttRange(distanceMeters: number): number
+	local feet = math.max(distanceMeters, 0) / S.MetersPerFoot
+	local scaled = math.clamp(feet * S.PuttMeterScale, S.PuttMeterMinFeet, S.PuttMeterMaxFeet)
+	return scaled * S.MetersPerFoot
+end
+
+-- Ball speed for a linear putt: rolls (power/100) * range on a flat green.
+function SwingMath.puttSpeed(power: number, rangeMeters: number): number
+	local mu = Config.Lies.Green.RollFriction
+	return math.sqrt(2 * mu * P.Gravity * math.clamp(power, 0, 100) / 100 * rangeMeters)
 end
 
 -- ---------------------------------------------------------------------------
@@ -141,6 +161,9 @@ function SwingMath.computeLaunch(input: ShotInput): (ShotPhysics.Launch, Quality
 	-- Lie speed penalty doesn't apply to putts (they're hit on the green).
 	local lieSpeed = if isPutt then 1 else lie.SpeedMult
 	local ballSpeed = SwingMath.fullSpeed(slot) * powerFactor * distanceFactor * lieSpeed
+	if isPutt and input.PuttRangeMeters then
+		ballSpeed = SwingMath.puttSpeed(power, input.PuttRangeMeters)
+	end
 
 	local launch: ShotPhysics.Launch = {
 		BallSpeed = ballSpeed,

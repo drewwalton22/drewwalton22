@@ -400,6 +400,8 @@ function MatchEngine.new(config: EngineConfig): Engine
 			AccuracyOffset = offset,
 			Lie = ps.Lie,
 			Wind = wind,
+			-- The putting meter auto-scales to the putt (same formula the client draws).
+			PuttRangeMeters = if slot.Class == "Putter" then SwingMath.puttRange(distance(ps.X, ps.Z, hole.Pin.X, hole.Pin.Z)) else nil,
 		}, frame, cup)
 		return shot, headingRad
 	end
