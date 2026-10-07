@@ -113,6 +113,7 @@ ShopScreen.factory = {
 					Primary = card.Primary,
 					Secondary = card.Secondary,
 					Glyph = if item then ItemCard.glyphFor(item.Slot) else "⭐",
+					ItemId = card.ItemId,
 					Footer = if card.Purchased then "✔ OWNED TODAY" else nil,
 					FooterPrice = if card.Purchased then nil else { Currency = card.Currency :: string, Text = card.AmountText },
 					FooterColor = if card.Purchased then C.Good elseif card.CanAfford then (if card.Currency == "Gems" then C.Gem else C.Gold) else C.Poor,

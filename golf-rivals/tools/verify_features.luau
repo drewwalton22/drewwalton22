@@ -6,6 +6,7 @@
 local Assets = require("./Assets")
 local CosmeticsData = require("./CosmeticsData")
 local Config = require("./Config")
+local CosmeticModels = require("./CosmeticModels")
 local ItemDatabase = require("./ItemDatabase")
 local WheelRules = require("./WheelRules")
 
@@ -132,6 +133,81 @@ do
 	local layout = WheelRules.layout()
 	expect("Icon, amount and COINS/GEMS/ITEM text fit inside their wedge, clear of the hub and rim pegs", WheelRules.slotFits(layout.Icon) and WheelRules.slotFits(layout.Label) and WheelRules.slotFits(layout.Kind))
 	expect("Wheel text stays readable (amount at least 12% of the wheel wide)", layout.Label.Width >= 0.12 and layout.Icon.Width >= 0.08)
+end
+
+
+print("-- code-built cosmetic models")
+do
+	local BALL_CLEARANCE = 0.55 -- GolferRig: ball centre to the sole point
+	local BALL_RADIUS = 0.4
+	local seated = true
+	local grounded = true
+	local signatures: { [string]: boolean } = {}
+	local distinct = true
+	for _, class in CosmeticModels.classes() do
+		for _, rarity in { "Common", "Uncommon", "Rare", "Unique", "Legendary", "Mythical" } do
+			local spec = CosmeticModels.club(class, rarity)
+			local lead = CosmeticModels.faceX(spec) - spec.Sole.X
+			if lead < 0 or lead > BALL_CLEARANCE - BALL_RADIUS then
+				seated = false
+				print(`  {class} {rarity}: face {lead} ahead of the sole`)
+			end
+			if CosmeticModels.bottomY(spec) < spec.Sole.Y - 0.01 then
+				grounded = false
+				print(`  {class} {rarity}: dips {spec.Sole.Y - CosmeticModels.bottomY(spec)} below the sole`)
+			end
+		end
+		local common = CosmeticModels.club(class, "Common")
+		local names: { string } = {}
+		for _, p in common.Pieces do
+			table.insert(names, `{p.Name}:{p.Shape}:{string.format("%.2f", p.Size.X)}x{string.format("%.2f", p.Size.Y)}`)
+		end
+		local key = table.concat(names, ",")
+		if signatures[key] then
+			distinct = false
+		end
+		signatures[key] = true
+	end
+	expect("Every clubhead's face stops short of the ball when its sole rests behind it (all classes, all rarities)", seated)
+	expect("No clubhead part dips below its sole (the club rests ON the ground)", grounded)
+	expect("Each club category has its own distinct head model", distinct)
+	local lofts = true
+	local order = { "Driver", "FairwayWood", "LongIron", "ShortIron", "Wedge" }
+	for i = 2, #order do
+		if CosmeticModels.club(order[i], "Common").Loft <= CosmeticModels.club(order[i - 1], "Common").Loft then
+			lofts = false
+		end
+	end
+	expect("Lofts rise from driver to wedge; the putter is nearly upright", lofts and CosmeticModels.club("Putter", "Common").Loft < 5)
+
+	local function count(spec: CosmeticModels.ClubSpec): number
+		return #spec.Pieces
+	end
+	local grows = true
+	local previous = 0
+	for _, rarity in { "Common", "Uncommon", "Rare", "Unique", "Legendary", "Mythical" } do
+		local n = count(CosmeticModels.club("Driver", rarity))
+		if n < previous then
+			grows = false
+		end
+		previous = n
+	end
+	local common, mythical = CosmeticModels.tier("Common"), CosmeticModels.tier("Mythical")
+	local legendary, unique = CosmeticModels.tier("Legendary"), CosmeticModels.tier("Unique")
+	expect("Rarer clubs get more detail (pieces never decrease with rarity)", grows and count(CosmeticModels.club("Driver", "Mythical")) > count(CosmeticModels.club("Driver", "Common")))
+	expect("Only Legendary and Mythical glow, sparkle and leave a swing trail; only Mythical pulses", legendary.Glow and legendary.Sparkles and legendary.SwingTrail and not legendary.Pulse
+		and mythical.Pulse and not unique.Glow and not common.Glow and unique.Neon and not common.Neon)
+
+	local patterned = CosmeticModels.patternedBalls()
+	local allBalls = true
+	for _, item in ItemDatabase.Ordered do
+		if item.Slot == "BallModel" and not table.find(patterned, item.Id) then
+			allBalls = false
+		end
+	end
+	local blackhole = CosmeticModels.ball("ball_blackhole")
+	expect("Every ball cosmetic has its own pattern; the Black Hole has a spinning accretion disc", allBalls and blackhole.Disc ~= nil and blackhole.SpinRate ~= 0)
+	expect("Unknown balls fall back to a plain sphere", #CosmeticModels.ball("nope").Bands == 0 and CosmeticModels.ball(nil).Disc == nil)
 end
 
 if failures > 0 then

@@ -115,8 +115,19 @@ function BallAnimator.new(parent: Instance, appearance: Appearance, name: string
 		trail.setEnabled(false)
 	end
 
+	-- The ball keeps a rolling orientation so its pattern turns as it travels.
+	local spin = CFrame.identity
 	local function placeAt(position: Vector3)
-		ball.CFrame = CFrame.new(position + Vector3.new(0, LIFT, 0))
+		local target = position + Vector3.new(0, LIFT, 0)
+		local moved = target - ball.Position
+		local flat = Vector3.new(moved.X, 0, moved.Z)
+		if flat.Magnitude > 1e-4 and flat.Magnitude < 50 then
+			-- Rolling without slipping: turn by distance / radius about the axis
+			-- perpendicular to the motion.
+			local axis = Vector3.yAxis:Cross(flat.Unit)
+			spin = CFrame.fromAxisAngle(axis, flat.Magnitude / (BALL_DIAMETER / 2)) * spin
+		end
+		ball.CFrame = CFrame.new(target) * spin
 	end
 
 	local function play(shot: any, toWorld: (number, number, number) -> Vector3, onFrame: ((t: number, position: Vector3) -> ())?, onDone: (() -> ())?)
@@ -150,7 +161,7 @@ function BallAnimator.new(parent: Instance, appearance: Appearance, name: string
 						local slide = math.clamp(fall / 0.08, 0, 1)
 						local centre = rest:Lerp(Vector3.new(cup.X, rest.Y, cup.Z), slide)
 						local depth = math.min(DROP_DEPTH, 0.5 * DROP_GRAVITY * fall * fall)
-						ball.CFrame = CFrame.new(centre - Vector3.new(0, depth, 0))
+						ball.CFrame = CFrame.new(centre - Vector3.new(0, depth, 0)) * spin
 						if depth >= DROP_DEPTH then
 							stop() -- resting in the bottom of the cup
 							if onDone then
@@ -171,7 +182,7 @@ function BallAnimator.new(parent: Instance, appearance: Appearance, name: string
 		Part = ball,
 		placeAt = placeAt,
 		setVisible = function(visible: boolean)
-			ball.Transparency = if visible then 0 else 1
+			CosmeticBuilder.setBallVisible(ball, visible) -- the pattern and its effects too
 		end,
 		play = play,
 		stop = stop,

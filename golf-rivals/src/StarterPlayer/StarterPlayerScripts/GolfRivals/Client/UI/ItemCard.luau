@@ -3,7 +3,8 @@
 	ItemCard.luau  (Client/UI)
 
 	One reusable card for any cosmetic or reward: a rarity-coloured frame, a preview
-	tile tinted with the item's own colours and a glyph for its type, the name, a
+	tile tinted with the item's own colours holding a rotating 3D model of the item
+	(ItemPreview; a glyph for its type when it has no model), the name, a
 	slot/subtitle line, and a footer (price, "EQUIPPED", "x3"...). Used by the shop,
 	cases, trade-up and loadout screens so every item looks the same everywhere.
 
@@ -13,6 +14,7 @@
 local Theme = require(script.Parent.Theme)
 local Kit = require(script.Parent.Kit)
 local Icons = require(script.Parent.Icons)
+local ItemPreview = require(script.Parent.ItemPreview)
 
 local ItemCard = {}
 
@@ -23,6 +25,7 @@ export type Props = {
 	Primary: { number }?, -- preview tint
 	Secondary: { number }?,
 	Glyph: string?,
+	ItemId: string?, -- shows a rotating 3D preview of this item (ItemPreview) instead of the glyph
 	Footer: string?,
 	FooterColor: Color3?,
 	-- A price footer drawn with a real coin/gem icon (takes precedence over Footer).
@@ -75,10 +78,19 @@ function ItemCard.new(props: Props): Frame
 		Kit.corner(8),
 		Kit.new("UIGradient", { Color = ColorSequence.new(primary, secondary), Rotation = 45 }),
 	}) :: Frame
-	Kit.label(props.Glyph or "⭐", {
+	local glyph = Kit.label(props.Glyph or "⭐", {
 		Size = UDim2.fromScale(1, 1), TextSize = 34, TextXAlignment = Enum.TextXAlignment.Center,
 		TextTransparency = if locked then 0.6 else 0, Parent = tile,
 	})
+	if props.ItemId then
+		local viewport = ItemPreview.attach(tile, props.ItemId)
+		if viewport then
+			glyph.Visible = false
+			if locked then
+				viewport.ImageTransparency = 0.5
+			end
+		end
+	end
 	if locked then
 		tile.BackgroundTransparency = 0.5
 		local lock = Icons.lock(UDim2.fromOffset(22, 26))

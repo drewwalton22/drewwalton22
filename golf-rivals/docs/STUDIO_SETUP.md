@@ -53,6 +53,7 @@ ReplicatedStorage
 │       ├── ClubStats         (ModuleScript)  THE six categories, Power / Accuracy / Spin, MaxDistance
 │       ├── Config            (ModuleScript)  every tuning knob (swing speeds, cup, wheel, decor, courses)
 │       ├── CosmeticsData     (ModuleScript)  NEW how every cosmetic looks: ball skins, trails, club meshes, animations, hole FX
+│       ├── CosmeticModels    (ModuleScript)  NEW code-built 3D blueprints: a head per club category, rarity detail, ball patterns
 │       ├── CourseData        (ModuleScript)  NEW the 9 holes: par, length, tee / green elevation, hazards, OB
 │       ├── CourseDatabase    (ModuleScript)  turns CourseData into hole definitions (+ 3-hole courses)
 │       ├── CourseRelief      (ModuleScript)  NEW the 3D height field (elevated tees, banked greens, ponds)
@@ -241,7 +242,7 @@ created in code. **Delete the default Baseplate** (it overlaps the plaza).
 | Aiming views | `Golf/AerialAim` (V / VIEW toggles aerial and behind), `CameraController.aerial` / `behind`, minimap reticle in `MatchHud` | max distance = `ClubStats.maxDistanceYds`; angle = `Config.Match.MaxAimDegrees` |
 | Daily wheel | `WheelRules` (cumulative odds, `spinAngle`), `WheelService`, `WheelScreen`, `WheelController` | `Config.Wheel` (segments, weights, cooldown, gem price) |
 | Post-game lighting | `Match/PodiumLighting` (dims Lighting, Bloom, SunRays, bright lights while the podium shows) | values in `PodiumLighting.apply` |
-| Cosmetics | `CosmeticsData` (looks) -> `CosmeticBuilder` (instances) | `CosmeticsData.ClubMeshes`, `BallMeshes`, `TrailTextures`, `AnimationIds` |
+| Cosmetics | `CosmeticsData` (looks) + `CosmeticModels` (code-built shapes) -> `CosmeticBuilder` (instances), `ItemPreview` (menus) | `CosmeticsData.ClubMeshes`, `ItemMeshes`, `BallMeshes`, `TrailTextures`, `AnimationIds` (see docs/COSMETICS.md) |
 | Lobby visuals | `LightingDirector` (server), `LobbyAmbience` (client) | the values at the top of each module |
 
 ---

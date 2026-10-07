@@ -52,6 +52,7 @@ local TimingBar = require(script.Parent.Parent.UI.TimingBar)
 local Toast = require(script.Parent.Parent.UI.Toast)
 local AerialAim = require(script.Parent.Parent.Golf.AerialAim)
 local AimVisual = require(script.Parent.Parent.Golf.AimVisual)
+local CosmeticBuilder = require(script.Parent.Parent.Golf.CosmeticBuilder)
 local GolferRig = require(script.Parent.Parent.Golf.GolferRig)
 local BallAnimator = require(script.Parent.Parent.Match.BallAnimator)
 local CameraController = require(script.Parent.Parent.Match.CameraController)
@@ -342,6 +343,11 @@ local function strike(s: Session, power: number, offset: number)
 				if name and paid > 0 then
 					s.setResult(`{if shot.Bullseye then "BULLSEYE! " else ""}{name}  +{Format.commas(paid)} coins`, C.Gold)
 					BallAnimator.burst(s.Ball.Part.Position, if shot.Bullseye then C.Gold else C.Good, if shot.Bullseye then 90 else 50)
+					if shot.Bullseye then
+						-- A bullseye celebrates with the player's equipped hole-drop effect.
+						local profile = ClientState.get()
+						CosmeticBuilder.holeEffect(s.Ball.Part.Position, CosmeticsData.holeEffect(if profile then profile.EquippedItems.HoleEffect else nil))
+					end
 				elseif name then
 					s.setResult(`{name} - daily range limit reached`, C.TextDim)
 				else

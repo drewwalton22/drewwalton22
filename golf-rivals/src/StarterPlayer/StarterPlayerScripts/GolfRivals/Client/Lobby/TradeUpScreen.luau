@@ -65,7 +65,7 @@ TradeUpScreen.factory = {
 			Kit.label("YOU RECEIVED", { Size = UDim2.new(1, 0, 0, 50), Position = UDim2.fromOffset(0, 40), TextSize = 32, Font = Theme.Fonts.Title, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 11, Parent = overlay })
 			local card = ItemCard.new({
 				Name = item.Name, Color = Rarity.Info[item.Rarity].Color, Subtitle = `{string.upper(item.Rarity)} · {ShopView.slotLabel(item)}`,
-				Primary = item.Visual.Primary, Secondary = item.Visual.Secondary, Glyph = ItemCard.glyphFor(item.Slot),
+				Primary = item.Visual.Primary, Secondary = item.Visual.Secondary, Glyph = ItemCard.glyphFor(item.Slot), ItemId = item.Id,
 				Badge = if reward.IsNew then "NEW" else nil, Size = UDim2.fromOffset(190, 240),
 			})
 			card.Position = UDim2.new(0.5, -95, 0, 110)
@@ -100,7 +100,7 @@ TradeUpScreen.factory = {
 				local available = entry.Spare - entry.Selected
 				ItemCard.new({
 					Name = entry.Name, Color = entry.Color, Subtitle = `{string.upper(entry.Rarity)} · {entry.SlotLabel}`, Primary = entry.Primary, Secondary = entry.Secondary,
-					Glyph = ItemCard.glyphFor((ItemDatabase.get(entry.ItemId) :: ItemDatabase.Item).Slot),
+					Glyph = ItemCard.glyphFor((ItemDatabase.get(entry.ItemId) :: ItemDatabase.Item).Slot), ItemId = entry.ItemId,
 					Badge = `x{available}`, Locked = available <= 0, Size = UDim2.fromOffset(124, 150), LayoutOrder = index,
 					OnClick = function()
 						local ok, why = TradeUpView.canAdd(profile, selection, entry.ItemId)
@@ -121,7 +121,7 @@ TradeUpScreen.factory = {
 				if item then
 					ItemCard.new({
 						Name = item.Name, Color = Rarity.Info[item.Rarity].Color, Primary = item.Visual.Primary, Secondary = item.Visual.Secondary,
-						Glyph = ItemCard.glyphFor(item.Slot), LayoutOrder = index,
+						Glyph = ItemCard.glyphFor(item.Slot), ItemId = item.Id, LayoutOrder = index,
 						OnClick = function()
 							selection = TradeUpView.remove(selection, index)
 							render()

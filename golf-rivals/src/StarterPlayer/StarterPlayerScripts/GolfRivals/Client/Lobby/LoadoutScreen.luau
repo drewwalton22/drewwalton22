@@ -180,7 +180,7 @@ LoadoutScreen.factory = {
 			for index, skin in LoadoutView.skinsFor(profile, category.Class) do
 				ItemCard.new({
 					Name = skin.Name, Color = skin.Color, Subtitle = string.upper(skin.Rarity), Primary = skin.Primary, Secondary = skin.Secondary,
-					Glyph = ItemCard.glyphFor(category.Class), Locked = not skin.Owned, Selected = skin.Equipped,
+					Glyph = ItemCard.glyphFor(category.Class), ItemId = skin.ItemId, Locked = not skin.Owned, Selected = skin.Equipped,
 					Footer = if skin.Equipped then "✔ EQUIPPED" elseif skin.Owned then "OWNED" else "LOCKED",
 					FooterColor = if skin.Equipped then C.Good elseif skin.Owned then C.Text else C.TextDim,
 					LayoutOrder = index,

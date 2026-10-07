@@ -31,6 +31,7 @@ local Remotes = require(Shared.Remotes)
 
 local ClientState = require(script.Parent.Parent.ClientState)
 local ItemCard = require(script.Parent.Parent.UI.ItemCard)
+local ItemPreview = require(script.Parent.Parent.UI.ItemPreview)
 local Kit = require(script.Parent.Parent.UI.Kit)
 local Theme = require(script.Parent.Parent.UI.Theme)
 local Toast = require(script.Parent.Parent.UI.Toast)
@@ -58,7 +59,12 @@ local function miniCard(itemId: string, height: number): Frame
 		Kit.stroke(color, 2),
 	}) :: Frame
 	Kit.new("Frame", { Size = UDim2.new(1, 0, 0, 5), BackgroundColor3 = color, BorderSizePixel = 0, Parent = frame })
-	Kit.label(if item then ItemCard.glyphFor(item.Slot) else "?", { Size = UDim2.new(1, 0, 0.5, 0), Position = UDim2.fromScale(0, 0.1), TextSize = math.clamp(height * 0.4, 18, 44), TextXAlignment = Enum.TextXAlignment.Center, Parent = frame })
+	local glyph = Kit.label(if item then ItemCard.glyphFor(item.Slot) else "?", { Size = UDim2.new(1, 0, 0.5, 0), Position = UDim2.fromScale(0, 0.1), TextSize = math.clamp(height * 0.4, 18, 44), TextXAlignment = Enum.TextXAlignment.Center, Parent = frame })
+	-- A still 3D model of the item (the strip moves too fast to need rotation).
+	local holder = Kit.new("Frame", { Size = UDim2.new(1, -8, 1, -34), Position = UDim2.fromOffset(4, 8), BackgroundTransparency = 1, Parent = frame }) :: Frame
+	if ItemPreview.attach(holder, itemId, { Spin = false }) then
+		glyph.Visible = false
+	end
 	Kit.label(if item then item.Name else "", { Size = UDim2.new(1, -8, 0, 20), Position = UDim2.new(0, 4, 1, -24), TextSize = 11, TextXAlignment = Enum.TextXAlignment.Center, TextTruncate = Enum.TextTruncate.AtEnd, Parent = frame })
 	return frame
 end
@@ -179,6 +185,7 @@ CasesScreen.factory = {
 				ItemCard.new({
 					Name = card.Name, Color = card.Color, Subtitle = `{string.upper(card.Rarity)} · {card.SlotLabel}`,
 					Primary = card.Primary, Secondary = card.Secondary, Glyph = if item then ItemCard.glyphFor(item.Slot) else "⭐",
+					ItemId = card.ItemId,
 					Badge = if card.IsNew then "NEW" else nil, Size = UDim2.fromOffset(124, 150),
 				}).Parent = slot
 				if card.IsNew then

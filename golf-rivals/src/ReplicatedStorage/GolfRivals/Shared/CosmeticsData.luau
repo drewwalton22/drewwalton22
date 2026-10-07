@@ -34,6 +34,8 @@ local ItemDatabase = require(script.Parent.ItemDatabase)
 local Types = require(script.Parent.Types)
 
 export type BallLook = {
+	Id: string, -- the ball item (CosmeticModels.ball pattern)
+	Rarity: string,
 	Color: Types.RGB,
 	Material: string,
 	MeshId: string, -- "" = sphere
@@ -65,6 +67,8 @@ export type ClubLook = {
 	Shape: "Wood" | "Iron" | "Putter", -- procedural head shape
 	-- Templates looked up (first found wins) in ReplicatedStorage.GolfRivalsAssets.Clubs
 	TemplateNames: { string },
+	Class: string, -- club category: picks the code-built head (CosmeticModels.club)
+	Rarity: string, -- scales the head's detail, glow, sparkles and swing trail
 }
 
 export type AnimationLook = {
@@ -97,7 +101,12 @@ CosmeticsData.ClubMeshes = {
 	Putter = { MeshId = "", TextureId = "", Scale = 1 },
 } :: { [string]: { MeshId: string, TextureId: string, Scale: number } }
 
--- Optional per-item asset overrides, keyed by item id.
+-- Optional per-item asset overrides, keyed by item id. An uploaded mesh for one
+-- exact item REPLACES its code-built model (the rarity glow / sparkles / swing
+-- trail still apply), e.g.
+--   skin_gold_rush_driver = { MeshId = "rbxassetid://...", TextureId = "rbxassetid://...", Scale = 1 },
+CosmeticsData.ItemMeshes = {} :: { [string]: { MeshId: string, TextureId: string, Scale: number } }
+--   ball_golden = { MeshId = "rbxassetid://...", TextureId = "" },
 CosmeticsData.BallMeshes = {} :: { [string]: { MeshId: string, TextureId: string } }
 CosmeticsData.TrailTextures = {} :: { [string]: string }
 CosmeticsData.AnimationIds = {
@@ -187,7 +196,10 @@ end
 function CosmeticsData.ball(itemId: string?): BallLook
 	local id = itemId or ""
 	local mesh = CosmeticsData.BallMeshes[id]
+	local item = ItemDatabase.get(itemId)
 	return {
+		Id = id,
+		Rarity = if item then item.Rarity else "Common",
 		Color = primaryOf(itemId, { 240, 240, 245 }),
 		Material = BALL_MATERIALS[id] or "SmoothPlastic",
 		MeshId = if mesh then mesh.MeshId else "",
@@ -215,7 +227,7 @@ end
 -- `skinItemId` = the club skin equipped for the category (EquippedItems[class]).
 function CosmeticsData.club(skinItemId: string?, class: string): ClubLook
 	local item = ItemDatabase.get(skinItemId)
-	local mesh = CosmeticsData.ClubMeshes[class] or { MeshId = "", TextureId = "", Scale = 1 }
+	local mesh = CosmeticsData.ItemMeshes[skinItemId or ""] or CosmeticsData.ClubMeshes[class] or { MeshId = "", TextureId = "", Scale = 1 }
 	local primary = if item and item.Visual.Primary then item.Visual.Primary else { 32, 32, 38 }
 	local secondary = if item and item.Visual.Secondary then item.Visual.Secondary else { 200, 205, 215 }
 	local templates: { string } = {}
@@ -232,6 +244,8 @@ function CosmeticsData.club(skinItemId: string?, class: string): ClubLook
 		HeadScale = mesh.Scale,
 		Shape = CLASS_SHAPES[class] or "Iron",
 		TemplateNames = templates,
+		Class = class,
+		Rarity = if item then item.Rarity else "Common",
 	}
 end
 
