@@ -1,5 +1,12 @@
 # Golf Rivals: putting it into Roblox Studio
 
+> **Things only you can do in Studio** (everything else is automatic):
+> 1. Game settings below: API Services on, Lighting Technology = Future, Terrain Decoration on.
+> 2. Optional: publish the golf animations (about 1 minute each): [ANIMATIONS.md](ANIMATIONS.md).
+> 3. Optional: upload UI icons: [UI_ICONS.md](UI_ICONS.md).
+> 4. Optional: upload club / ball meshes: [COSMETICS.md](COSMETICS.md).
+> 5. Optional: create the Robux wheel-spin Developer Product (below).
+
 There are two ways to get the code into a place: **Rojo**, which is fast and keeps files in sync, or
 **by hand**, which needs no tools. Both give the same tree. Every name below must match exactly,
 because scripts find each other by name (`require(Shared.ClubStats)` and so on).
@@ -211,7 +218,7 @@ created in code. **Delete the default Baseplate** (it overlaps the plaza).
    material only, which the course uses for the **rough** (tall grass); fairways are short
    LeafyGrass and greens are smooth turf parts. Blade height is `Config.Course.GrassLength`
    (set by script). Decoration itself can only be ticked in Studio.
-5. **Game Settings > Avatar**: R15 or R6 both work.
+5. **Game Settings > Avatar**: R15 or R6 both work (the animations and emotes have both versions).
 6. Publish the place before testing DataStores or purchases.
 
 ### Robux spins for the daily wheel (optional)
@@ -287,32 +294,30 @@ Paste ids as `"rbxassetid://123456"`.
 
 1. **Boot.** F5. Output shows the boot steps through "Step 8: daily wheelspin", "Server ready.",
    then "Client ready.".
-2. **Lobby.** Golden-hour light with haze, bloom and sun rays; the background softly blurred; lamp
-   caps and signs slowly cycling colour; drifting pollen over the plaza. Tiles: Shop, Cases,
-   Loadout, Inventory, Trade-Up, Quests, Daily Spin (green FREE badge), Ranks.
-3. **Daily wheel.** Walk to the wheel stand west of the fountain and press E (or the Daily Spin
-   tile). SPIN FREE: the on-screen wheel and the 3D wheel spin together and land on the reward.
-   Spin again: "No spins left" and a countdown. Buy a spin for 25 gems and spin it.
-   Rejoin: the countdown continues (saved in the profile).
-4. **Inventory.** Each tab lists what you own with a 3D preview; EQUIP a ball / trail / club skin.
-5. **Bot match** (Play > Easy) - one of the three 3-hole courses:
-   - The hole has real elevation: an elevated tee box, rolling short-grass fairway, tall-grass
-     rough, a raised green on a bank, sunken bunkers and ponds, white OB stakes, hills framing
-     the hole. The hole card shows the elevation change (e.g. "▼ 41 FT DOWNHILL" on hole 4).
-   - Your turn starts in the **aerial view** above the landing area, high enough to clear the
-     hills. Drag the yellow target (an arc of blue dots marks the club's max distance); the
-     minimap shows the target and an aim line. **V** / VIEW switches to a view from behind
-     your golfer and back. Space / SWING ▶.
-   - The **shot meter**: click once to lock POWER (white tick = what the target needs). The
-     ACCURACY needle swings back and forth; click on the green SWEET SPOT. Wait 5 seconds and
-     the shot fires by itself with a random hook or slice ("TOO SLOW!").
-   - Downhill the ball runs out, uphill it stops short, putts break on tilted greens.
-   - A holed putt drops DOWN into the (bigger, white-rimmed) cup.
-   - From just off the green, even the Easy bot putts instead of chipping.
-6. **Podium.** After the last hole the podium is clearly lit, not blown out; back in the lobby
-   the normal lighting returns.
-7. **Daily wheel odds.** The odds list reads 31.5%, 15.7%, 20.2% ... (adds up to 100%), and the
-   wheel's slices are drawn as full wedges around the hub.
-8. **Driving range.** Same aim -> swing flow (V works there too); land on a target green to earn coins.
-9. **Two players** (Test > Local Server, 2 players): both see the same wheel spin and each
+2. **Lobby.** Bright, colourful plaza: neon rings round the inner plaza and the fountain, a
+   glowing pink spawn pad, painted benches, gold neon strips on the clubhouse columns. The HUD is
+   chunky and cartoony: outlined text, big coin / gem counters each with a green "+", tiles with
+   a pulsing FREE! badge on Daily Spin, and big slanted PLAY / DRIVING RANGE / AFK LOUNGE buttons
+   with a shine sweeping across. Buttons bounce when you hover and click them.
+3. **Daily wheel.** Walk to the wheel west of the fountain and press E (or the Daily Spin tile).
+   Every slice is a clean wedge with its icon (coin / gem / gift), amount and COINS / GEMS / ITEM
+   inside it, at any window size. SPIN FREE: the screen wheel and the 3D wheel turn together,
+   the red pointer stops inside the prize's slice, and a result card pops up in that slice's
+   colour with the same icon.
+4. **Shop / Cases / Inventory / Loadout.** Item cards show slowly rotating 3D models: a different
+   head for driver, wood, irons, wedge and putter; rarer skins get trims, neon, glow. Balls show
+   their pattern (the Black Hole has a disc). New items have a pulsing pink NEW! badge.
+5. **Bot match** (Play > Easy):
+   - Your golfer swings for real (R15 and R6), with the club resting on the ground behind the ball.
+   - The cup is a real hole in the green with a thin flagstick in the middle; the ball is small
+     and gets a white outline far away. A good putt drops into the hole with a click; a putt
+     charged too hard lips out and rolls on.
+   - On the green there is no aerial view: the camera sits behind you, a dotted putting line
+     follows the slope, and the meter is marked in feet with a flag at the hole's distance.
+6. **Podium.** After the last hole you see a lit studio stage: both golfers clearly visible, the
+   winner playing their victory emote (Fist Pump = Roblox cheer by default), the loser a defeat
+   pose. Back in the lobby the normal lighting returns.
+7. **Driving range.** Same aim -> swing flow; your ball trail shows, and a bullseye plays your
+   hole-drop effect.
+8. **Two players** (Test > Local Server, 2 players): both see the same wheel spin and each
    other's cosmetics in a match.

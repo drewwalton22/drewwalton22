@@ -63,6 +63,17 @@ of every script (Rojo or by hand), settings, optional art uploads, and a play-te
   - Daily wheel: wedges drawn correctly, cumulative-weight odds (fractions), 2D and 3D wheels
     animated from one shared server-clocked function, modern wheel screen.
   - Glassy HUD panels with glow strokes, redesigned shot meter, podium lighting fix.
+- [x] 11. Playtest fixes:
+  - Player swing animation fixed (AnimationConstraint joints), publishable KeyframeSequences for
+    R15 / R6 (docs/ANIMATIONS.md), club resting on the ground behind the ball.
+  - Real cup cut into the green, thin flagstick, small ball with a far outline, lip-outs.
+  - Putting from behind the golfer, slope-following putting line, auto-scaled linear putter
+    meter in feet.
+  - Studio-lit podium, victory emotes as cosmetics (Roblox built-in emotes by default).
+  - Daily wheel with exact wedges, icons and a matching result card.
+  - Code-built 3D clubs (per category, rarity detail) and patterned balls, rotating previews
+    (docs/COSMETICS.md).
+  - Cartoon UI restyle and a brighter lobby (docs/UI_ICONS.md for optional icon uploads).
 
 ## Offline checks (no Studio needed)
 
