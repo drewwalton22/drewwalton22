@@ -6,8 +6,10 @@
 	"Spin the wheel" prompt). Modern layout: a glowing stage for the wheel on the
 	left, glassy cards with gradients and soft glow strokes on the right.
 
-	  left    the wheel (WheelArt - the very same drawing as the 3D wheel) under a
-	          glowing pointer, with a "YOU WON" banner when it stops
+	  left    the wheel (WheelArt - the very same drawing as the 3D wheel) under the
+	          pointer; when it stops, a RESULT CARD pops up in the landed segment's
+	          colour with the same icon (the segment under the pointer is the
+	          server's roll: checked offline in tools/verify_features.luau)
 	  right   status card (free spin ready / countdown, stored spins), SPIN, buy a
 	          spin with gems, buy with Robux (Developer Product, shown when
 	          Config.Wheel.RobuxProductId is set), and the odds card
@@ -27,6 +29,7 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage.GolfRivals.Shared
 local Config = require(Shared.Config)
@@ -94,28 +97,92 @@ WheelScreen.factory = {
 			Size = UDim2.new(1, -60, 1, -70), Position = UDim2.new(0.5, 0, 0.5, 16), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, Parent = stage,
 		}, { Kit.new("UIAspectRatioConstraint", { AspectRatio = 1 }) }) :: Frame
 		local wheel = WheelArt.draw(square)
-		-- Pointer: a glowing red tab at 12 o'clock, pointing down into the wheel.
+		local currentAngle = 0
+		local function setAngle(angle: number)
+			if angle ~= currentAngle then
+				currentAngle = angle
+				wheel.setAngle(angle)
+			end
+		end
+		-- Pointer at 12 o'clock: a red diamond whose lower tip touches the rim exactly
+		-- above the centre line (angle 0), where WheelRules measures the result.
 		local pointer = Kit.new("Frame", {
-			Size = UDim2.fromOffset(26, 34), Position = UDim2.new(0.5, 0, 0, -18), AnchorPoint = Vector2.new(0.5, 0),
-			BackgroundColor3 = Color3.fromRGB(255, 70, 96), BorderSizePixel = 0, ZIndex = 9, Parent = square,
+			Size = UDim2.fromScale(0.085, 0.085), Position = UDim2.fromScale(0.5, 0.005), AnchorPoint = Vector2.new(0.5, 0.5), Rotation = 45,
+			BackgroundColor3 = Color3.fromRGB(255, 70, 96), BorderSizePixel = 0, ZIndex = 40, Parent = square,
 		}, {
-			Kit.corner(8),
-			Kit.glow(Color3.fromRGB(255, 150, 170), 2, 0.2),
-			Kit.new("UIGradient", { Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.fromRGB(190, 190, 200)), Rotation = 90 }),
+			Kit.corner(4),
+			Kit.new("UIStroke", { Color = Color3.fromRGB(24, 18, 40), Thickness = 3 }),
+			Kit.new("UIGradient", { Color = ColorSequence.new(Color3.fromRGB(255, 160, 175), Color3.fromRGB(200, 30, 60)), Rotation = 45 }),
 		}) :: Frame
-		Kit.label("▼", {
-			Size = UDim2.fromOffset(26, 26), Position = UDim2.new(0.5, 0, 1, -8), AnchorPoint = Vector2.new(0.5, 0), TextSize = 26,
-			Font = Theme.Fonts.Title, TextColor3 = Color3.fromRGB(255, 70, 96), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 9, Parent = pointer,
-		})
+		Kit.new("Frame", {
+			Size = UDim2.fromScale(0.3, 0.3), Position = UDim2.fromScale(0.5, 0.5), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderSizePixel = 0, ZIndex = 41, Parent = pointer,
+		}, { Kit.corner(99) })
 		local banner = Kit.label("", {
 			Size = UDim2.new(1, -40, 0, 40), Position = UDim2.fromOffset(20, 10), TextSize = 26, Font = Theme.Fonts.Title,
 			TextColor3 = C.Gold, TextXAlignment = Enum.TextXAlignment.Center, TextStrokeTransparency = 0.4, ZIndex = 10, Parent = stage,
 		})
 
+		-- RESULT CARD: pops up over the wheel when it stops, in the landed segment's
+		-- colour with the SAME icon and label as the wedge under the pointer.
+		local result = Kit.new("Frame", {
+			Size = UDim2.fromScale(0.62, 0.44), Position = UDim2.fromScale(0.5, 0.56), AnchorPoint = Vector2.new(0.5, 0.5),
+			BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ZIndex = 50, Visible = false, Parent = stage,
+		}, {
+			Kit.corner(18),
+			Kit.new("UIStroke", { Color = Color3.fromRGB(24, 18, 40), Thickness = 4 }),
+		}) :: Frame
+		local resultGradient = Kit.new("UIGradient", { Rotation = 90, Parent = result }) :: UIGradient
+		local resultScale = Kit.new("UIScale", { Scale = 1, Parent = result }) :: UIScale
+		local resultTitle = Kit.label("YOU WON!", {
+			Size = UDim2.fromScale(0.9, 0.2), Position = UDim2.fromScale(0.05, 0.04), TextScaled = true, Font = Theme.Fonts.Title,
+			TextColor3 = Color3.new(1, 1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 52, Parent = result,
+		})
+		Kit.new("UIStroke", { Color = Color3.fromRGB(24, 18, 40), Thickness = 3, Parent = resultTitle })
+		local resultIcon = Kit.new("Frame", {
+			Size = UDim2.fromScale(0.3, 0.3), Position = UDim2.fromScale(0.5, 0.42), AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1, ZIndex = 52, Parent = result,
+		}, { Kit.new("UIAspectRatioConstraint", { AspectRatio = 1 }) }) :: Frame
+		local resultText = Kit.label("", {
+			Size = UDim2.fromScale(0.9, 0.24), Position = UDim2.fromScale(0.05, 0.6), TextScaled = true, Font = Theme.Fonts.Title,
+			TextColor3 = Color3.new(1, 1, 1), TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 52, Parent = result,
+		})
+		Kit.new("UIStroke", { Color = Color3.fromRGB(24, 18, 40), Thickness = 3, Parent = resultText })
+		local resultHint = Kit.label("tap to close", {
+			Size = UDim2.fromScale(0.9, 0.1), Position = UDim2.fromScale(0.05, 0.86), TextScaled = true,
+			TextColor3 = Color3.fromRGB(255, 255, 255), TextTransparency = 0.25, TextXAlignment = Enum.TextXAlignment.Center, ZIndex = 52, Parent = result,
+		})
+		resultHint.Name = "Hint"
+		local closeResult = Kit.new("TextButton", {
+			Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Text = "", ZIndex = 55, Parent = result,
+		}) :: TextButton
+		closeResult.Activated:Connect(function()
+			result.Visible = false
+		end)
+		local function showResult(segmentIndex: number, reward: any)
+			local segment = Config.Wheel.Segments[segmentIndex]
+			if segment == nil then
+				return
+			end
+			for _, child in resultIcon:GetChildren() do
+				if not child:IsA("UIAspectRatioConstraint") then
+					child:Destroy()
+				end
+			end
+			WheelArt.icon(segment, resultIcon, 53)
+			local color = Theme.rgb(segment.Color)
+			resultGradient.Color = ColorSequence.new(color:Lerp(Color3.new(1, 1, 1), 0.25), color:Lerp(Color3.new(0, 0, 0), 0.35))
+			resultTitle.Text = if segment.Label == "JACKPOT" then "JACKPOT!" else "YOU WON!"
+			resultText.Text = string.upper(WheelScreen.rewardText(reward))
+			result.Visible = true
+			resultScale.Scale = 0.6
+			TweenService:Create(resultScale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		end
+
 		-- ---- status + buttons (right) --------------------------------------------------------------
 		local side = Kit.new("Frame", { Size = UDim2.new(0.5, -10, 1, 0), Position = UDim2.new(0.5, 10, 0, 0), BackgroundTransparency = 1, Parent = content }) :: Frame
 		local statusCard = card({ Size = UDim2.new(1, 0, 0, 84), Parent = side })
-		local status = Kit.label("Loading...", { Size = UDim2.new(1, -28, 0, 34), Position = UDim2.fromOffset(14, 10), TextSize = 26, Font = Theme.Fonts.Title, Parent = statusCard })
+		local status = Kit.label("Loading...", { Size = UDim2.new(1, -28, 0, 34), Position = UDim2.fromOffset(14, 10), TextScaled = true, Font = Theme.Fonts.Title, Parent = statusCard })
+		Kit.new("UITextSizeConstraint", { MaxTextSize = 26, Parent = status }) -- shrinks on narrow screens instead of overflowing
 		local sub = Kit.label("", { Size = UDim2.new(1, -28, 0, 22), Position = UDim2.fromOffset(14, 48), TextSize = 15, TextColor3 = C.TextDim, Parent = statusCard })
 
 		local spinButton = Kit.button("SPIN!", "primary", nil, { Size = UDim2.new(1, 0, 0, 64), Position = UDim2.fromOffset(0, 96), TextSize = 30, Font = Theme.Fonts.Title, Parent = side })
@@ -187,12 +254,12 @@ WheelScreen.factory = {
 			local now = workspace:GetServerTimeNow()
 			local spin = mySpin
 			if spin then
-				wheel.Rotation = WheelRules.spinAngle(spin.From, spin.To, spin.Start, spin.Duration, now)
+				setAngle(WheelRules.spinAngle(spin.From, spin.To, spin.Start, spin.Duration, now))
 				return
 			end
 			local part = WheelController.wheelPart()
 			if part then
-				wheel.Rotation = WheelController.angleAt(part, now) -- mirror the 3D wheel
+				setAngle(WheelController.angleAt(part, now)) -- mirror the 3D wheel
 			end
 		end
 
@@ -210,6 +277,7 @@ WheelScreen.factory = {
 			end
 			spinning = true
 			banner.Text = ""
+			result.Visible = false
 			render()
 			local reply = Remotes.invoke("SpinWheel")
 			if type(reply) ~= "table" or not reply.ok then
@@ -224,7 +292,7 @@ WheelScreen.factory = {
 			state, stateAt = reply.State, os.clock()
 			local duration = tonumber(reply.Duration) or 5
 			local spinData: Spin = {
-				From = tonumber(reply.From) or (wheel.Rotation % 360),
+				From = tonumber(reply.From) or (currentAngle % 360),
 				To = tonumber(reply.Angle) or 0,
 				Start = tonumber(reply.Start) or workspace:GetServerTimeNow(),
 				Duration = duration,
@@ -234,11 +302,14 @@ WheelScreen.factory = {
 			while workspace:GetServerTimeNow() < spinData.Start + duration do
 				task.wait()
 			end
-			wheel.Rotation = spinData.To -- exactly the resting angle of the rewarded slice
+			setAngle(spinData.To) -- exactly the resting angle of the rewarded slice
 			mySpin = nil
 			spinning = false
 			local text = WheelScreen.rewardText(reply.Reward)
-			banner.Text = `YOU WON {string.upper(text)}!`
+			banner.Text = ""
+			-- The card shows the segment under the pointer, which IS the server's roll
+			-- (WheelRules.segmentAt(restingAngle(i)) == i, checked offline).
+			showResult(WheelRules.segmentAt(spinData.To), reply.Reward)
 			Toast.show(`Daily wheel: {text}!`, "success")
 			render()
 		end

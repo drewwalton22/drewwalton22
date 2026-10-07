@@ -190,6 +190,106 @@ function WheelRules.segmentAt(angle: number): number
 	return math.floor(underPointer / (360 / n)) % n + 1
 end
 
+-- ---------------------------------------------------------------------------
+-- DRAWING GEOMETRY (shared by WheelArt and the tests). Units: the wheel face is
+-- 1 x 1 (radius 0.5); angles are degrees clockwise from the pointer at the top.
+-- ---------------------------------------------------------------------------
+
+-- EXACT WEDGES WITHOUT IMAGES: the face is split into a right half [0, 180) and
+-- a left half [180, 360), each a clipping frame. A piece starting at angle `s`
+-- in a half is drawn as a half-disc covering [s, s + 180] (clipped by its half
+-- to [s, end of half]); pieces are stacked by start angle, so each one is
+-- covered from the next boundary on, leaving exactly its own wedge visible.
+export type Piece = { Segment: number, Half: "Right" | "Left", Start: number, Rank: number }
+
+function WheelRules.wedgePieces(rotation: number): { Piece }
+	local n = #W.Segments
+	local width = 360 / n
+	local right: { Piece } = {}
+	local left: { Piece } = {}
+	for index = 1, n do
+		local s = ((index - 1) * width + rotation) % 360
+		local e = s + width
+		-- Halves as intervals; [360, 540) is the right half again (wrap-around).
+		for _, half in { { 0, 180 }, { 180, 360 }, { 360, 540 } } do
+			local lo = math.max(s, half[1])
+			local hi = math.min(e, half[2])
+			if hi - lo > 1e-6 then
+				local isLeft = half[1] == 180
+				local piece: Piece = { Segment = index, Half = if isLeft then "Left" else "Right", Start = lo % 360, Rank = 0 }
+				table.insert(if isLeft then left else right, piece)
+			end
+		end
+	end
+	local all: { Piece } = {}
+	for _, list in { right, left } do
+		table.sort(list, function(a: Piece, b: Piece): boolean
+			return a.Start < b.Start
+		end)
+		for rank, piece in list do
+			piece.Rank = rank
+			table.insert(all, piece)
+		end
+	end
+	return all
+end
+
+-- The segment the drawn pieces show at screen angle `theta` (what a viewer sees):
+-- the highest-ranked piece of theta's half that starts at or before theta.
+function WheelRules.paintedAt(pieces: { Piece }, theta: number): number?
+	local t = theta % 360
+	local half = if t < 180 then "Right" else "Left"
+	local best: Piece? = nil
+	for _, piece in pieces do
+		if piece.Half == half and piece.Start <= t + 1e-9 and (best == nil or piece.Rank > (best :: Piece).Rank) then
+			best = piece
+		end
+	end
+	return if best then best.Segment else nil
+end
+
+-- UIGradient.Rotation that turns a hard-edged half-disc to cover [start, start + 180].
+-- (Rotation 0 shows the LEFT half, centred at 270 degrees; it turns clockwise.)
+function WheelRules.halfDiscRotation(start: number): number
+	return start - 180
+end
+
+-- Where each segment's art sits, sized from the wedge so it fits for any
+-- segment count and any screen size (everything is in face units).
+export type Slot = { Radius: number, Width: number, Height: number }
+export type Layout = { Icon: Slot, Label: Slot, Kind: Slot, Hub: number, Pegs: number }
+
+local MARGIN_DEGREES = 3.5 -- clearance from the separators
+
+local function fit(radius: number, height: number, maxWidth: number): Slot
+	local half = math.rad(180 / #W.Segments - MARGIN_DEGREES)
+	local inner = radius - height / 2
+	return { Radius = radius, Height = height, Width = math.min(maxWidth, 2 * inner * math.tan(half)) }
+end
+
+function WheelRules.layout(): Layout
+	return {
+		Icon = fit(0.375, 0.1, 0.1),
+		Label = fit(0.282, 0.075, 0.2),
+		Kind = fit(0.2, 0.04, 0.13),
+		Hub = 0.17, -- hub diameter
+		Pegs = 0.468, -- radius of the rim pegs at the segment boundaries
+	}
+end
+
+-- True when a slot's rectangle (centred on a segment's centre line, upright
+-- toward the rim) lies inside its wedge, outside the hub and inside the rim.
+function WheelRules.slotFits(slot: Slot): boolean
+	local half = math.rad(180 / #W.Segments)
+	local inner = slot.Radius - slot.Height / 2
+	local outer = slot.Radius + slot.Height / 2
+	local x = slot.Width / 2
+	local insideWedge = math.atan(x / inner) < half
+	local insideRim = math.sqrt(x * x + outer * outer) < WheelRules.layout().Pegs - 0.02
+	local outsideHub = inner > WheelRules.layout().Hub / 2
+	return insideWedge and insideRim and outsideHub
+end
+
 function WheelRules.buyWithGems(data: ProfileData): (boolean, string?)
 	if data.Wheel.ExtraSpins >= W.MaxStoredSpins then
 		return false, "max_spins"

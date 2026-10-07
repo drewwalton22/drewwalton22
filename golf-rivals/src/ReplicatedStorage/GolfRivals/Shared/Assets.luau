@@ -30,6 +30,7 @@ local Assets = {}
 Assets.Images = {
 	CoinIcon = "",
 	GemIcon = "",
+	GiftIcon = "", -- wheel "ITEM" prize (drawn gift box when blank)
 	-- Lobby side-menu tiles
 	ShopTile = "",
 	CasesTile = "",
