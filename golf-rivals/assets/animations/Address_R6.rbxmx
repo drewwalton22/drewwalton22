@@ -1,0 +1,36 @@
+<roblox xmlns:xmime="http://www.w3.org/2005/05/xmlmime" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="http://www.roblox.com/roblox.xsd" version="4">
+<Item class="KeyframeSequence" referent="RBX1"><Properties><string name="Name">Address_R6</string><bool name="Loop">true</bool><token name="Priority">2</token></Properties>
+<Item class="Keyframe" referent="RBX2"><Properties><string name="Name">Keyframe</string><float name="Time">0.000000</float></Properties>
+<Item class="Pose" referent="RBX3"><Properties><string name="Name">HumanoidRootPart</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>1.000000</R00><R01>0.000000</R01><R02>0.000000</R02><R10>0.000000</R10><R11>1.000000</R11><R12>0.000000</R12><R20>0.000000</R20><R21>0.000000</R21><R22>1.000000</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+<Item class="Pose" referent="RBX4"><Properties><string name="Name">Torso</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>1.000000</R00><R01>0.000000</R01><R02>0.000000</R02><R10>0.000000</R10><R11>0.927184</R11><R12>-0.374607</R12><R20>0.000000</R20><R21>0.374607</R21><R22>0.927184</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+<Item class="Pose" referent="RBX5"><Properties><string name="Name">Head</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>1.000000</R00><R01>0.000000</R01><R02>0.000000</R02><R10>0.000000</R10><R11>0.951057</R11><R12>-0.309017</R12><R20>0.000000</R20><R21>0.309017</R21><R22>0.951057</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+</Item>
+<Item class="Pose" referent="RBX6"><Properties><string name="Name">Right Arm</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>0.913545</R00><R01>-0.406737</R01><R02>0.000000</R02><R10>0.394655</R10><R11>0.886409</R11><R12>-0.241922</R12><R20>0.098398</R20><R21>0.221007</R21><R22>0.970296</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+</Item>
+<Item class="Pose" referent="RBX7"><Properties><string name="Name">Left Arm</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>0.913545</R00><R01>0.406737</R01><R02>0.000000</R02><R10>-0.394655</R10><R11>0.886409</R11><R12>-0.241922</R12><R20>-0.098398</R20><R21>0.221007</R21><R22>0.970296</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+</Item>
+<Item class="Pose" referent="RBX8"><Properties><string name="Name">Right Leg</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>0.927184</R00><R01>-0.374607</R01><R02>0.000000</R02><R10>0.374607</R10><R11>0.927184</R11><R12>0.000000</R12><R20>0.000000</R20><R21>0.000000</R21><R22>1.000000</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+</Item>
+<Item class="Pose" referent="RBX9"><Properties><string name="Name">Left Leg</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>0.927184</R00><R01>0.374607</R01><R02>0.000000</R02><R10>-0.374607</R10><R11>0.927184</R11><R12>0.000000</R12><R20>0.000000</R20><R21>0.000000</R21><R22>1.000000</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+</Item>
+</Item>
+</Item>
+</Item>
+<Item class="Keyframe" referent="RBX10"><Properties><string name="Name">Keyframe</string><float name="Time">1.000000</float></Properties>
+<Item class="Pose" referent="RBX11"><Properties><string name="Name">HumanoidRootPart</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>1.000000</R00><R01>0.000000</R01><R02>0.000000</R02><R10>0.000000</R10><R11>1.000000</R11><R12>0.000000</R12><R20>0.000000</R20><R21>0.000000</R21><R22>1.000000</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+<Item class="Pose" referent="RBX12"><Properties><string name="Name">Torso</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>1.000000</R00><R01>0.000000</R01><R02>0.000000</R02><R10>0.000000</R10><R11>0.927184</R11><R12>-0.374607</R12><R20>0.000000</R20><R21>0.374607</R21><R22>0.927184</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+<Item class="Pose" referent="RBX13"><Properties><string name="Name">Head</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>1.000000</R00><R01>0.000000</R01><R02>0.000000</R02><R10>0.000000</R10><R11>0.951057</R11><R12>-0.309017</R12><R20>0.000000</R20><R21>0.309017</R21><R22>0.951057</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+</Item>
+<Item class="Pose" referent="RBX14"><Properties><string name="Name">Right Arm</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>0.913545</R00><R01>-0.406737</R01><R02>0.000000</R02><R10>0.394655</R10><R11>0.886409</R11><R12>-0.241922</R12><R20>0.098398</R20><R21>0.221007</R21><R22>0.970296</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+</Item>
+<Item class="Pose" referent="RBX15"><Properties><string name="Name">Left Arm</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>0.913545</R00><R01>0.406737</R01><R02>0.000000</R02><R10>-0.394655</R10><R11>0.886409</R11><R12>-0.241922</R12><R20>-0.098398</R20><R21>0.221007</R21><R22>0.970296</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+</Item>
+<Item class="Pose" referent="RBX16"><Properties><string name="Name">Right Leg</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>0.927184</R00><R01>-0.374607</R01><R02>0.000000</R02><R10>0.374607</R10><R11>0.927184</R11><R12>0.000000</R12><R20>0.000000</R20><R21>0.000000</R21><R22>1.000000</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+</Item>
+<Item class="Pose" referent="RBX17"><Properties><string name="Name">Left Leg</string><CoordinateFrame name="CFrame"><X>0.000000</X><Y>0.000000</Y><Z>0.000000</Z><R00>0.927184</R00><R01>0.374607</R01><R02>0.000000</R02><R10>-0.374607</R10><R11>0.927184</R11><R12>0.000000</R12><R20>0.000000</R20><R21>0.000000</R21><R22>1.000000</R22></CoordinateFrame><float name="Weight">1</float></Properties>
+</Item>
+</Item>
+</Item>
+</Item>
+</Item>
+</roblox>

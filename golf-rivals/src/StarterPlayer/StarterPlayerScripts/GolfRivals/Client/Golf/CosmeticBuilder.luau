@@ -83,6 +83,29 @@ local function findTemplate(names: { string }): Instance?
 	return nil
 end
 
+-- Every club gets an Attachment "Sole" at the bottom of its head - the point
+-- GolferRig rests on the ground. Templates without one get it at their lowest
+-- point along the grip's -Y axis.
+local function ensureSole(model: Model, grip: BasePart)
+	if model:FindFirstChild("Sole", true) then
+		return
+	end
+	local lowest: BasePart = grip
+	local lowestY = math.huge
+	for _, d in model:GetDescendants() do
+		if d:IsA("BasePart") then
+			local y = grip.CFrame:PointToObjectSpace(d.Position).Y - d.Size.Y / 2
+			if y < lowestY then
+				lowest, lowestY = d, y
+			end
+		end
+	end
+	local sole = Instance.new("Attachment")
+	sole.Name = "Sole"
+	sole.WorldPosition = lowest.Position - grip.CFrame.UpVector * (lowest.Size.Y / 2)
+	sole.Parent = lowest
+end
+
 -- A club as a Model whose PrimaryPart ("Grip") sits in the hand; the shaft runs
 -- down the grip's -Y axis with the head at the bottom.
 function CosmeticBuilder.club(look: CosmeticsData.ClubLook, isPutter: boolean): Model
@@ -113,6 +136,7 @@ function CosmeticBuilder.club(look: CosmeticsData.ClubLook, isPutter: boolean): 
 					weld(grip, d)
 				end
 			end
+			ensureSole(model, grip)
 			return model
 		end
 		model:Destroy() -- unusable template (no grip): fall through to procedural
@@ -151,6 +175,7 @@ function CosmeticBuilder.club(look: CosmeticsData.ClubLook, isPutter: boolean): 
 	head.CFrame = grip.CFrame * CFrame.new(0, -length - 0.1, -0.2)
 	head.Parent = model
 	weld(grip, head)
+	ensureSole(model, grip)
 	return model
 end
 

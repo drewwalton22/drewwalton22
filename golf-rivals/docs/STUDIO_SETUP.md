@@ -49,6 +49,7 @@ ReplicatedStorage
 │       ├── CasesView         (ModuleScript)
 │       ├── ClubAdvisor       (ModuleScript)
 │       ├── ClubDatabase      (ModuleScript)  products (club lines) for the six categories
+│       ├── ClubSeat          (ModuleScript)  NEW where to stand so the clubhead rests on the ground
 │       ├── ClubStats         (ModuleScript)  THE six categories, Power / Accuracy / Spin, MaxDistance
 │       ├── Config            (ModuleScript)  every tuning knob (swing speeds, cup, wheel, decor, courses)
 │       ├── CosmeticsData     (ModuleScript)  NEW how every cosmetic looks: ball skins, trails, club meshes, animations, hole FX
@@ -138,6 +139,8 @@ Source: `src/ServerScriptService/GolfRivals/Server/` (`Main.server.luau` is the 
 
 ```
 ServerStorage
+├── GolfRivals                (Folder)
+│   └── AnimationsToPublish   (Folder)  NEW 12 KeyframeSequences to publish (docs/ANIMATIONS.md)
 └── GolfRivalsAssets          (Folder)
     └── Decor                 (Folder)
         ├── Tree              (Folder)  drop tree MeshParts / Models here

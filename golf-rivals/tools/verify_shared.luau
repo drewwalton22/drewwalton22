@@ -62,6 +62,7 @@ local WheelRules = require("./WheelRules")
 local CosmeticsData = require("./CosmeticsData")
 local CourseData = require("./CourseData")
 local CourseRelief = require("./CourseRelief")
+local ClubSeat = require("./ClubSeat")
 
 local Types = require("./Types")
 local P_YD = Config.Physics.YardsToMeters -- metres per yard
@@ -4054,6 +4055,34 @@ do
 	end
 	expect("Placeholder asset ids are detected as missing (UI falls back)", Assets.isSet("") == false and Assets.isSet("rbxassetid://0") == false and Assets.isSet((nil :: any)) == false and Assets.isSet("rbxassetid://12345") and Assets.image("CoinIcon") == nil)
 	expect("No real asset ids are required to run (all fallbacks)", allBlank and Assets.animation("Swing") == nil)
+	local slotsOk = true
+	for _, move in { "Swing", "Putt", "Victory", "Defeat", "Address", "PuttAddress" } do
+		local slot = Assets.Animations[move]
+		if slot == nil or slot.R15 == nil or slot.R6 == nil or Assets.animation(move, "R6") ~= nil or Assets.animation(move, "R15") ~= nil then
+			slotsOk = false
+		end
+	end
+	expect("Every golf move has an R15 and an R6 animation slot (blank = procedural pose)", slotsOk)
+	expect("Sounds fall back to built-in Roblox sounds until uploaded", string.sub(Assets.sound("CupDrop"), 1, 9) == "rbxasset:" and Assets.sound("Nope") == "")
+end
+
+print("-- club seat (clubhead on the ground)")
+do
+	local toward: ClubSeat.Vec = { X = 1, Y = 0, Z = 0 }
+	local function check(grip: ClubSeat.Vec, sole: ClubSeat.Vec, length: number): (boolean, ClubSeat.Seat)
+		local seat = ClubSeat.solve(grip, sole, toward, length)
+		return math.abs(ClubSeat.reach(grip, sole, toward, seat.Shift) - seat.Length) < 1e-9, seat
+	end
+	local fits, normal = check({ X = 0, Y = 3, Z = 0 }, { X = 2.5, Y = 0, Z = 0 }, 4.2)
+	expect("A normal golfer: the club reaches the ground exactly behind the ball, no scaling", fits and normal.Scale == 1)
+	local tooFar, far = check({ X = 0, Y = 3, Z = 0 }, { X = 6, Y = 0, Z = 0 }, 4.2)
+	expect("Standing too far from the ball: the golfer slides closer (positive shift)", tooFar and far.Shift > 0)
+	local tooClose, close = check({ X = 0, Y = 3, Z = 0 }, { X = 0.5, Y = 0, Z = 0 }, 4.2)
+	expect("Standing too close: the golfer slides back (negative shift)", tooClose and close.Shift < 0)
+	local tall, big = check({ X = 0, Y = 6, Z = 0 }, { X = 2.5, Y = 0, Z = 0 }, 4.2)
+	expect("A tall avatar whose hands are higher than the club is long gets a longer club that still rests on the ground", tall and big.Scale > 1 and big.Length > 6)
+	local uphill, up = check({ X = 0, Y = 3, Z = 0 }, { X = 2.5, Y = 0.8, Z = 0 }, 4.2)
+	expect("On a slope (ground higher behind the ball) the sole still lands on the ground", uphill and up.Scale == 1)
 end
 
 for _, caseId in CaseDatabase.Order do

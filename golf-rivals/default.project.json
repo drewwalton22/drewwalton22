@@ -31,10 +31,29 @@
         "Decor": {
           "$className": "Folder",
           "$ignoreUnknownInstances": true,
-          "Tree": { "$className": "Folder", "$ignoreUnknownInstances": true },
-          "Bush": { "$className": "Folder", "$ignoreUnknownInstances": true },
-          "Rock": { "$className": "Folder", "$ignoreUnknownInstances": true },
-          "GrassPatch": { "$className": "Folder", "$ignoreUnknownInstances": true }
+          "Tree": {
+            "$className": "Folder",
+            "$ignoreUnknownInstances": true
+          },
+          "Bush": {
+            "$className": "Folder",
+            "$ignoreUnknownInstances": true
+          },
+          "Rock": {
+            "$className": "Folder",
+            "$ignoreUnknownInstances": true
+          },
+          "GrassPatch": {
+            "$className": "Folder",
+            "$ignoreUnknownInstances": true
+          }
+        }
+      },
+      "GolfRivals": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "AnimationsToPublish": {
+          "$path": "assets/animations"
         }
       }
     },
