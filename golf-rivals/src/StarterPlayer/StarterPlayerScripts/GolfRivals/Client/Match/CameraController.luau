@@ -11,8 +11,20 @@
 	  golfer(ball, aimX, aimZ, putt)  behind and a little right of the ball, low, so the
 	                                golfer (side-on, left of the ball), the ball and the
 	                                aim arc / putting line are all in frame
+	  aerial(target, ball, zoom, peakY)
+	                                OVERHEAD aiming view above the target landing area,
+	                                slightly tilted so "up" on screen is the shot
+	                                direction. HEIGHT-ADJUSTED: it always clears
+	                                `peakY`, the highest ground between the ball and the
+	                                target (hills, a cliff-top tee)
+	  behind(ball, target)          aiming view from behind the golfer, down the line
+	                                to the target (the other half of the VIEW toggle)
 	  static(position, look, fov)   a fixed shot (the podium, the driving range)
 	  release()                     give the camera back to Roblox
+
+	SMOOTH TWEENS: address / golfer / aerial / behind / static glide from wherever
+	the camera is to the new pose (exponential ease, ~0.6 s to settle); intro and
+	follow are driven directly every frame.
 
 	It binds one render-step callback while active and sets the camera to Scriptable;
 	`release()` restores the previous camera type so the lobby works normally.
@@ -161,19 +173,39 @@ function CameraController.golfer(ball: Vector3, aimX: number, aimZ: number, isPu
 	addressPose = { Pos = toVec(position), Look = toVec(look) }
 end
 
--- Overhead aiming view centred above `target`; `zoom` scales the height (mouse wheel).
-function CameraController.aerial(target: Vector3, ball: Vector3, zoom: number?)
+-- Overhead aiming view centred above `target`; `zoom` scales the height (mouse
+-- wheel); `peakY` is the highest ground between the ball and the target.
+function CameraController.aerial(target: Vector3, ball: Vector3, zoom: number?, peakY: number?)
 	ensureBound()
 	beginSmooth()
 	local flat = Vector3.new(target.X - ball.X, 0, target.Z - ball.Z)
 	local distance = flat.Magnitude
 	local forward = if distance > 1e-3 then flat / distance else Vector3.new(1, 0, 0)
 	local height = math.clamp(distance * 0.55 + 30, 30, 650) * math.clamp(zoom or 1, 0.4, 2.5)
+	-- Terrain clearance: hills between the ball and the target stay well below.
+	local top = target.Y + height
+	if peakY then
+		top = math.max(top, peakY + 25 + height * 0.35)
+	end
 	-- A small tilt back toward the ball keeps the view readable and makes the
 	-- top of the screen the shot direction.
-	local position = target - forward * (height * 0.3) + Vector3.new(0, height, 0)
-	aerialPose = CFrame.lookAt(position, target, forward)
+	local back = target - forward * (height * 0.3)
+	aerialPose = CFrame.lookAt(Vector3.new(back.X, top, back.Z), target, forward)
 	mode = "Aerial"
+end
+
+-- Behind the golfer, raised a little, looking down the line at the target.
+function CameraController.behind(ball: Vector3, target: Vector3)
+	ensureBound()
+	beginSmooth()
+	local flat = Vector3.new(target.X - ball.X, 0, target.Z - ball.Z)
+	local distance = flat.Magnitude
+	local forward = if distance > 1e-3 then flat / distance else Vector3.new(1, 0, 0)
+	local back = math.clamp(10 + distance * 0.04, 12, 30)
+	local height = math.clamp(6 + distance * 0.03, 7, 22)
+	mode = "Address"
+	addressFov = 60
+	addressPose = { Pos = toVec(ball - forward * back + Vector3.new(0, height, 0)), Look = toVec(ball:Lerp(target, 0.75)) }
 end
 
 function CameraController.isAerial(): boolean

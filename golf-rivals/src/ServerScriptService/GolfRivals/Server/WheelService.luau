@@ -56,18 +56,23 @@ local function wheelPart(): BasePart?
 	return if part and part:IsA("BasePart") then part else nil
 end
 
--- Start the shared 3D wheel animation toward `angle`.
-local function spinLobbyWheel(angle: number, player: Player)
+-- Start the shared 3D wheel animation toward `angle`. Returns the spin's start
+-- angle and server start time, so the player's screen wheel animates with the
+-- very same numbers (WheelRules.spinAngle) as the 3D wheel.
+local function spinLobbyWheel(angle: number, player: Player): (number, number)
+	local start = workspace:GetServerTimeNow()
 	local part = wheelPart()
 	if part == nil then
-		return
+		return 0, start
 	end
-	local from = part:GetAttribute("SpinTo")
-	part:SetAttribute("SpinFrom", if type(from) == "number" then from % 360 else 0)
+	local previous = part:GetAttribute("SpinTo")
+	local from = if type(previous) == "number" then previous % 360 else 0
+	part:SetAttribute("SpinFrom", from)
 	part:SetAttribute("SpinTo", angle)
-	part:SetAttribute("SpinStart", workspace:GetServerTimeNow())
+	part:SetAttribute("SpinStart", start)
 	part:SetAttribute("SpinDuration", WheelService.SPIN_SECONDS)
 	part:SetAttribute("SpinBy", player.DisplayName)
+	return from, start
 end
 
 function WheelService.start()
@@ -100,14 +105,16 @@ function WheelService.start()
 			spinning[player] = nil
 		end)
 		local angle = WheelRules.restingAngle(result.SegmentIndex, random:NextInteger(5, 7), random:NextNumber() * 2 - 1)
-		spinLobbyWheel(angle, player)
+		local from, start = spinLobbyWheel(angle, player)
 		Logger.info("Wheel", `{player.Name} spun {result.SegmentId} ({if result.UsedFree then "free" else "bought"})`)
 		return {
 			ok = true,
 			SegmentIndex = result.SegmentIndex,
 			Reward = result.Reward,
 			UsedFree = result.UsedFree,
-			Angle = angle,
+			Angle = angle, -- resting angle: WheelRules.segmentAt(Angle) == SegmentIndex
+			From = from,
+			Start = start, -- server time (workspace:GetServerTimeNow())
 			Duration = WheelService.SPIN_SECONDS,
 			State = WheelRules.state(data, os.time()),
 		}

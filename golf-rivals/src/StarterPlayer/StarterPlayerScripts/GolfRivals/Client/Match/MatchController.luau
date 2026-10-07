@@ -22,8 +22,11 @@
 
 	YOUR TURN = two stages
 	  1. AIM (AerialAim): the camera smooth-tweens to an overhead view above the
-	     landing area; drag the glowing target reticle on the ground (clamped to the
-	     club's max distance, ClubStats.maxDistanceYds). SetAim follows it live.
+	     landing area (its height clears the hills in between); drag the glowing
+	     target reticle on the ground (clamped to the club's max distance,
+	     ClubStats.maxDistanceYds). V / the VIEW button switches to a view from
+	     behind the golfer and back. SetAim follows the reticle live, and the
+	     minimap shows the target and the aim line.
 	     SWING button / Space -> stage 2.
 	  2. SWING: the camera tweens back behind your golfer and the 2-STAGE TIMING BAR
 	     arms (power, then accuracy; slower putting bar on the green). A white tick
@@ -92,6 +95,7 @@ local BallAnimator = require(script.Parent.BallAnimator)
 local CameraController = require(script.Parent.CameraController)
 local CourseView = require(script.Parent.CourseView)
 local MatchHud = require(script.Parent.MatchHud)
+local PodiumLighting = require(script.Parent.PodiumLighting)
 local PodiumStage = require(script.Parent.PodiumStage)
 
 local MatchController = {}
@@ -436,8 +440,11 @@ local function onReticle(r: AimMath.Reticle, final: boolean)
 	myAimDeg = r.AimDeg
 	sendAim(final)
 	local view = myView()
-	if hud and view and stage == "Aim" then
-		hud.setAimStage("Aim", aimInfo(view))
+	if hud and view then
+		hud.setTarget(view.Position.X, view.Position.Z, r.X, r.Z) -- the minimap reticle
+		if stage == "Aim" then
+			hud.setAimStage("Aim", aimInfo(view))
+		end
 	end
 	refreshAim(final)
 end
@@ -542,6 +549,7 @@ local function disarm()
 	if hud then
 		hud.setGauge(nil, nil)
 		hud.setAimStage(nil, nil)
+		hud.clearTarget()
 	end
 	hideAim()
 end
@@ -575,7 +583,11 @@ local function buildHole(snapshot: any)
 		toCourse = built.toCourse,
 		groundAt = built.ground,
 		Include = pickable,
-	}, onReticle)
+	}, onReticle, function(view: AerialAim.View)
+		if hud then
+			hud.setViewLabel(view)
+		end
+	end)
 	for _, view in snapshot.Players do
 		balls[view.Id] = BallAnimator.new(built.Folder, appearanceFor(view.Id), `Ball_{view.Id}`)
 	end
@@ -608,6 +620,7 @@ local function showPodium(snapshot: any)
 	local base = if course then course.Origin else Vector3.new(30000, 0, 0)
 	local built = PodiumStage.build(view, base + Vector3.new(0, PODIUM_HEIGHT, 0), emotes)
 	podium = built
+	PodiumLighting.apply(built.Origin, built.Lights) -- no more blinding post-game screen
 	CameraController.static(built.CameraPosition, built.CameraLook, 55)
 	local function show()
 		local profile = ClientState.get()
@@ -915,6 +928,7 @@ local function exitMatch()
 		aerial = nil
 	end
 	stage, myAimDeg = nil, nil
+	PodiumLighting.restore()
 	if podium then
 		podium.destroy()
 		podium = nil
@@ -1028,6 +1042,11 @@ local function enter(snapshot: any)
 		end
 	end)
 	newHud.onConfirmAim.connect(enterSwingStage)
+	newHud.onToggleView.connect(function()
+		if aerial and isStage("Aim") then
+			(aerial :: AerialAim.Aim).toggleView()
+		end
+	end)
 	newHud.onBackToAim.connect(backToAim)
 	newHud.onForfeit.connect(function()
 		Remotes.invoke("LeaveMatch")

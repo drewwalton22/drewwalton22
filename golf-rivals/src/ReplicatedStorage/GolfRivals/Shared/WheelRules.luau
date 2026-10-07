@@ -63,33 +63,53 @@ function WheelRules.state(data: ProfileData, now: number): State
 	}
 end
 
--- Each segment's chance in percent (for the odds list).
-function WheelRules.odds(): { number }
+-- CUMULATIVE PROBABILITY TABLE: entry i = P(segment <= i), so the last entry is
+-- exactly 1. Segment i owns the interval [cumulative[i-1], cumulative[i]) of a
+-- uniform roll in [0, 1), so its chance is exactly Weight_i / sum(Weights).
+-- Segments with weight <= 0 can never be rolled.
+function WheelRules.cumulative(): { number }
 	local total = 0
 	for _, segment in W.Segments do
-		total += segment.Weight
+		total += math.max(segment.Weight, 0)
 	end
 	local list: { number } = {}
-	for _, segment in W.Segments do
-		table.insert(list, segment.Weight / total * 100)
+	local running = 0
+	for index, segment in W.Segments do
+		running += math.max(segment.Weight, 0)
+		list[index] = if total > 0 then running / total else index / #W.Segments
+	end
+	list[#list] = 1 -- no floating-point gap at the top
+	return list
+end
+
+-- Each segment's chance as a FRACTION 0..1 (the odds list shows it x100 as %).
+function WheelRules.odds(): { number }
+	local cumulative = WheelRules.cumulative()
+	local list: { number } = {}
+	local previous = 0
+	for index, value in cumulative do
+		list[index] = value - previous
+		previous = value
 	end
 	return list
 end
 
--- Weighted pick; `rng()` returns [0, 1).
+-- Weighted pick: binary search of a uniform roll in [0, 1) in the cumulative
+-- table (the first segment whose cumulative value is > roll). `rng()` returns
+-- [0, 1); a stray 1.0 is clamped into the last segment.
 function WheelRules.pick(rng: () -> number): number
-	local total = 0
-	for _, segment in W.Segments do
-		total += segment.Weight
-	end
-	local roll = rng() * total
-	for index, segment in W.Segments do
-		roll -= segment.Weight
-		if roll < 0 then
-			return index
+	local cumulative = WheelRules.cumulative()
+	local roll = math.clamp(rng(), 0, 1 - 1e-12)
+	local lo, hi = 1, #cumulative
+	while lo < hi do
+		local mid = (lo + hi) // 2
+		if roll < cumulative[mid] then
+			hi = mid
+		else
+			lo = mid + 1
 		end
 	end
-	return #W.Segments
+	return lo
 end
 
 local function grant(data: ProfileData, segment: Config.WheelSegment, rng: () -> number): Reward
@@ -148,6 +168,19 @@ end
 function WheelRules.restingAngle(index: number, fullTurns: number, jitter: number): number
 	local half = 180 / #W.Segments
 	return -(WheelRules.segmentCentre(index) + math.clamp(jitter, -1, 1) * 0.8 * half) + 360 * fullTurns
+end
+
+-- The wheel's angle `now` during a spin from `from` to `to` (degrees) that
+-- started at `start` and lasts `duration` seconds: a quintic ease-out. The
+-- screen wheel and the 3D lobby wheel both animate with THIS function and the
+-- server's clock, so they show the same angle at the same moment and stop on
+-- exactly the rewarded slice.
+function WheelRules.spinAngle(from: number, to: number, start: number, duration: number, now: number): number
+	if duration <= 0 then
+		return to
+	end
+	local u = 1 - math.clamp((now - start) / duration, 0, 1)
+	return from + (to - from) * (1 - u * u * u * u * u)
 end
 
 -- Which segment is under the pointer when the wheel is at `angle` degrees.

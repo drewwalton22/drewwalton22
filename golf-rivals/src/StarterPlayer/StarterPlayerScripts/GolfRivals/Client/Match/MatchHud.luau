@@ -53,6 +53,10 @@ export type Hud = {
 	onLeave: Signal.Signal,
 	onForfeit: Signal.Signal,
 	onConfirmAim: Signal.Signal, -- AIM stage -> SWING stage
+	onToggleView: Signal.Signal, -- aerial <-> behind-the-player camera (also the V key)
+	setViewLabel: (view: string) -> (), -- "Aerial" | "Behind"
+	setTarget: (ballX: number, ballZ: number, targetX: number, targetZ: number) -> (), -- minimap reticle
+	clearTarget: () -> (),
 	onBackToAim: Signal.Signal, -- SWING stage -> AIM stage
 	setAimStage: (stage: AimStage?, info: string?) -> (), -- nil hides the panel
 	setTimer: (seconds: number, running: boolean) -> (),
@@ -89,7 +93,7 @@ function MatchHud.new(): Hud
 	local safe = Kit.safeArea(gui)
 	local play = Kit.new("Frame", { Name = "Play", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Parent = safe }) :: Frame
 	local clubPick, clubStep, clubAuto, aimStep, leave, forfeit = Signal.new(), Signal.new(), Signal.new(), Signal.new(), Signal.new(), Signal.new()
-	local confirmAim, backToAim = Signal.new(), Signal.new()
+	local confirmAim, backToAim, toggleView = Signal.new(), Signal.new(), Signal.new()
 
 	-- ---- hole card + wind (top-left) -------------------------------------------------
 	local holeCard = Kit.panel({ Size = UDim2.fromOffset(230, 100), Parent = play })
@@ -124,6 +128,9 @@ function MatchHud.new(): Hud
 	local yardsLabel = text(mapPanel, "380 YDS", { Size = UDim2.new(1, -16, 0, 28), Position = UDim2.fromOffset(8, MAP_H + 12), TextSize = 22, Font = Theme.Fonts.Title, TextXAlignment = Enum.TextXAlignment.Center })
 	local mapLayout: MiniMap.Layout? = nil
 	local dotFrames: { Frame } = {}
+	local elevationText = "" -- "  ·  ▼ 39 FT DOWNHILL" for the current hole
+	local targetRing: Frame? = nil
+	local targetLine: Frame? = nil
 
 	-- ---- telemetry (right, under the map) --------------------------------------------------------
 	local telemetry = Kit.panel({ Size = UDim2.fromOffset(MAP_W + 16, 190), Position = UDim2.new(1, 0, 0, MAP_H + 60), AnchorPoint = Vector2.new(1, 0), Visible = false, Parent = play }, {
@@ -140,7 +147,10 @@ function MatchHud.new(): Hud
 	-- ---- timing bar + aim stage panel (bottom-centre, above the club row) ----------------------------
 	local bar = TimingBar.new({ Position = UDim2.new(0.5, 0, 1, -102), AnchorPoint = Vector2.new(0.5, 1), Parent = play })
 	local aimPanel = Kit.panel({ Size = UDim2.fromOffset(560, 58), Position = UDim2.new(0.5, 0, 1, -102), AnchorPoint = Vector2.new(0.5, 1), Visible = false, Parent = play })
-	local aimInfo = text(aimPanel, "", { Size = UDim2.new(1, -200, 1, 0), Position = UDim2.fromOffset(16, 0), TextSize = 16, Font = Theme.Fonts.Bold, TextWrapped = true })
+	local aimInfo = text(aimPanel, "", { Size = UDim2.new(1, -310, 1, 0), Position = UDim2.fromOffset(16, 0), TextSize = 15, Font = Theme.Fonts.Bold, TextWrapped = true })
+	local viewButton = Kit.button("VIEW: AERIAL", "ghost", function()
+		toggleView.fire()
+	end, { Size = UDim2.fromOffset(104, 42), Position = UDim2.new(1, -290, 0.5, 0), AnchorPoint = Vector2.new(0, 0.5), TextSize = 12, Parent = aimPanel })
 	local aimStage: AimStage? = nil
 	local stageButton = Kit.button("SWING ▶", "primary", function()
 		if aimStage == "Aim" then
@@ -158,6 +168,7 @@ function MatchHud.new(): Hud
 			aimPanel.Position = UDim2.new(0.5, 0, 1, -102)
 			aimPanel.AnchorPoint = Vector2.new(0.5, 1)
 			aimInfo.Visible = true
+			viewButton.Visible = true
 			aimInfo.Text = info or "DRAG THE TARGET  ·  SPACE TO SWING"
 			stageButton.Text = "SWING ▶"
 			stageButton.Size = UDim2.fromOffset(170, 42)
@@ -167,6 +178,7 @@ function MatchHud.new(): Hud
 			aimPanel.Position = UDim2.new(0.5, 300, 1, -102)
 			aimPanel.AnchorPoint = Vector2.new(0, 1)
 			aimInfo.Visible = false
+			viewButton.Visible = false
 			stageButton.Text = "◀ AIM"
 			stageButton.Size = UDim2.fromOffset(104, 38)
 			stageButton.Position = UDim2.new(0, 8, 0.5, 0)
@@ -189,7 +201,7 @@ function MatchHud.new(): Hud
 	Kit.button("▶", "ghost", function()
 		aimStep.fire(2)
 	end, { Size = UDim2.fromOffset(36, 40), Position = UDim2.fromOffset(594, 26), Parent = controls })
-	text(controls, "Q/E club  ·  ←/→ aim  ·  TAB target", { Size = UDim2.fromOffset(220, 14), Position = UDim2.fromOffset(414, 72), TextSize = 11, TextColor3 = C.TextDim })
+	text(controls, "Q/E club  ·  ←/→ aim  ·  V view  ·  TAB", { Size = UDim2.fromOffset(220, 14), Position = UDim2.fromOffset(414, 72), TextSize = 11, TextColor3 = C.TextDim })
 
 	local forfeitButton = Kit.button("FORFEIT", "ghost", function()
 		forfeit.fire()
@@ -248,7 +260,7 @@ function MatchHud.new(): Hud
 	local function update(model: MatchView.HudModel)
 		holeTitle.Text = model.HoleText
 		holeSub.Text = `{model.ParText}  ·  {model.YardsText}`
-		holeProgress.Text = model.ProgressText
+		holeProgress.Text = model.ProgressText .. elevationText
 		windText.Text = model.WindText
 		windArrow.Rotation = model.WindRotationDeg
 		bannerText.Text = model.Banner
@@ -272,6 +284,8 @@ function MatchHud.new(): Hud
 	end
 
 	local function setHole(hole: CourseDatabase.HoleDef)
+		local feet = math.floor(CourseDatabase.elevationChange(hole) * 3.281 + 0.5)
+		elevationText = if math.abs(feet) < 3 then "  ·  FLAT" elseif feet > 0 then `  ·  ▲ {feet} FT UPHILL` else `  ·  ▼ {-feet} FT DOWNHILL`
 		for _, child in mapCanvas:GetChildren() do
 			if child:IsA("Frame") then
 				child:Destroy()
@@ -310,6 +324,57 @@ function MatchHud.new(): Hud
 			AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromOffset(layout.Pin[1], layout.Pin[2]), Size = UDim2.fromOffset(8, 8),
 			BackgroundColor3 = Color3.fromRGB(230, 50, 60), BorderSizePixel = 0, Parent = mapCanvas,
 		}, { Kit.new("UICorner", { CornerRadius = UDim.new(1, 0) }) })
+		-- Out-of-bounds zones (a road) as dark strips.
+		local zones: { CourseDatabase.Bounds } = hole.OutOfBounds or {}
+		for _, zone in zones do
+			local ax, ay = layout.project(zone.MinX, zone.MinZ)
+			local bx, by = layout.project(zone.MaxX, zone.MaxZ)
+			Kit.new("Frame", {
+				Position = UDim2.fromOffset(math.min(ax, bx), math.min(ay, by)), Size = UDim2.fromOffset(math.abs(bx - ax), math.abs(by - ay)),
+				BackgroundColor3 = Color3.fromRGB(110, 92, 72), BorderSizePixel = 0, Parent = mapCanvas,
+			})
+		end
+		-- My aim: a line from my ball to a yellow target reticle (hidden until aiming).
+		targetLine = Kit.new("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), BackgroundColor3 = Color3.fromRGB(255, 226, 92), BackgroundTransparency = 0.25,
+			BorderSizePixel = 0, Visible = false, ZIndex = 6, Parent = mapCanvas,
+		}) :: Frame
+		targetRing = Kit.new("Frame", {
+			AnchorPoint = Vector2.new(0.5, 0.5), Size = UDim2.fromOffset(14, 14), BackgroundTransparency = 1, Visible = false, ZIndex = 7, Parent = mapCanvas,
+		}, {
+			Kit.new("UICorner", { CornerRadius = UDim.new(1, 0) }),
+			Kit.glow(Color3.fromRGB(255, 226, 92), 2.5, 0),
+			Kit.new("Frame", {
+				AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.5), Size = UDim2.fromOffset(4, 4),
+				BackgroundColor3 = Color3.new(1, 1, 1), BorderSizePixel = 0, ZIndex = 8,
+			}, { Kit.new("UICorner", { CornerRadius = UDim.new(1, 0) }) }),
+		}) :: Frame
+	end
+
+	-- Project the 3D landing target onto the minimap (with an aim line from the ball).
+	local function setTarget(ballX: number, ballZ: number, targetX: number, targetZ: number)
+		local layout, ring, line = mapLayout, targetRing, targetLine
+		if layout == nil or ring == nil or line == nil then
+			return
+		end
+		local bx, by = layout.project(ballX, ballZ)
+		local tx, ty = layout.project(targetX, targetZ)
+		ring.Position = UDim2.fromOffset(tx, ty)
+		ring.Visible = true
+		local dx, dy = tx - bx, ty - by
+		line.Position = UDim2.fromOffset((bx + tx) / 2, (by + ty) / 2)
+		line.Size = UDim2.fromOffset(math.sqrt(dx * dx + dy * dy), 2)
+		line.Rotation = math.deg(math.atan2(dy, dx))
+		line.Visible = true
+	end
+
+	local function clearTarget()
+		if targetRing then
+			targetRing.Visible = false
+		end
+		if targetLine then
+			targetLine.Visible = false
+		end
 	end
 
 	local function setDots(dots: { Dot })
@@ -395,6 +460,12 @@ function MatchHud.new(): Hud
 		onLeave = leave,
 		onForfeit = forfeit,
 		onConfirmAim = confirmAim,
+		onToggleView = toggleView,
+		setViewLabel = function(view: string)
+			viewButton.Text = if view == "Behind" then "VIEW: BEHIND" else "VIEW: AERIAL"
+		end,
+		setTarget = setTarget,
+		clearTarget = clearTarget,
 		onBackToAim = backToAim,
 		setAimStage = setAimStage,
 		setTimer = setTimer,

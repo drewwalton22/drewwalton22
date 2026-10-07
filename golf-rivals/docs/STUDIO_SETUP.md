@@ -52,9 +52,11 @@ ReplicatedStorage
 │       ├── ClubStats         (ModuleScript)  THE six categories, Power / Accuracy / Spin, MaxDistance
 │       ├── Config            (ModuleScript)  every tuning knob (swing speeds, cup, wheel, decor, courses)
 │       ├── CosmeticsData     (ModuleScript)  NEW how every cosmetic looks: ball skins, trails, club meshes, animations, hole FX
-│       ├── CourseDatabase    (ModuleScript)
+│       ├── CourseData        (ModuleScript)  NEW the 9 holes: par, length, tee / green elevation, hazards, OB
+│       ├── CourseDatabase    (ModuleScript)  turns CourseData into hole definitions (+ 3-hole courses)
+│       ├── CourseRelief      (ModuleScript)  NEW the 3D height field (elevated tees, banked greens, ponds)
 │       ├── CourseLayout      (ModuleScript)
-│       ├── CourseTerrain     (ModuleScript)
+│       ├── CourseTerrain     (ModuleScript)  lies, out of bounds, heights + slopes for the physics
 │       ├── DatabaseValidator (ModuleScript)
 │       ├── DecorPlanner      (ModuleScript)  NEW where foliage / rocks go around a hole (seeded)
 │       ├── Format            (ModuleScript)
@@ -88,7 +90,7 @@ ReplicatedStorage
 │       ├── SwingStateMachine (ModuleScript)  2-stage timing (power, then accuracy)
 │       ├── TableUtil         (ModuleScript)
 │       ├── TelemetryView     (ModuleScript)
-│       ├── TerrainPlan       (ModuleScript)  NEW which Smooth Terrain fills build a hole
+│       ├── TerrainPlan       (ModuleScript)  per-column ground height / material + course parts
 │       ├── TerrainSurface    (ModuleScript)  NEW raycast surface: height, lie, slope, physics
 │       ├── TradeUpView       (ModuleScript)
 │       ├── Types             (ModuleScript)
@@ -126,7 +128,7 @@ ServerScriptService
         ├── ProfileStore      (ModuleScript)
         ├── QuestService      (ModuleScript)
         ├── ReceiptService    (ModuleScript)  NEW the one ProcessReceipt (Developer Products)
-        ├── TerrainCourse     (ModuleScript)  NEW writes a hole into Smooth Terrain and clears it after
+        ├── TerrainBuilder    (ModuleScript)  NEW sculpts a hole's height field into Smooth Terrain (WriteVoxels)
         ├── WheelService      (ModuleScript)  NEW daily wheel remotes, rolls, 24 h cooldown, purchases
         └── ZoneService       (ModuleScript)
 ```
@@ -171,7 +173,8 @@ StarterPlayer
             │   └── WheelController (NEW), WheelScreen (NEW)        (all ModuleScripts)
             ├── Match             (Folder)
             │   ├── BallAnimator, CameraController, CourseBuilder, CourseView (NEW),
-            │   └── MatchController, MatchHud, PodiumStage           (all ModuleScripts)
+            │   ├── MatchController, MatchHud, PodiumLighting (NEW),
+            │   └── PodiumStage                                       (all ModuleScripts)
             ├── UI                (Folder)
             │   ├── AssetLoader, Icons, ItemCard, Kit,
             │   └── Theme, TimingBar (NEW), Toast                    (all ModuleScripts)
@@ -200,7 +203,10 @@ created in code. **Delete the default Baseplate** (it overlaps the plaza).
    streaming on, clients may not have the course loaded when the hole starts.
 3. **Lighting > Technology**: **Future** (real-time shadows from every lamp and neon accent).
    Scripts can't set this, so set it by hand.
-4. **Terrain > Decoration**: **on** (animated grass blades on Grass). Also Studio-only.
+4. **Terrain > Decoration**: **on** - Roblox's animated grass blades. They grow on the Grass
+   material only, which the course uses for the **rough** (tall grass); fairways are short
+   LeafyGrass and greens are smooth turf parts. Blade height is `Config.Course.GrassLength`
+   (set by script). Decoration itself can only be ticked in Studio.
 5. **Game Settings > Avatar**: R15 or R6 both work.
 6. Publish the place before testing DataStores or purchases.
 
@@ -217,15 +223,21 @@ created in code. **Delete the default Baseplate** (it overlaps the plaza).
 
 | Feature | Where it lives | Tune it in |
 |---|---|---|
-| Smooth Terrain holes | `TerrainPlan` (what) + `TerrainCourse` (writes it) | `Config.Course.Mode` (`"Terrain"` or the old `"Parts"`) |
-| Surface detection | `TerrainSurface` raycasts; `SurfaceMaterials` maps Grass = Fairway, LeafyGrass = Rough, Sand = Bunker, Water = Water | `SurfaceMaterials.TerrainLies` / `PhysicsOverrides` |
+| The 9 holes | `CourseData` (par, length, elevations, hazards, OB) -> `CourseDatabase` | `CourseData.Holes`; which 3-hole course a match plays: `Config.Course.MatchCourse` |
+| Elevation | `CourseRelief` height field (profile along the line of play, raised tees, banked greens, sunken bunkers / ponds, framing hills) | per hole in `CourseData`; global shape constants at the top of `CourseRelief` |
+| Terrain sculpting | `TerrainPlan` (what) + `TerrainBuilder` (WriteVoxels) | `Config.Course.Mode` (`"Terrain"` or the flat `"Parts"`) |
+| Surface detection | `TerrainSurface` raycasts; `SurfaceMaterials` maps LeafyGrass = Fairway, Grass = Rough (tall), Sand = Bunker, Water = Water; greens / tees are parts with `GolfLie` | `SurfaceMaterials.TerrainLies`, `BuildMaterials`, `MaterialColors`, `Config.Course.GrassLength` |
+| Slope physics | `ShotPhysics`: landing bounce off the surface normal, roll accelerates down the gradient | `Config.Lies` (roll friction decides how steep a slope holds a ball) |
+| Bots | `BotBrain` plans a putt as well as a chip from short grass near the pin | `Config.Match.FringePuttYds`, `Config.Bots` |
 | Material friction / bounce | `ShotPhysics` asks the surface for per-material physics | `Config.Lies` + `SurfaceMaterials.PhysicsOverrides` |
 | Foliage / rocks | `MapDecorator` + `DecorPlanner` | `Config.Decor` (density, kinds, `MeshIds`) and `ServerStorage.GolfRivalsAssets.Decor` |
-| 2-stage timing bar | `SwingStateMachine`, `UI/TimingBar` | `Config.Swing.PowerSweepSeconds`, `AccuracySweepSeconds` (higher = slower) |
+| 2-stage timing bar | `SwingStateMachine`, `UI/TimingBar` | `Config.Swing.PowerSweepSeconds`, `AccuracySweepSeconds` (higher = slower needle), `AccuracyTimeoutSeconds` (5), `TimeoutPenaltyMin/Max` |
 | Putting meter | same, putt speeds | `Config.Swing.PuttPowerSweepSeconds`, `PuttAccuracySweepSeconds` |
 | Cup capture + magnet | `ShotPhysics` | `Config.Physics.CupCaptureRadius`, `CupCaptureSpeed`, `MagnetRadius`, `MagnetAccel` |
-| Aerial aim | `Golf/AerialAim`, `AimMath`, `CameraController.aerial` | max distance = `ClubStats.maxDistanceYds` |
-| Daily wheel | `WheelRules`, `WheelService`, `WheelScreen`, `WheelController` | `Config.Wheel` (segments, weights, cooldown, gem price) |
+| Ball / cup size, drop | `CourseLayout.BALL_DIAMETER`, `CUP_DIAMETER`; `Match/BallAnimator` drop animation | keep `CupCaptureRadius` in step with `CUP_DIAMETER` (a test checks it) |
+| Aiming views | `Golf/AerialAim` (V / VIEW toggles aerial and behind), `CameraController.aerial` / `behind`, minimap reticle in `MatchHud` | max distance = `ClubStats.maxDistanceYds`; angle = `Config.Match.MaxAimDegrees` |
+| Daily wheel | `WheelRules` (cumulative odds, `spinAngle`), `WheelService`, `WheelScreen`, `WheelController` | `Config.Wheel` (segments, weights, cooldown, gem price) |
+| Post-game lighting | `Match/PodiumLighting` (dims Lighting, Bloom, SunRays, bright lights while the podium shows) | values in `PodiumLighting.apply` |
 | Cosmetics | `CosmeticsData` (looks) -> `CosmeticBuilder` (instances) | `CosmeticsData.ClubMeshes`, `BallMeshes`, `TrailTextures`, `AnimationIds` |
 | Lobby visuals | `LightingDirector` (server), `LobbyAmbience` (client) | the values at the top of each module |
 
@@ -245,8 +257,9 @@ Workspace
         └── ...                greens / tee boxes / paths as MeshParts with a string
                                attribute GolfLie = "Green" | "Tee" | "Fairway" | "Rough" | "Sand" | "Water"
 ```
-Paint the ground with the Terrain Editor: **Grass** = fairway, **LeafyGrass** = rough,
-**Sand** = bunkers, **Water** = hazards (rock, mud and ground count as rough with their own bounce).
+Paint the ground with the Terrain Editor: **LeafyGrass** = fairway (short), **Grass** = rough
+(tall blades), **Sand** = bunkers, **Water** = hazards (rock, mud and ground count as rough with
+their own bounce). Make greens smooth turf parts with `GolfLie = "Green"`.
 Holes are played in name order; when any exist they replace the generated holes
 (`Config.Course.UseMappedCourses`).
 
@@ -278,17 +291,24 @@ Paste ids as `"rbxassetid://123456"`.
    Spin again: "No spins left" and a countdown. Buy a spin for 25 gems and spin it.
    Rejoin: the countdown continues (saved in the profile).
 4. **Inventory.** Each tab lists what you own with a 3D preview; EQUIP a ball / trail / club skin.
-5. **Bot match** (Play > Easy):
-   - The hole is real terrain (rolling grass, sunken sand bunkers, water) with trees and rocks
-     around it.
-   - Your turn starts in the **overhead view**. Drag the yellow target; it stops at the club's max
-     distance (faint ring) and the arc shows the flight. Space / SWING ▶.
-   - The camera glides behind your golfer, the **timing bar** arms: click once to lock POWER
-     (the white tick is what the target needs), click again on the green SWEET SPOT. Early =
-     slice, late = hook. ◀ AIM / Tab goes back before power is locked.
-   - Balls in the sand stop quickly, balls in rough lose distance, water costs a stroke.
-   - On the green the bar is much slower; a putt that just reaches the rim curls in.
-   - Your equipped ball, trail, club model and hole effect show for you and your opponent.
-6. **Driving range.** Same aim -> swing flow; land on a target green to earn coins.
-7. **Two players** (Test > Local Server, 2 players): both see the same wheel spin and each
+5. **Bot match** (Play > Easy) - one of the three 3-hole courses:
+   - The hole has real elevation: an elevated tee box, rolling short-grass fairway, tall-grass
+     rough, a raised green on a bank, sunken bunkers and ponds, white OB stakes, hills framing
+     the hole. The hole card shows the elevation change (e.g. "▼ 41 FT DOWNHILL" on hole 4).
+   - Your turn starts in the **aerial view** above the landing area, high enough to clear the
+     hills. Drag the yellow target (an arc of blue dots marks the club's max distance); the
+     minimap shows the target and an aim line. **V** / VIEW switches to a view from behind
+     your golfer and back. Space / SWING ▶.
+   - The **shot meter**: click once to lock POWER (white tick = what the target needs). The
+     ACCURACY needle swings back and forth; click on the green SWEET SPOT. Wait 5 seconds and
+     the shot fires by itself with a random hook or slice ("TOO SLOW!").
+   - Downhill the ball runs out, uphill it stops short, putts break on tilted greens.
+   - A holed putt drops DOWN into the (bigger, white-rimmed) cup.
+   - From just off the green, even the Easy bot putts instead of chipping.
+6. **Podium.** After the last hole the podium is clearly lit, not blown out; back in the lobby
+   the normal lighting returns.
+7. **Daily wheel odds.** The odds list reads 31.5%, 15.7%, 20.2% ... (adds up to 100%), and the
+   wheel's slices are drawn as full wedges around the hub.
+8. **Driving range.** Same aim -> swing flow (V works there too); land on a target green to earn coins.
+9. **Two players** (Test > Local Server, 2 players): both see the same wheel spin and each
    other's cosmetics in a match.

@@ -32,6 +32,8 @@ local GolferRig = require(script.Parent.Parent.Golf.GolferRig)
 export type Stage = {
 	CameraPosition: Vector3,
 	CameraLook: Vector3,
+	Origin: Vector3,
+	Lights: { Light }, -- the stage's own (soft) lights; PodiumLighting keeps these on
 	destroy: () -> (),
 }
 
@@ -153,19 +155,20 @@ function PodiumStage.build(podium: PodiumView.Podium, origin: Vector3, emotes: {
 
 	-- Floor, backdrop and lights.
 	part("Floor", Vector3.new(70, 1, 50), CFrame.new(origin + Vector3.new(0, -0.5, 4)), Color3.fromRGB(20, 26, 44), Enum.Material.SmoothPlastic, folder)
-	part("FloorGlow", Vector3.new(30, 0.2, 14), CFrame.new(origin + Vector3.new(0, 0.05, 0)), Color3.fromRGB(60, 90, 160), Enum.Material.Neon, folder).Transparency = 0.6
+	part("FloorGlow", Vector3.new(30, 0.2, 14), CFrame.new(origin + Vector3.new(0, 0.05, 0)), Color3.fromRGB(60, 90, 160), Enum.Material.Neon, folder).Transparency = 0.82
 	local wall = part("Backdrop", Vector3.new(70, 34, 1), CFrame.new(origin + Vector3.new(0, 16, 10)), Color3.fromRGB(14, 20, 38), Enum.Material.SmoothPlastic, folder)
 	local light = Instance.new("SurfaceLight")
 	light.Face = Enum.NormalId.Front
-	light.Range = 30
-	light.Brightness = 2
+	light.Range = 26
+	light.Brightness = 0.7 -- soft key light (was 2: blinding with Bloom + Future lighting)
 	light.Color = Color3.fromRGB(255, 236, 200)
 	light.Parent = wall
 	local spot = part("Spot", Vector3.new(1, 1, 1), CFrame.new(origin + Vector3.new(0, 18, -12)), Color3.new(1, 1, 1), Enum.Material.SmoothPlastic, folder)
 	spot.Transparency = 1
 	local spotlight = Instance.new("PointLight")
-	spotlight.Range = 40
-	spotlight.Brightness = 3
+	spotlight.Range = 32
+	spotlight.Brightness = 0.9 -- (was 3)
+	spotlight.Shadows = true
 	spotlight.Parent = spot
 
 	local rigs: { GolferRig.Rig } = {}
@@ -217,6 +220,8 @@ function PodiumStage.build(podium: PodiumView.Podium, origin: Vector3, emotes: {
 		-- centre (the scoreboard panel is docked on the left of the screen).
 		CameraPosition = origin + Vector3.new(6, 7.5, -24),
 		CameraLook = origin + Vector3.new(6, 4.5, 0),
+		Origin = origin,
+		Lights = { light, spotlight },
 		destroy = function()
 			for _, rig in rigs do
 				rig.destroy()

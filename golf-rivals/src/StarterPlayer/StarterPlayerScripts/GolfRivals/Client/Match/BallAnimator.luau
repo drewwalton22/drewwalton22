@@ -14,6 +14,15 @@
 	(colour, material, optional mesh skin, glow) and Ball Trail (streak, sparkles or
 	a lagging Beam ribbon). `burst` is a plain particle pop (water splash etc.);
 	hole-drop effects use CosmeticBuilder.holeEffect.
+
+	SIZE: CourseLayout.BALL_DIAMETER (1.25 studs - a touch smaller than before, so
+	it sits inside the bigger cup).
+
+	HOLE DROP: when a shot is holed the ball doesn't stop flat on top of the cup -
+	after its last sample it slides to the cup centre and FALLS: an accelerating
+	downward velocity (gravity) carries it below the green surface, through the
+	black cup, before it disappears. The ball is anchored and CanCollide = false,
+	so nothing physical can catch it on the way down.
 ]]
 
 local Debris = game:GetService("Debris")
@@ -22,6 +31,7 @@ local RunService = game:GetService("RunService")
 
 local Shared = ReplicatedStorage.GolfRivals.Shared
 local CosmeticsData = require(Shared.CosmeticsData)
+local CourseLayout = require(Shared.CourseLayout)
 local TelemetryView = require(Shared.TelemetryView)
 
 local CosmeticBuilder = require(script.Parent.Parent.Golf.CosmeticBuilder)
@@ -42,8 +52,10 @@ export type Animator = {
 
 local BallAnimator = {}
 
-local BALL_DIAMETER = 1.7 -- studs: bigger than a real ball so it is visible from the chase camera
+local BALL_DIAMETER = CourseLayout.BALL_DIAMETER -- studs: bigger than a real ball so it reads on screen
 local LIFT = BALL_DIAMETER / 2
+local DROP_GRAVITY = 140 -- studs/s^2 for the drop into the cup (stylised, snappy)
+local DROP_DEPTH = BALL_DIAMETER * 1.6 -- studs below the surface before it vanishes
 
 function BallAnimator.new(parent: Instance, appearance: Appearance, name: string): Animator
 	local ball = Instance.new("Part")
@@ -92,6 +104,28 @@ function BallAnimator.new(parent: Instance, appearance: Appearance, name: string
 			end
 			if clock >= duration then
 				stop()
+				if shot.Holed or shot.Outcome == "Holed" then
+					-- Slide to the cup centre and fall into it.
+					local rest = ball.Position
+					local last = samples[#samples]
+					local cup = if shot.End then toWorld(shot.End.X, last[3], shot.End.Z) + Vector3.new(0, LIFT, 0) else rest
+					local fall = 0.0
+					connection = RunService.RenderStepped:Connect(function(dt: number)
+						fall += dt
+						local slide = math.clamp(fall / 0.08, 0, 1)
+						local centre = rest:Lerp(Vector3.new(cup.X, rest.Y, cup.Z), slide)
+						local depth = math.min(DROP_DEPTH, 0.5 * DROP_GRAVITY * fall * fall)
+						ball.CFrame = CFrame.new(centre - Vector3.new(0, depth, 0))
+						if depth >= DROP_DEPTH then
+							stop()
+							ball.Transparency = 1 -- in the hole
+							if onDone then
+								onDone()
+							end
+						end
+					end)
+					return
+				end
 				if onDone then
 					onDone()
 				end

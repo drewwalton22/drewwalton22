@@ -49,6 +49,20 @@ of every script (Rojo or by hand), settings, optional art uploads, and a play-te
     swing / victory animations, hole effects; Inventory screen with 3D previews.
   - Lobby visuals: Atmosphere, Bloom, SunRays, colour grading, soft shadows, depth of field,
     neon accent colour cycling and ambient particles.
+- [x] 10. Course & feel overhaul:
+  - A par-36, 9-hole course in the classic Wii Sports / NES Open style (CourseData): Beginner,
+    Intermediate and Expert 3-hole courses with tee / green elevations, valleys, a cliff-top tee,
+    banked and island greens, hazards and an out-of-bounds road.
+  - CourseRelief height field shared by physics, bots and TerrainBuilder (WriteVoxels sculptor);
+    slope-aware bounce and roll.
+  - Short LeafyGrass fairways, tall Grass rough (GrassLength), smooth-turf greens; bots putt from
+    the fringe.
+  - Accuracy needle swings back and forth; 5-second timeout fires with a random hook / slice.
+  - Aerial / behind-the-player view toggle (V), terrain-aware aerial height, minimap target.
+  - Smaller ball, bigger white-rimmed cup, holed balls drop into the cup.
+  - Daily wheel: wedges drawn correctly, cumulative-weight odds (fractions), 2D and 3D wheels
+    animated from one shared server-clocked function, modern wheel screen.
+  - Glassy HUD panels with glow strokes, redesigned shot meter, podium lighting fix.
 
 ## Offline checks (no Studio needed)
 

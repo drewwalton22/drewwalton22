@@ -438,7 +438,7 @@ local function buildHud(s: Session, onLeave: () -> ())
 		aimLabel.Text = `AIM {if s.AimDeg > 0.05 then "+" else ""}{string.format("%.1f", s.AimDeg)}°`
 		local r = s.Aerial.reticle()
 		if r and s.Stage == "Aim" then
-			aimHint.Text = `TARGET {math.floor(r.DistanceYds + 0.5)} YDS  ·  POWER {math.floor((targetPower(s) or 1) * 100 + 0.5)}%  ·  SPACE TO SWING`
+			aimHint.Text = `TARGET {math.floor(r.DistanceYds + 0.5)} YDS  ·  POWER {math.floor((targetPower(s) or 1) * 100 + 0.5)}%  ·  V VIEW  ·  SPACE TO SWING`
 		end
 	end
 	Kit.button("◀", "ghost", function()

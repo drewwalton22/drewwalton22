@@ -202,16 +202,19 @@ Config.Physics = {
 	SpinReferenceRpm = 8000,
 	MinTangentRetain = -0.3,
 	SpinImpactLoss = 0.6, -- spin multiplier after each bounce
-	CupRadius = 0.054, -- metres (4.25 in hole) - the visual cup
-	-- Forgiving hole: a ball whose centre passes within CupCaptureRadius of the cup
-	-- centre (a little more than cup + ball radius) drops if it is slower than
-	-- CupCaptureSpeed; faster than that it lips over.
-	CupCaptureRadius = 0.11,
+	CupRadius = 0.054, -- metres (4.25 in hole) - a real cup (reference only)
+	-- Forgiving, arcade-size hole: a ball whose centre passes within
+	-- CupCaptureRadius of the cup centre drops if it is slower than
+	-- CupCaptureSpeed; faster than that it lips over. Sized with the VISUAL cup
+	-- (CourseLayout.CUP_DIAMETER, 2.2 studs = 0.31 m radius) so a captured ball
+	-- always visibly overlaps the black hole, and a ball that misses rolls past
+	-- its edge.
+	CupCaptureRadius = 0.16,
 	CupCaptureSpeed = 2.0,
 	-- Ball magnet: a slow ball within MagnetRadius of the cup is pulled toward it,
 	-- MagnetAccel (m/s^2) at the centre fading to 0 at the radius. Pull-in from rest
 	-- happens only very close to the cup (where it beats green friction ~0.55 m/s^2).
-	MagnetRadius = 0.35,
+	MagnetRadius = 0.42,
 	MagnetAccel = 1.6,
 	MagnetMaxSpeed = 2.4, -- m/s: faster balls ignore the magnet
 	YardsToMeters = 0.9144,

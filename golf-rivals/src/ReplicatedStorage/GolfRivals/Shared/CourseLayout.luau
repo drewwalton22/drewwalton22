@@ -52,6 +52,12 @@ local CourseLayout = {}
 CourseLayout.STUDS_PER_METER = 3.5
 CourseLayout.MAX_PART_SIZE = 2000
 CourseLayout.PIN_HEIGHT = 9 -- studs
+-- Visual sizes (studs). The ball is drawn a little bigger than a real one so it
+-- reads on screen; the cup is drawn big (arcade style) and the physics capture
+-- radius (Config.Physics.CupCaptureRadius) is sized so a ball that drops always
+-- visibly overlaps the black hole.
+CourseLayout.BALL_DIAMETER = 1.25
+CourseLayout.CUP_DIAMETER = 2.2
 
 local SPM = CourseLayout.STUDS_PER_METER
 
@@ -140,7 +146,7 @@ function CourseLayout.build(hole: CourseDatabase.HoleDef): Layout
 	-- Pin: cup, pole, flag.
 	local pinX, pinZ = hole.Pin.X * SPM, hole.Pin.Z * SPM
 	local H = CourseLayout.PIN_HEIGHT
-	table.insert(parts, disc("Cup", pinX, pinZ, 0.054 * SPM * 1.8, TOP.Green + 0.02, 0.2, { 20, 20, 20 }, "SmoothPlastic"))
+	table.insert(parts, disc("Cup", pinX, pinZ, CourseLayout.CUP_DIAMETER / 2, TOP.Green + 0.02, 0.2, { 12, 12, 14 }, "SmoothPlastic"))
 	local pole = block("PinPole", pinX, pinZ, 0.25, 0.25, TOP.Green + H, H, 0, { 240, 240, 240 }, "SmoothPlastic")
 	pole.CanCollide = false
 	table.insert(parts, pole)

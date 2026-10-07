@@ -494,8 +494,8 @@ do
 	expect("Slow putt through the cup is holed (ball snaps to the cup)", drop.Outcome == "Holed" and math.abs(drop.FinalX - cup.X) < 1e-9)
 	local fast = putt(100, 0, nil, cup)
 	expect("Same line at 100% power rolls past the cup (lip-out)", fast.Outcome == "Rest" and fast.FinalX > cup.X + 5)
-	local offLine = putt(20, 1, nil, cup)
-	expect("Badly missing the line (very late click) doesn't hole it", offLine.Outcome == "Rest")
+	local offLine = putt(20, 0, nil, { X = cup.X, Z = 0.6 })
+	expect("A putt passing 60 cm wide of the cup doesn't hole it", offLine.Outcome == "Rest")
 
 	-- Determinism.
 	local a = shot("DR", baseStats, 83, -0.37, "Rough", SwingMath.windToLocal(12, 140, 20)).Result
@@ -3626,10 +3626,11 @@ do
 	expect("A putt passing 9 cm from the centre drops (old 5.4 cm cup would miss it)", putt(0.09).Outcome == "Holed")
 	local savedAccel = P.MagnetAccel
 	P.MagnetAccel = 0
-	local noMagnet = putt(0.12)
+	local nearMiss = P.CupCaptureRadius + 0.01
+	local noMagnet = putt(nearMiss)
 	P.MagnetAccel = savedAccel
-	local withMagnet = putt(0.12)
-	expect("The magnet curls in a 12 cm near-miss that would otherwise lip past", noMagnet.Outcome ~= "Holed" and withMagnet.Outcome == "Holed")
+	local withMagnet = putt(nearMiss)
+	expect("The magnet curls in a near-miss just outside the capture radius that would otherwise roll past", noMagnet.Outcome ~= "Holed" and withMagnet.Outcome == "Holed")
 	expect("A clearly missed putt (40 cm wide) still misses", putt(0.4).Outcome ~= "Holed")
 	local blast = ShotPhysics.simulate({
 		BallSpeed = math.sqrt(2 * mu * P.Gravity * 30), LaunchAngleRad = 0, BackspinRpm = 0, SidespinRpm = 0, AimOffsetRad = 0, IsPutt = true,
@@ -3797,7 +3798,11 @@ do
 	expect("Greens and the tee are smooth turf parts tagged with their lie; the green tilts with the hole's slope",
 		green ~= nil and green.Lie == "Green" and green.SlopeX == hole.GreenSlope.X and green.SlopeZ == hole.GreenSlope.Z and partBy.TeeBox.Lie == "Tee" and partBy.Fringe_1.Lie == nil)
 	local cup = partBy.Cup
-	expect("The visual cup is bigger than the ball (and has a white rim); out-of-bounds stakes are placed", cup ~= nil and cup.SY >= 2.4 and partBy.CupRim.SY > cup.SY and partBy.OBStake_1 ~= nil)
+	expect("The visual cup is much bigger than the (smaller) ball, with a white rim; out-of-bounds stakes are placed",
+		cup ~= nil and CourseLayout.BALL_DIAMETER < 1.7 and cup.SY >= 1.6 * CourseLayout.BALL_DIAMETER and partBy.CupRim.SY > cup.SY and partBy.OBStake_1 ~= nil)
+	local captureStuds = Config.Physics.CupCaptureRadius * SPM
+	expect("A captured ball always overlaps the visual hole (capture radius < cup radius + ball radius)",
+		captureStuds < CourseLayout.CUP_DIAMETER / 2 + CourseLayout.BALL_DIAMETER / 2 - 0.3 and captureStuds > CourseLayout.CUP_DIAMETER / 4)
 	local lo, hi = CourseRelief.range(hole, hole.Bounds.MinX, hole.Bounds.MaxX, hole.Bounds.MinZ, hole.Bounds.MaxZ, 4)
 	expect("The sculpt region covers the bounds plus apron, from below the lowest ground to above the highest",
 		plan.Min.X < hole.Bounds.MinX * SPM and plan.Max.X > hole.Bounds.MaxX * SPM and plan.Min.Y < lo * SPM - 8 and plan.Max.Y > hi * SPM + 8)
@@ -3921,23 +3926,48 @@ do
 	local g2 = WheelRules.grantPurchase(d, "receipt-A")
 	expect("A Robux receipt grants spins exactly once (re-delivery is ignored)", g1 and not g2 and d.Wheel.ExtraSpins == Config.Wheel.RobuxSpinsPerPurchase)
 
-	-- Weighted odds: empirical frequencies follow the weights.
+	-- Weighted odds: a cumulative table whose steps are exactly the weight shares.
+	local weightTotal = 0
+	for _, segment in Config.Wheel.Segments do
+		weightTotal += segment.Weight
+	end
+	local odds = WheelRules.odds()
+	local cumulative = WheelRules.cumulative()
+	local exact, oddsTotal = true, 0
+	for i, segment in Config.Wheel.Segments do
+		oddsTotal += odds[i]
+		if math.abs(odds[i] - segment.Weight / weightTotal) > 1e-12 then
+			exact = false
+		end
+	end
+	expect("Odds are fractions equal to weight / total weight and sum to exactly 1 (no more 3146%)", exact and math.abs(oddsTotal - 1) < 1e-12 and cumulative[#cumulative] == 1)
+	-- Boundaries: a roll lands in the segment whose cumulative interval holds it.
+	local function constantRoll(v: number): () -> number
+		return function(): number
+			return v
+		end
+	end
+	local edgesOk = WheelRules.pick(constantRoll(0)) == 1 and WheelRules.pick(constantRoll(1)) == #Config.Wheel.Segments
+	for i = 1, #cumulative - 1 do
+		if WheelRules.pick(constantRoll(cumulative[i] - 1e-9)) ~= i or WheelRules.pick(constantRoll(cumulative[i])) ~= i + 1 then
+			edgesOk = false
+		end
+	end
+	expect("pick() maps each cumulative interval to its own segment (edges included)", edgesOk)
 	local counts: { number } = {}
 	local prng = Prng.new(4242)
-	local n = 40000
+	local n = 100000
 	for _ = 1, n do
 		local i = WheelRules.pick(prng.next)
 		counts[i] = (counts[i] or 0) + 1
 	end
-	local odds = WheelRules.odds()
-	local close, total = true, 0
-	for i, pct in odds do
-		total += pct
-		if math.abs((counts[i] or 0) / n * 100 - pct) > 1.0 then
+	local close = true
+	for i, p in odds do
+		if math.abs((counts[i] or 0) / n - p) > 0.006 then
 			close = false
 		end
 	end
-	expect("Rolls follow the configured weights (40k samples within 1 point); odds sum to 100%", close and math.abs(total - 100) < 1e-9)
+	expect("100k rolls match the intended drop rates (each within 0.6 points)", close)
 	expect("The jackpot is the rarest segment", odds[#odds] == math.min(table.unpack(odds)))
 	local stops = true
 	for index = 1, #Config.Wheel.Segments do
@@ -3948,6 +3978,11 @@ do
 		end
 	end
 	expect("The spin animation always stops on the segment the server rolled", stops)
+	local to = WheelRules.restingAngle(3, 6, 0.4)
+	local mid = WheelRules.spinAngle(10, to, 100, 5, 102.5)
+	expect("spinAngle eases from the start angle to exactly the resting angle (shared by the 2D and 3D wheels)",
+		WheelRules.spinAngle(10, to, 100, 5, 100) == 10 and WheelRules.spinAngle(10, to, 100, 5, 105) == to and WheelRules.spinAngle(10, to, 100, 5, 999) == to
+			and mid > 10 + (to - 10) * 0.9 and mid < to and WheelRules.segmentAt(WheelRules.spinAngle(10, to, 100, 5, 105)) == 3)
 
 	local c = ProfileTemplate.new(0)
 	local cosmeticIndex = 0

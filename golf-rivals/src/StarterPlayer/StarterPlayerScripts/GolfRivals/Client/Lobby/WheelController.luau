@@ -11,6 +11,10 @@
 	    from those (smooth, no network jitter) with the same ease-out as the screen,
 	    so the whole lobby watches the wheel spin and land on the server's result.
 
+	SYNC: the angle at any moment is WheelRules.spinAngle(attributes, server time) -
+	the same function and clock the WheelScreen uses, so the 3D wheel and the 2D
+	wheel show the same slice at the same time and stop on the rewarded one.
+
 	Angles are clockwise degrees as seen from the front (WheelRules convention).
 	The art is on the cylinder's +X face, so a clockwise turn of `a` degrees is a
 	rotation of -a about the part's local X axis.
@@ -18,18 +22,16 @@
 
 local Players = game:GetService("Players")
 local ProximityPromptService = game:GetService("ProximityPromptService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+
+local WheelRules = require(ReplicatedStorage.GolfRivals.Shared.WheelRules)
 
 local Bus = require(script.Parent.Parent.Bus)
 
 local WheelController = {}
 
-local function easeOutQuint(t: number): number
-	local u = 1 - math.clamp(t, 0, 1)
-	return 1 - u * u * u * u * u
-end
-
-local function wheelPart(): BasePart?
+function WheelController.wheelPart(): BasePart?
 	local lobby = workspace:FindFirstChild("Lobby")
 	local part = if lobby then lobby:FindFirstChild("DailyWheel") else nil
 	return if part and part:IsA("BasePart") then part else nil
@@ -47,7 +49,7 @@ function WheelController.angleAt(part: BasePart, serverNow: number): number
 	if type(from) ~= "number" or type(start) ~= "number" or type(duration) ~= "number" or duration <= 0 then
 		return to
 	end
-	return from + (to - from) * easeOutQuint((serverNow - start) / duration)
+	return WheelRules.spinAngle(from, to, start, duration, serverNow)
 end
 
 function WheelController.start()
@@ -59,7 +61,7 @@ function WheelController.start()
 
 	local lastAngle: number? = nil
 	RunService.RenderStepped:Connect(function()
-		local part = wheelPart()
+		local part = WheelController.wheelPart()
 		if part == nil then
 			return
 		end

@@ -75,7 +75,7 @@ TerrainPlan.HEADROOM = 16 -- studs of air cleared above the highest surface
 TerrainPlan.GREEN_PART_THICKNESS = 1.4 -- the turf part sinks into the terrain
 TerrainPlan.GREEN_LIFT = 0.12 -- studs the turf's top sits above the green plane
 TerrainPlan.FRINGE = 1.2 -- metres of fringe ring around the green
-TerrainPlan.CUP_DIAMETER = 2.6 -- studs: the VISUAL cup (ball is 1.3 studs)
+TerrainPlan.CUP_DIAMETER = CourseLayout.CUP_DIAMETER -- studs: the VISUAL cup
 TerrainPlan.STAKE_SPACING = 48 -- studs between out-of-bounds stakes
 TerrainPlan.TEE_RADIUS = CourseRelief.TEE_RADIUS -- metres
 
