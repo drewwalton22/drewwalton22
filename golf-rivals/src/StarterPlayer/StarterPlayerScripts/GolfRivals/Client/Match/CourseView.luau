@@ -93,7 +93,7 @@ function CourseView.build(snapshot: any): View
 
 	if mode == "Parts" then
 		local built = CourseBuilder.build(hole, origin)
-		local terrain = CourseTerrain.forHole(hole)
+		local terrain = CourseTerrain.forHole(hole, true) -- flat parts: ignore elevation
 		return {
 			Mode = mode,
 			Hole = hole,

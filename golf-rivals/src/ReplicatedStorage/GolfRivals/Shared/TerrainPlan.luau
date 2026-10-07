@@ -2,44 +2,42 @@
 --[[
 	TerrainPlan.luau  (ReplicatedStorage.GolfRivals.Shared)
 
-	Turns a hole (pure 2D shapes, CourseDatabase) into a SMOOTH TERRAIN build plan:
-	an ordered list of terrain fills plus the few real parts a course needs. The
-	server's TerrainCourse executes it with Terrain:FillBlock / FillCylinder; this
-	module only decides WHAT goes WHERE, so it is pure and tested offline.
+	Turns a hole into a SMOOTH TERRAIN SCULPTING PLAN. The server's TerrainBuilder
+	executes it with Terrain:WriteVoxels; this module only decides WHAT goes WHERE,
+	so it is pure and tested offline.
 
-	ORDER (later fills overwrite earlier ones)
-	  1. apron      Ground, a margin around the playable area (out of bounds)
-	  2. rough      LeafyGrass over the hole's Bounds          (top at y = 0)
-	  3. fairways   Grass capsules (box + two round caps)       (top at y = 0)
-	  4. bunkers    carved Air, then Sand sunk BunkerDepth below the surface
-	  5. greens     carved Air + Grass base, TILTED by the hole's GreenSlope so the
-	                real terrain carries the break; a thin green Part (GolfLie =
-	                "Green") lies flush on top - raycasts read the green from it
-	  6. water      carved Air, then Water WaterDepth below the surface
+	  column(hole, x, z)   for one vertical column of terrain (studs, relative to the
+	                       course origin): the ground top (CourseRelief's height
+	                       field), its material, and the water surface above it
+	                       (ponds) - TerrainBuilder fills each 4-stud voxel from that
+	  build(hole)          the region to sculpt / clear, plus the PARTS a course
+	                       needs: smooth-turf green (tilted to the green's slope) on
+	                       a fringe ring, the tee box, the cup (black, with a white
+	                       rim), pin and flag, and white OUT-OF-BOUNDS stakes along
+	                       the bounds and around OB zones
 
-	PARTS: the tee box (GolfLie = "Tee"), the green surface, and the pin/flag/cup
-	(non-collidable, CanQuery false so raycasts ignore them).
+	MATERIALS (SurfaceMaterials.BuildMaterials)
+	  fairway / tee / under the green  LeafyGrass   short turf, no grass blades
+	  rough + beyond the bounds        Grass        tall animated blades
+	  bunkers                          Sand
+	  ponds                            Mud bed under Water voxels
+	  OB zones inside the bounds       Ground       (a dirt road)
 
-	UNITS: studs, relative to the course origin (hole frame metres x STUDS_PER_METER),
-	same frame as CourseLayout, so a ball at hole (x, z) sits over world
-	origin + (x, ?, z) * STUDS_PER_METER.
+	UNITS: studs relative to the origin (hole metres x STUDS_PER_METER), the same
+	frame as CourseLayout / CourseView.
 ]]
 
 local CourseDatabase = require(script.Parent.CourseDatabase)
 local CourseLayout = require(script.Parent.CourseLayout)
+local CourseRelief = require(script.Parent.CourseRelief)
+local CourseTerrain = require(script.Parent.CourseTerrain)
 local SurfaceMaterials = require(script.Parent.SurfaceMaterials)
 local Types = require(script.Parent.Types)
 
-export type Fill = {
-	Name: string,
-	Shape: "Block" | "Cylinder",
-	Material: string, -- Enum.Material name ("Air" carves)
-	X: number, Y: number, Z: number, -- centre
-	SX: number, SY: number, SZ: number, -- Block size (Cylinder: SX = SZ = diameter, SY = height)
-	YawDeg: number,
-	-- Tilt: the fill's up vector is (-SlopeX, 1, -SlopeZ) normalised (greens).
-	SlopeX: number,
-	SlopeZ: number,
+export type Column = {
+	Top: number, -- studs: ground surface
+	Material: string, -- Enum.Material name of the ground
+	WaterTop: number?, -- studs: water surface (nil = dry)
 }
 
 export type SurfacePart = {
@@ -58,9 +56,8 @@ export type SurfacePart = {
 }
 
 export type Plan = {
-	Fills: { Fill },
 	Parts: { SurfacePart },
-	-- Region to clear when the hole is torn down (studs, relative to origin).
+	-- Region to sculpt / clear (studs, relative to origin).
 	Min: { X: number, Y: number, Z: number },
 	Max: { X: number, Y: number, Z: number },
 	Tee: { X: number, Y: number, Z: number },
@@ -72,31 +69,15 @@ local TerrainPlan = {}
 local SPM = CourseLayout.STUDS_PER_METER
 local M = SurfaceMaterials.BuildMaterials
 
-TerrainPlan.GROUND_THICKNESS = 12 -- studs of soil under the surface
-TerrainPlan.APRON = 160 -- studs of out-of-bounds ground around the bounds
-TerrainPlan.BUNKER_DEPTH = 1.6 -- studs the sand sits below the surrounding grass
-TerrainPlan.WATER_DEPTH = 1.2
-TerrainPlan.CARVE_HEIGHT = 8 -- studs of air carved above sunken features
-TerrainPlan.GREEN_PART_THICKNESS = 0.4
-TerrainPlan.TEE_RADIUS = 3.6 -- metres
-
-local function fill(name: string, shape: "Block" | "Cylinder", material: string, x: number, y: number, z: number, sx: number, sy: number, sz: number, yaw: number?, slopeX: number?, slopeZ: number?): Fill
-	return {
-		Name = name, Shape = shape, Material = material, X = x, Y = y, Z = z, SX = sx, SY = sy, SZ = sz,
-		YawDeg = yaw or 0, SlopeX = slopeX or 0, SlopeZ = slopeZ or 0,
-	}
-end
-
--- Ground layer whose TOP is at `top`.
-local function slab(name: string, material: string, minX: number, maxX: number, minZ: number, maxZ: number, top: number): Fill
-	local t = TerrainPlan.GROUND_THICKNESS
-	return fill(name, "Block", material, (minX + maxX) / 2, top - t / 2, (minZ + maxZ) / 2, maxX - minX, t, maxZ - minZ)
-end
-
--- Cylinder (vertical axis) whose top is at `top`.
-local function disc(name: string, material: string, x: number, z: number, radius: number, top: number, height: number, slopeX: number?, slopeZ: number?): Fill
-	return fill(name, "Cylinder", material, x, top - height / 2, z, radius * 2, height, radius * 2, 0, slopeX, slopeZ)
-end
+TerrainPlan.GROUND_THICKNESS = 12 -- studs of soil under the lowest surface
+TerrainPlan.APRON = 140 -- studs sculpted beyond the bounds
+TerrainPlan.HEADROOM = 16 -- studs of air cleared above the highest surface
+TerrainPlan.GREEN_PART_THICKNESS = 1.4 -- the turf part sinks into the terrain
+TerrainPlan.GREEN_LIFT = 0.12 -- studs the turf's top sits above the green plane
+TerrainPlan.FRINGE = 1.2 -- metres of fringe ring around the green
+TerrainPlan.CUP_DIAMETER = 2.6 -- studs: the VISUAL cup (ball is 1.3 studs)
+TerrainPlan.STAKE_SPACING = 48 -- studs between out-of-bounds stakes
+TerrainPlan.TEE_RADIUS = CourseRelief.TEE_RADIUS -- metres
 
 local function surfacePart(name: string, shape: "Disc" | "Block", lie: Types.LieId?, x: number, y: number, z: number, sx: number, sy: number, sz: number, slopeX: number, slopeZ: number, color: Types.RGB, material: string, solid: boolean): SurfacePart
 	return {
@@ -105,85 +86,131 @@ local function surfacePart(name: string, shape: "Disc" | "Block", lie: Types.Lie
 	}
 end
 
+local function inZone(zone: CourseDatabase.Bounds, x: number, z: number): boolean
+	return x >= zone.MinX and x <= zone.MaxX and z >= zone.MinZ and z <= zone.MaxZ
+end
+
+-- One column at (x, z) studs.
+function TerrainPlan.column(hole: CourseDatabase.HoleDef, x: number, z: number): Column
+	local xm, zm = x / SPM, z / SPM
+	local ground = CourseRelief.ground(hole, xm, zm)
+	local water = CourseRelief.waterAt(hole, xm, zm)
+	local material: string
+	local b = hole.Bounds
+	local outside = xm < b.MinX or xm > b.MaxX or zm < b.MinZ or zm > b.MaxZ
+	local zones: { CourseDatabase.Bounds } = hole.OutOfBounds or {}
+	local road = false
+	for _, zone in zones do
+		if inZone(zone, xm, zm) then
+			road = true
+		end
+	end
+	if water and water > ground then
+		material = M.WaterBed
+	elseif outside then
+		material = M.Apron
+	elseif road then
+		material = M.OutOfBounds
+	else
+		local lie = CourseTerrain.lieAt(hole, xm, zm)
+		material = if lie == "Fairway" then M.Fairway
+			elseif lie == "Green" then M.GreenBase
+			elseif lie == "Tee" then M.TeeBase
+			elseif lie == "Sand" then M.Sand
+			elseif lie == "Water" then M.WaterBed
+			else M.Rough
+		-- A short-turf collar just outside the green (the fringe) so the bank
+		-- around it isn't tall grass right at the putting surface.
+		if lie == "Rough" then
+			for _, green in hole.Greens do
+				if (xm - green.X) ^ 2 + (zm - green.Z) ^ 2 <= (green.R + TerrainPlan.FRINGE + 1) ^ 2 then
+					material = M.Fairway
+				end
+			end
+		end
+	end
+	return {
+		Top = ground * SPM,
+		Material = material,
+		WaterTop = if water and water > ground then water * SPM else nil,
+	}
+end
+
 function TerrainPlan.build(hole: CourseDatabase.HoleDef): Plan
-	local fills: { Fill } = {}
 	local parts: { SurfacePart } = {}
 	local b = hole.Bounds
-	local minX, maxX, minZ, maxZ = b.MinX * SPM, b.MaxX * SPM, b.MinZ * SPM, b.MaxZ * SPM
 	local apron = TerrainPlan.APRON
+	local minX, maxX, minZ, maxZ = b.MinX * SPM - apron, b.MaxX * SPM + apron, b.MinZ * SPM - apron, b.MaxZ * SPM + apron
 
-	-- 1-2. Ground: apron, then the playable rough.
-	table.insert(fills, slab("Apron", M.Apron, minX - apron, maxX + apron, minZ - apron, maxZ + apron, 0))
-	table.insert(fills, slab("Rough", M.Rough, minX, maxX, minZ, maxZ, 0))
+	-- Height range of the whole sculpt (coarse scan).
+	local lo, hi = CourseRelief.range(hole, minX / SPM, maxX / SPM, minZ / SPM, maxZ / SPM, 6)
+	lo, hi = lo * SPM, hi * SPM
 
-	-- 3. Fairways: a box along each segment + round caps (a capsule).
-	local t = TerrainPlan.GROUND_THICKNESS
-	for i, fairway in hole.Fairway do
-		local ax, az, bx, bz = fairway.AX * SPM, fairway.AZ * SPM, fairway.BX * SPM, fairway.BZ * SPM
-		local hw = fairway.HalfWidth * SPM
-		local dx, dz = bx - ax, bz - az
-		local length = math.sqrt(dx * dx + dz * dz)
-		if length > 1e-6 then
-			table.insert(fills, fill(`Fairway_{i}`, "Block", M.Fairway, (ax + bx) / 2, -t / 2, (az + bz) / 2, length, t, hw * 2, math.deg(math.atan2(-dz, dx))))
-		end
-		table.insert(fills, disc(`FairwayCapA_{i}`, M.Fairway, ax, az, hw, 0, t))
-		table.insert(fills, disc(`FairwayCapB_{i}`, M.Fairway, bx, bz, hw, 0, t))
-	end
-
-	-- 4. Bunkers: carve, then sand below the surface.
-	local carve = TerrainPlan.CARVE_HEIGHT
-	for i, bunker in hole.Bunkers do
-		local x, z, r = bunker.X * SPM, bunker.Z * SPM, bunker.R * SPM
-		table.insert(fills, disc(`BunkerCarve_{i}`, "Air", x, z, r, carve, carve + TerrainPlan.BUNKER_DEPTH))
-		table.insert(fills, disc(`Bunker_{i}`, M.Sand, x, z, r, -TerrainPlan.BUNKER_DEPTH, t))
-	end
-
-	-- 5. Greens: tilted base + a flush green surface part.
+	-- Greens: a tilted smooth-turf disc on a slightly larger fringe ring.
 	local gx, gz = hole.GreenSlope.X, hole.GreenSlope.Z
+	local thickness = TerrainPlan.GREEN_PART_THICKNESS
 	for i, green in hole.Greens do
 		local x, z, r = green.X * SPM, green.Z * SPM, green.R * SPM
-		-- Carve generously above (the high side of the tilt rises r * |slope|).
-		local rise = r * math.sqrt(gx * gx + gz * gz)
-		table.insert(fills, disc(`GreenCarve_{i}`, "Air", x, z, r * 1.05, carve + rise, carve + rise * 2, gx, gz))
-		table.insert(fills, disc(`GreenBase_{i}`, M.GreenBase, x, z, r * 1.05, 0, t, gx, gz))
-		local thickness = TerrainPlan.GREEN_PART_THICKNESS
-		table.insert(parts, surfacePart(`Green_{i}`, "Disc", "Green", x, 0.15 - thickness / 2, z, thickness, r * 2, r * 2, gx, gz, { 112, 196, 92 }, "Grass", true))
+		local plane = CourseRelief.greenPlane(hole, i, green.X, green.Z) * SPM
+		local fringe = r + TerrainPlan.FRINGE * SPM
+		table.insert(parts, surfacePart(`Fringe_{i}`, "Disc", nil, x, plane + TerrainPlan.GREEN_LIFT - 0.05 - thickness / 2, z, thickness, fringe * 2, fringe * 2, gx, gz, SurfaceMaterials.Turf.Fringe.Color, SurfaceMaterials.Turf.Fringe.Material, false))
+		table.insert(parts, surfacePart(`Green_{i}`, "Disc", "Green", x, plane + TerrainPlan.GREEN_LIFT - thickness / 2, z, thickness, r * 2, r * 2, gx, gz, SurfaceMaterials.Turf.Green.Color, SurfaceMaterials.Turf.Green.Material, true))
 	end
 
-	-- 6. Water: carve, then water below the surface.
-	for i, water in hole.Water do
-		local x, z, r = water.X * SPM, water.Z * SPM, water.R * SPM
-		table.insert(fills, disc(`WaterCarve_{i}`, "Air", x, z, r, carve, carve + TerrainPlan.WATER_DEPTH))
-		table.insert(fills, disc(`Water_{i}`, M.Water, x, z, r, -TerrainPlan.WATER_DEPTH, t * 0.5))
-	end
-
-	-- Tee box part.
+	-- Tee box: a flat turf disc on the raised tee plateau.
 	local teeX, teeZ = hole.Tee.X * SPM, hole.Tee.Z * SPM
+	local teeTop = CourseRelief.teeTop(hole) * SPM + 0.2
 	local teeDiameter = TerrainPlan.TEE_RADIUS * SPM * 2
-	table.insert(parts, surfacePart("TeeBox", "Disc", "Tee", teeX, 0, teeZ, 0.4, teeDiameter, teeDiameter, 0, 0, { 120, 184, 92 }, "Grass", true)) -- top at 0.2
+	table.insert(parts, surfacePart("TeeBox", "Disc", "Tee", teeX, teeTop - 0.3, teeZ, 0.6, teeDiameter, teeDiameter, 0, 0, SurfaceMaterials.Turf.Tee.Color, SurfaceMaterials.Turf.Tee.Material, true))
 
-	-- Pin: cup, pole, flag (ignored by raycasts).
+	-- Pin: cup (with a white rim), pole, flag - ignored by raycasts.
 	local pinX, pinZ = hole.Pin.X * SPM, hole.Pin.Z * SPM
-	-- The cup sits on the (tilted) green surface: h = 0.15 + g . (pin - green centre).
-	local pinTop = 0.15
-	local firstGreen = hole.Greens[1]
-	if firstGreen then
-		pinTop += gx * (pinX - firstGreen.X * SPM) + gz * (pinZ - firstGreen.Z * SPM)
+	local pinTop = TerrainPlan.GREEN_LIFT
+	if hole.Greens[1] then
+		pinTop += CourseRelief.greenPlane(hole, 1, hole.Pin.X, hole.Pin.Z) * SPM
+	else
+		pinTop += CourseRelief.ground(hole, hole.Pin.X, hole.Pin.Z) * SPM
 	end
 	local H = CourseLayout.PIN_HEIGHT
-	local function decor(name: string, shape: "Disc" | "Block", x: number, y: number, z: number, sx: number, sy: number, sz: number, color: Types.RGB, material: string)
-		table.insert(parts, surfacePart(name, shape, nil, x, y, z, sx, sy, sz, 0, 0, color, material, false))
+	local function decor(name: string, shape: "Disc" | "Block", x: number, y: number, z: number, sx: number, sy: number, sz: number, slopeX: number, slopeZ: number, color: Types.RGB, material: string)
+		table.insert(parts, surfacePart(name, shape, nil, x, y, z, sx, sy, sz, slopeX, slopeZ, color, material, false))
 	end
-	decor("Cup", "Disc", pinX, pinTop + 0.02, pinZ, 0.06, 0.054 * SPM * 2.2, 0.054 * SPM * 2.2, { 20, 20, 20 }, "SmoothPlastic")
-	decor("PinPole", "Block", pinX, pinTop + H / 2, pinZ, 0.25, H, 0.25, { 240, 240, 240 }, "SmoothPlastic")
-	decor("PinFlag", "Block", pinX + 1.4, pinTop + H - 0.9, pinZ, 2.8, 1.8, 0.1, { 230, 50, 60 }, "Fabric")
+	local cup = TerrainPlan.CUP_DIAMETER
+	decor("CupRim", "Disc", pinX, pinTop + 0.01, pinZ, 0.03, cup + 0.35, cup + 0.35, gx, gz, { 236, 236, 236 }, "SmoothPlastic")
+	decor("Cup", "Disc", pinX, pinTop + 0.03, pinZ, 0.03, cup, cup, gx, gz, { 12, 12, 14 }, "SmoothPlastic")
+	decor("PinPole", "Block", pinX, pinTop + H / 2, pinZ, 0.25, H, 0.25, 0, 0, { 240, 240, 240 }, "SmoothPlastic")
+	decor("PinFlag", "Block", pinX + 1.4, pinTop + H - 0.9, pinZ, 2.8, 1.8, 0.1, 0, 0, { 230, 50, 60 }, "Fabric")
+
+	-- Out-of-bounds stakes: around the bounds and around each OB zone.
+	local stakeCount = 0
+	local function stakesAround(zone: CourseDatabase.Bounds)
+		local x0, x1, z0, z1 = zone.MinX * SPM, zone.MaxX * SPM, zone.MinZ * SPM, zone.MaxZ * SPM
+		local corners = { { x0, z0 }, { x1, z0 }, { x1, z1 }, { x0, z1 } }
+		for c = 1, 4 do
+			local a, e = corners[c], corners[c % 4 + 1]
+			local length = math.sqrt((e[1] - a[1]) ^ 2 + (e[2] - a[2]) ^ 2)
+			local n = math.max(1, math.floor(length / TerrainPlan.STAKE_SPACING))
+			for k = 0, n - 1 do
+				local t = k / n
+				local sx, sz = a[1] + (e[1] - a[1]) * t, a[2] + (e[2] - a[2]) * t
+				local ground = TerrainPlan.column(hole, sx, sz)
+				local top = if ground.WaterTop then ground.WaterTop :: number else ground.Top
+				stakeCount += 1
+				decor(`OBStake_{stakeCount}`, "Block", sx, top + 1.6, sz, 0.45, 3.6, 0.45, 0, 0, { 245, 245, 245 }, "SmoothPlastic")
+			end
+		end
+	end
+	stakesAround(b)
+	local zones: { CourseDatabase.Bounds } = hole.OutOfBounds or {}
+	for _, zone in zones do
+		stakesAround(zone)
+	end
 
 	return {
-		Fills = fills,
 		Parts = parts,
-		Min = { X = minX - apron, Y = -TerrainPlan.GROUND_THICKNESS - 4, Z = minZ - apron },
-		Max = { X = maxX + apron, Y = TerrainPlan.CARVE_HEIGHT + 24, Z = maxZ + apron },
-		Tee = { X = teeX, Y = 0.2, Z = teeZ },
+		Min = { X = minX, Y = lo - TerrainPlan.GROUND_THICKNESS, Z = minZ },
+		Max = { X = maxX, Y = hi + TerrainPlan.HEADROOM, Z = maxZ },
+		Tee = { X = teeX, Y = teeTop, Z = teeZ },
 		Pin = { X = pinX, Y = pinTop, Z = pinZ },
 	}
 end

@@ -6,8 +6,10 @@
 	bridge between a real 3D map (Smooth Terrain, MeshParts) and the golf rules.
 
 	  SMOOTH TERRAIN material      lie        notes
-	    Grass                      Fairway    mown grass
-	    LeafyGrass                 Rough      long / tall grass
+	    LeafyGrass                 Fairway    short, mown turf (no grass blades)
+	    Grass                      Rough      TALL grass: with Terrain.Decoration on,
+	                                          Roblox grows animated blades on Grass
+	                                          only; their height = Terrain.GrassLength
 	    Ground, Mud                Rough      heavier, softer (own physics)
 	    Rock, Slate, Basalt        Rough      hard: high bounce, fast roll
 	    Sand, Sandstone            Sand       bunker
@@ -32,8 +34,8 @@ local Types = require(script.Parent.Types)
 local SurfaceMaterials = {}
 
 SurfaceMaterials.TerrainLies = {
-	Grass = "Fairway",
-	LeafyGrass = "Rough",
+	LeafyGrass = "Fairway",
+	Grass = "Rough",
 	Ground = "Rough",
 	Mud = "Rough",
 	Rock = "Rough",
@@ -57,15 +59,36 @@ SurfaceMaterials.PhysicsOverrides = {
 	Salt = { Restitution = 0.1, TangentRetain = 0.15, RollFriction = 0.9 },
 } :: { [string]: { [string]: number } }
 
--- The terrain materials a generated course is painted with (TerrainCourse).
+-- The terrain materials a generated course is sculpted with (TerrainBuilder).
+-- Greens and tee boxes are smooth turf PARTS (GolfLie attribute) laid on the
+-- terrain, so they are perfectly smooth; the terrain under them is short turf.
 SurfaceMaterials.BuildMaterials = {
-	Fairway = "Grass",
-	Rough = "LeafyGrass",
-	Apron = "Ground", -- out of bounds
+	Fairway = "LeafyGrass", -- short grass
+	Rough = "Grass", -- tall grass (decoration blades)
+	Apron = "Grass", -- beyond the bounds (white stakes mark out of bounds)
+	OutOfBounds = "Ground", -- OB zones inside the bounds (a dirt road)
 	Sand = "Sand",
 	Water = "Water",
-	GreenBase = "Grass", -- under the green surface part
+	WaterBed = "Mud",
+	GreenBase = "LeafyGrass", -- under the green turf part (no blades poke through)
+	TeeBase = "LeafyGrass",
 } :: { [string]: string }
+
+-- Terrain:SetMaterialColor tints (RGB) so fairway, rough and greens read clearly.
+SurfaceMaterials.MaterialColors = {
+	LeafyGrass = { 112, 178, 74 }, -- bright mown fairway
+	Grass = { 64, 122, 50 }, -- darker, longer rough
+	Ground = { 124, 104, 80 },
+	Mud = { 72, 62, 48 },
+	Sand = { 226, 208, 152 },
+} :: { [string]: Types.RGB }
+
+-- Green / tee turf (the PART material and colour).
+SurfaceMaterials.Turf = {
+	Green = { Material = "Grass", Color = { 120, 204, 96 } },
+	Fringe = { Material = "Grass", Color = { 96, 178, 78 } },
+	Tee = { Material = "Grass", Color = { 120, 190, 90 } },
+}
 
 SurfaceMaterials.ATTRIBUTE = "GolfLie"
 

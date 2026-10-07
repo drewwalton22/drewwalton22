@@ -36,6 +36,7 @@ local LobbyBuilder = require(script.Parent:WaitForChild("LobbyBuilder"))
 local ZoneService = require(script.Parent:WaitForChild("ZoneService"))
 local WheelService = require(script.Parent:WaitForChild("WheelService"))
 local ReceiptService = require(script.Parent:WaitForChild("ReceiptService"))
+local TerrainBuilder = require(script.Parent:WaitForChild("TerrainBuilder"))
 
 Logger.info("Server", "Booting Golf Rivals server...")
 Logger.info("Server", "Step 1: validating item / club / case databases (economy exploit checks included)")
@@ -61,6 +62,7 @@ Logger.info("Server", "Step 4: starting economy service (client requests are val
 EconomyService.start()
 
 Logger.info("Server", "Step 5: starting match service (ranked queues, bot practice, turn loop)")
+TerrainBuilder.applyLook() -- tall rough (Terrain.GrassLength) + fairway / rough colours, for every course
 CourseRegistry.load() -- hand-built holes in Workspace.GolfCourses (optional)
 MatchService.start()
 

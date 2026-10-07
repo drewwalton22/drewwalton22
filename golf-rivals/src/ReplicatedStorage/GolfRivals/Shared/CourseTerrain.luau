@@ -17,14 +17,21 @@
 	  Slopes transform by projection: (gx, gz)_shot = ((g . d), (g . r)).
 	  Heading 0 gives d = (1,0), r = (0,1), matching "+Z is right when facing +X".
 
-	LIE PRIORITY (first match wins): Water > Green > Sand > Tee > Fairway > Rough.
-	Height is flat everywhere; only greens have a slope (used for the ball's roll
-	and the landing normal).
+	LIE PRIORITY (first match wins): Green > Water > Sand > Tee > Fairway > Rough.
+	(Green first so an island green inside a lake plays as green; on holes with
+	elevation, "water" means OPEN water - an island's dry bank is rough.)
+
+	HEIGHT: holes with a Relief (CourseData) use CourseRelief's height field -
+	elevated tees, rolling fairways, banked greens, sunken bunkers and ponds - and
+	its true gradient, so the physics rolls the ball downhill, slows it uphill and
+	breaks putts. Holes without one (tests) are flat with only the green tilted.
+	`flat = true` ignores the relief (the classic flat-part "Parts" course mode).
 ]]
 
 local Types = require(script.Parent.Types)
 local CourseDatabase = require(script.Parent.CourseDatabase)
 local ShotPhysics = require(script.Parent.ShotPhysics)
+local CourseRelief = require(script.Parent.CourseRelief)
 
 local CourseTerrain = {}
 
@@ -50,14 +57,20 @@ local function inCapsule(c: CourseDatabase.Capsule, x: number, z: number): boole
 end
 
 function CourseTerrain.lieAt(hole: CourseDatabase.HoleDef, x: number, z: number): Types.LieId
-	for _, water in hole.Water do
-		if inCircle(water, x, z) then
-			return "Water"
-		end
-	end
 	for _, green in hole.Greens do
 		if inCircle(green, x, z) then
 			return "Green"
+		end
+	end
+	if hole.Relief then
+		if CourseRelief.waterAt(hole, x, z) ~= nil then
+			return "Water"
+		end
+	else
+		for _, water in hole.Water do
+			if inCircle(water, x, z) then
+				return "Water"
+			end
 		end
 	end
 	for _, bunker in hole.Bunkers do
@@ -80,11 +93,35 @@ end
 
 function CourseTerrain.inBounds(hole: CourseDatabase.HoleDef, x: number, z: number): boolean
 	local b = hole.Bounds
-	return x >= b.MinX and x <= b.MaxX and z >= b.MinZ and z <= b.MaxZ
+	if not (x >= b.MinX and x <= b.MaxX and z >= b.MinZ and z <= b.MaxZ) then
+		return false
+	end
+	local zones: { CourseDatabase.Bounds } = hole.OutOfBounds or {}
+	for _, zone in zones do
+		if x >= zone.MinX and x <= zone.MaxX and z >= zone.MinZ and z <= zone.MaxZ then
+			return false -- inside an extra OB zone (e.g. a road)
+		end
+	end
+	return true
 end
 
--- Terrain in the hole frame.
-function CourseTerrain.forHole(hole: CourseDatabase.HoleDef): ShotPhysics.Terrain
+-- Terrain in the hole frame (`flat` ignores the hole's elevation).
+function CourseTerrain.forHole(hole: CourseDatabase.HoleDef, flat: boolean?): ShotPhysics.Terrain
+	if hole.Relief and not flat then
+		return {
+			heightAt = function(x: number, z: number): number
+				local h = CourseRelief.surface(hole, x, z)
+				return h
+			end,
+			lieAt = function(x: number, z: number): Types.LieId
+				return CourseTerrain.lieAt(hole, x, z)
+			end,
+			slopeAt = function(x: number, z: number): (number, number)
+				local _, gx, gz = CourseRelief.surface(hole, x, z)
+				return gx, gz
+			end,
+		}
+	end
 	return {
 		heightAt = function(_x: number, _z: number): number
 			return 0
@@ -111,9 +148,9 @@ export type CourseSurface = {
 	inBounds: (x: number, z: number) -> boolean,
 }
 
-function CourseTerrain.analytic(hole: CourseDatabase.HoleDef): CourseSurface
+function CourseTerrain.analytic(hole: CourseDatabase.HoleDef, flat: boolean?): CourseSurface
 	return {
-		Terrain = CourseTerrain.forHole(hole),
+		Terrain = CourseTerrain.forHole(hole, flat),
 		lieAt = function(x: number, z: number): Types.LieId
 			return CourseTerrain.lieAt(hole, x, z)
 		end,

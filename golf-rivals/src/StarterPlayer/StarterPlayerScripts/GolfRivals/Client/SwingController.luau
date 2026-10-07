@@ -12,6 +12,10 @@
 	Clicks: left mouse, touch tap, or Space (all count as "a click"). Clicks that
 	land on a GUI button are ignored, so pressing a club chip never swings.
 
+	Stage 2's needle swings back and forth; after 5 s without click 2 the swing
+	fires by itself with a random accuracy penalty (SwingStateMachine), using a
+	real Random here.
+
 	The controller only reports intent - the server recomputes the shot with
 	SwingMath/ShotPhysics and rejects submissions faster than the timing bar allows
 	(SwingMath.validateSubmission), so a hacked client gains nothing.
@@ -46,8 +50,11 @@ local function isClick(input: InputObject): boolean
 		or input.KeyCode == Enum.KeyCode.Space
 end
 
-function SwingController.new(onGauge: ((SwingStateMachine.Gauge) -> ())?, onSubmit: ((power: number, offset: number) -> ())?): Controller
-	local machine = SwingStateMachine.new()
+function SwingController.new(onGauge: ((SwingStateMachine.Gauge) -> ())?, onSubmit: ((power: number, offset: number, timedOut: boolean) -> ())?): Controller
+	local random = Random.new()
+	local machine = SwingStateMachine.new(function(): number
+		return random:NextNumber()
+	end)
 	local enabled = false
 
 	-- If the machine finished (2nd click, or the accuracy deadline), send it once.
@@ -56,7 +63,7 @@ function SwingController.new(onGauge: ((SwingStateMachine.Gauge) -> ())?, onSubm
 		if result then
 			enabled = false -- one shot per arm; the caller re-arms next turn
 			if onSubmit then
-				onSubmit(result.Power, result.AccuracyOffset)
+				onSubmit(result.Power, result.AccuracyOffset, result.TimedOut)
 			else
 				Remotes.fire("SubmitSwing", result.Power, result.AccuracyOffset)
 			end

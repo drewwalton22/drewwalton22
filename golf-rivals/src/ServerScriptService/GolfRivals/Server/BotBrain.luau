@@ -6,7 +6,11 @@
 
 	  PLAN  (what a good player would try)
 	    1. Club   : recommended club for the distance; if a full-power swing still
-	                falls short, step up to the next longer club.
+	                falls short, step up to the next longer club. On SHORT GRASS
+	                (green, fringe, fairway, tee) within Config.Match.FringePuttYds of
+	                the pin the PUTTER is planned too, and wins unless the chip is
+	                clearly better - so even the Easy bot putts from the fringe
+	                instead of forcing a chip (on the green it always putts).
 	    2. Aim    : for each candidate aim offset (degrees), simulate a perfect
 	                swing that lands near the pin; score = distance from the pin
 	                after the ball stops, +1000 for water/out of bounds, +8 for
@@ -120,6 +124,8 @@ function BotBrain.decide(world: World, difficulty: string, rng: () -> number): D
 
 	-- 1) CLUB ---------------------------------------------------------------
 	local label = MatchEngine.recommendClub(situation.DistanceYds, situation.Lie, world.statsFor)
+	local shortGrass = situation.Lie == "Green" or situation.Lie == "Fairway" or situation.Lie == "Tee"
+	local considerPutt = label ~= "PT" and shortGrass and situation.DistanceYds <= Config.Match.FringePuttYds
 	if label ~= "PT" then
 		-- Step up while a full swing falls clearly short of the pin.
 		local reach = MatchEngine.ClubsByReach
@@ -144,34 +150,45 @@ function BotBrain.decide(world: World, difficulty: string, rng: () -> number): D
 		end
 	end
 
-	-- 2) AIM + 3) POWER -------------------------------------------------------
-	local bestAim, bestPower, bestScore = 0.0, 50.0, math.huge
-	for _, aim in profile.AimCandidates do
-		-- Distance to the pin measured along this aim line.
-		local pinHeading = math.rad(aim)
-		local targetXl = situation.DistanceYds * YD * math.cos(pinHeading)
-		-- Pin position in the shot frame, for scoring the planned landing.
-		local pinXl, pinZl = situation.DistanceYds * YD * math.cos(pinHeading), -situation.DistanceYds * YD * math.sin(pinHeading)
-		local power, planned = solvePower(world, label, aim, targetXl, windScale)
-		if planned then
-			local score = missYards(planned, pinXl, pinZl)
-			local endLie, inBounds = world.landing(aim, planned)
-			if planned.Outcome == "Water" or endLie == "Water" or not inBounds then
-				score += 1000 -- never plan into a hazard if any alternative exists
-			elseif planned.Outcome == "Holed" then
-				score = 0
-			elseif endLie == "Sand" then
-				score += 8 -- a bunker costs about 8 yards of expected result
-			elseif endLie == "Rough" then
-				score += 2
-			end
-			-- Prefer the pin line over fancy angles when it is equally good.
-			score += math.abs(aim) * 0.05
-			if score < bestScore then
-				bestAim, bestPower, bestScore = aim, power, score
+	-- 2) AIM + 3) POWER (for each candidate club) -------------------------------
+	local labels = { label }
+	if considerPutt then
+		table.insert(labels, 1, "PT")
+	end
+	local bestAim, bestPower, bestScore, bestLabel = 0.0, 50.0, math.huge, label
+	for _, candidate in labels do
+		for _, aim in profile.AimCandidates do
+			-- Distance to the pin measured along this aim line.
+			local pinHeading = math.rad(aim)
+			local targetXl = situation.DistanceYds * YD * math.cos(pinHeading)
+			-- Pin position in the shot frame, for scoring the planned landing.
+			local pinXl, pinZl = situation.DistanceYds * YD * math.cos(pinHeading), -situation.DistanceYds * YD * math.sin(pinHeading)
+			local power, planned = solvePower(world, candidate, aim, targetXl, windScale)
+			if planned then
+				local score = missYards(planned, pinXl, pinZl)
+				local endLie, inBounds = world.landing(aim, planned)
+				if planned.Outcome == "Water" or endLie == "Water" or not inBounds then
+					score += 1000 -- never plan into a hazard if any alternative exists
+				elseif planned.Outcome == "Holed" then
+					score = 0
+				elseif endLie == "Sand" then
+					score += 8 -- a bunker costs about 8 yards of expected result
+				elseif endLie == "Rough" then
+					score += 2
+				end
+				-- Prefer the pin line over fancy angles when it is equally good.
+				score += math.abs(aim) * 0.05
+				-- A putt is the safer stroke: it wins unless the chip is clearly better.
+				if candidate == "PT" then
+					score -= 2
+				end
+				if score < bestScore then
+					bestAim, bestPower, bestScore, bestLabel = aim, power, score, candidate
+				end
 			end
 		end
 	end
+	label = bestLabel
 
 	-- 4) EXECUTION ERROR ------------------------------------------------------
 	-- Gauge error scales with how hard the swing is: a soft chip or putt has a

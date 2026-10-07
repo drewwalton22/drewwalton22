@@ -134,6 +134,12 @@ Config.Swing = {
 	AccuracySweepSeconds = 1.6, -- full swings: needle crosses the whole track (sweet spot at half-way)
 	PuttPowerSweepSeconds = 3.2, -- putts: much slower for fine pace control
 	PuttAccuracySweepSeconds = 2.6,
+	-- Stage 2 (accuracy): the needle ping-pongs until click 2; after this many
+	-- seconds the shot fires by itself with a random penalty offset of
+	-- TimeoutPenaltyMin..TimeoutPenaltyMax (randomly a hook or a slice).
+	AccuracyTimeoutSeconds = 5,
+	TimeoutPenaltyMin = 0.55,
+	TimeoutPenaltyMax = 0.95,
 	MinPower = 1, -- percent; below this the swing is a whiff and is rejected
 
 	-- Green zone (zero curve). Half-width in offset units, widened by Accuracy:
@@ -247,7 +253,10 @@ Config.Match = {
 	GimmeMeters = 0.6, -- a ball resting this close on the green is holed (costs 1 stroke)
 	PenaltyStrokes = 1, -- water / out of bounds: replay from the same spot
 	MaxWindMph = 15,
-	MaxAimDegrees = 30, -- aim adjustment either side of the pin line
+	MaxAimDegrees = 60, -- aim adjustment either side of the pin line (wide for doglegs)
+	-- Bots plan a putt as well as a chip from short grass (fringe / fairway)
+	-- within this distance of the pin, and keep the better one.
+	FringePuttYds = 25,
 	BotThinkSeconds = { Min = 1.5, Max = 3.5 }, -- bots pause like a person would
 	EndScreenSeconds = 6, -- results screen before the match is cleaned up
 }
@@ -313,6 +322,12 @@ Config.Course = {
 	ArenaBase = { X = 30000, Y = 0, Z = 0 }, -- generated arenas start here (studs)
 	ArenaSpacing = 6000, -- studs between concurrent matches' arenas
 	DecorateHoles = true, -- run MapDecorator on generated / mapped holes
+	-- Height of the animated grass blades on Grass terrain (the ROUGH), 0.1 - 1.
+	-- Needs Terrain > Decoration ticked in Studio (scripts can't tick it).
+	GrassLength = 0.7,
+	-- Course played per match: "Beginner" (holes 1-3), "Intermediate" (4-6),
+	-- "Expert" (7-9), or "Random" (one of those three courses at random).
+	MatchCourse = "Random" :: "Beginner" | "Intermediate" | "Expert" | "Random",
 }
 
 -- MAP DECORATION (MapDecorator) -----------------------------------------

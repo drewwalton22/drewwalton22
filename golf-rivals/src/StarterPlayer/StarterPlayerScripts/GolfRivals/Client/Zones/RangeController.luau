@@ -570,7 +570,10 @@ local function enter(bay: RangeRules.Bay, earned: number, cap: number)
 				s.Meter.set(GaugeView.layout(g, greenFor(s), targetPower(s)), nil)
 				refreshAim(s)
 			end
-		end, function(power: number, offset: number)
+		end, function(power: number, offset: number, timedOut: boolean)
+			if timedOut then
+				s.setResult("TOO SLOW! (5 s timeout - random hook/slice)", C.Poor)
+			end
 			strike(s, power, offset)
 		end),
 		ClubLabel = ClubStats.DRIVER,

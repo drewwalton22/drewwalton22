@@ -101,7 +101,27 @@ function Kit.gradient(top: Color3, bottom: Color3): Instance
 	return Kit.new("UIGradient", { Color = ColorSequence.new(top, bottom), Rotation = 90 })
 end
 
--- A rounded glass panel with the standard border.
+-- A soft outer glow: a semi-transparent stroke around the object's border.
+function Kit.glow(color: Color3?, thickness: number?, transparency: number?): Instance
+	return Kit.new("UIStroke", {
+		Color = color or Theme.Colors.Glow,
+		Thickness = thickness or 2,
+		Transparency = transparency or Theme.GlowTransparency,
+		ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+	})
+end
+
+-- A subtle top-lit sheen (multiplies the background: white at the top, a little
+-- darker at the bottom).
+function Kit.sheen(shade: number?): Instance
+	local bottom = shade or 0.78
+	return Kit.new("UIGradient", {
+		Color = ColorSequence.new(Color3.new(1, 1, 1), Color3.new(bottom, bottom, bottom + 0.04)),
+		Rotation = 90,
+	})
+end
+
+-- A rounded, semi-translucent dark glass panel: sheen gradient + soft glow border.
 function Kit.panel(props: Props?, children: { any }?): Frame
 	local merged: Props = { BackgroundColor3 = Theme.Colors.Panel, BackgroundTransparency = Theme.PanelTransparency, BorderSizePixel = 0 }
 	if props then
@@ -111,7 +131,8 @@ function Kit.panel(props: Props?, children: { any }?): Frame
 	end
 	local frame = Kit.new("Frame", merged, children) :: Frame
 	Kit.corner().Parent = frame
-	Kit.stroke().Parent = frame
+	Kit.glow().Parent = frame
+	Kit.sheen().Parent = frame
 	return frame
 end
 

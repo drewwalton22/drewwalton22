@@ -60,6 +60,8 @@ local DecorPlanner = require("./DecorPlanner")
 local AimMath = require("./AimMath")
 local WheelRules = require("./WheelRules")
 local CosmeticsData = require("./CosmeticsData")
+local CourseData = require("./CourseData")
+local CourseRelief = require("./CourseRelief")
 
 local Types = require("./Types")
 local P_YD = Config.Physics.YardsToMeters -- metres per yard
@@ -214,20 +216,52 @@ do
 	sm.reset()
 	expect("reset() returns to Idle", sm.phase() == "Idle")
 
-	local stall = SwingStateMachine.new()
+	-- Stage 2 swings back and forth (ping-pong) until click 2.
+	local pong = SwingStateMachine.new()
+	pong.start(0)
+	pong.click(PS)
+	expect("The accuracy needle ping-pongs: right edge after one sweep, back through the sweet spot after 1.5",
+		math.abs(pong.gauge(PS + AS).Needle - 1) < 1e-9 and math.abs(pong.gauge(PS + AS * 1.25).Needle - 0.5) < 1e-9
+			and math.abs(pong.gauge(PS + AS * 1.5).Needle) < 1e-9 and math.abs(pong.gauge(PS + AS * 2).Needle + 1) < 1e-9)
+	pong.click(PS + AS * 1.5)
+	local pongResult = pong.result()
+	expect("Clicking the sweet spot on the way back is a perfect strike", pongResult ~= nil and math.abs(pongResult.AccuracyOffset) < 1e-9 and not pongResult.TimedOut)
+
+	-- 5-second timeout with a random penalty.
+	local TO = Config.Swing.AccuracyTimeoutSeconds
+	expect("Stage 2 times out after 5 seconds", TO == 5)
+	local stall = SwingStateMachine.new(Prng.new(3).next)
 	stall.start(0)
 	stall.click(PS)
-	stall.update(PS + AS * 3)
+	stall.update(PS + TO - 0.01)
+	local countdown = stall.gauge(PS + 1).TimeLeft
+	expect("No timeout before 5 s; the gauge counts down the time left", stall.phase() == "Accuracy" and countdown ~= nil and math.abs((countdown :: number) - (TO - 1)) < 1e-9)
+	stall.update(PS + TO)
 	local sr = stall.result()
-	expect("No click 2: auto-locks at exactly +1 (hard hook) when the needle runs out", sr ~= nil and sr.AccuracyOffset == 1 and sr.Power == 100)
-	local polled = SwingStateMachine.new()
+	expect("No click 2 within 5 s: the shot fires with a random accuracy penalty",
+		sr ~= nil and sr.TimedOut and sr.Power == 100 and math.abs(sr.AccuracyOffset) >= Config.Swing.TimeoutPenaltyMin - 1e-9 and math.abs(sr.AccuracyOffset) <= Config.Swing.TimeoutPenaltyMax + 1e-9)
+	local polled = SwingStateMachine.new(Prng.new(3).next)
 	polled.start(0)
 	polled.click(PS)
-	for step = 1, 60 do
+	for step = 1, 80 do
 		polled.update(PS + step * 0.1)
 	end
 	local pr = polled.result()
-	expect("Auto-lock is independent of polling frequency", pr ~= nil and sr ~= nil and pr.AccuracyOffset == sr.AccuracyOffset)
+	expect("The timeout is independent of polling frequency", pr ~= nil and sr ~= nil and pr.AccuracyOffset == sr.AccuracyOffset)
+	local hooks, slices = 0, 0
+	local penaltyRng = Prng.new(99).next
+	for _ = 1, 200 do
+		local off = SwingStateMachine.timeoutOffset(penaltyRng)
+		if off > 0 then
+			hooks += 1
+		else
+			slices += 1
+		end
+	end
+	expect("Timeout penalties are randomly hooks or slices", hooks > 60 and slices > 60)
+	local fast = SwingStateMachine.new()
+	fast.start(0, "Full", 2)
+	expect("start() takes a speed scale (2 = twice as fast)", math.abs(fast.gauge(PS * 0.25).Power - 0.5) < 1e-9)
 
 	local putt = SwingStateMachine.new()
 	putt.start(0, "Putt")
@@ -1550,9 +1584,13 @@ do
 			print(`  hole {hole.Id} invalid: yards {yards} par {hole.Par} tee {teeOk} pin {pinOk}`)
 		end
 	end
-	expect("All 6 holes: sensible par for length, tee in bounds, pin on the green", allValid and #CourseDatabase.Holes == 6)
+	expect("All 9 holes: sensible par for length, tee in bounds, pin on the green", allValid and #CourseDatabase.Holes == 9)
 	local h1, h2 = CourseDatabase.hole(1), CourseDatabase.hole(2)
-	expect("Hole lookups wrap around (hole 7 = hole 1)", CourseDatabase.hole(7).Id == 1 and CourseDatabase.hole(0).Id == 6)
+	expect("Hole lookups wrap around (hole 10 = hole 1)", CourseDatabase.hole(10).Id == 1 and CourseDatabase.hole(0).Id == 9)
+	local beginner, expert = CourseDatabase.course("Beginner"), CourseDatabase.course("Expert")
+	expect("Par-36 nine split into three 3-hole courses (Beginner 1-3, Intermediate 4-6, Expert 7-9)",
+		CourseData.totalPar() == 36 and beginner ~= nil and #beginner == 3 and beginner[1].Id == 1 and expert ~= nil and expert[3].Id == 9
+			and CourseDatabase.course("Intermediate") ~= nil and CourseDatabase.course("Nope") == nil)
 	expect("Hole 1: 380 yards, fairway / bunker / rough lies", math.abs(CourseDatabase.yards(h1) - 380) < 0.01 and CourseTerrain.lieAt(h1, 150 * YDS, 0) == "Fairway" and CourseTerrain.lieAt(h1, 255 * YDS, -24 * YDS) == "Sand" and CourseTerrain.lieAt(h1, 150 * YDS, 40 * YDS) == "Rough")
 	expect("Hole 2: the pond is water, beyond it rough, the pin is on the green", CourseTerrain.lieAt(h2, 95 * YDS, 0) == "Water" and CourseTerrain.lieAt(h2, 145 * YDS, 0) == "Rough" and CourseTerrain.lieAt(h2, 165 * YDS, 4 * YDS) == "Green")
 	local dogleg = CourseDatabase.hole(3)
@@ -1563,7 +1601,9 @@ do
 		Greens = { { X = 50, Z = 0, R = 5 } }, Bunkers = { { X = 50, Z = 0, R = 8 } }, Water = { { X = 50, Z = 0, R = 2 } },
 		GreenSlope = { X = 0.1, Z = 0 }, Bounds = { MinX = -10, MaxX = 200, MinZ = -50, MaxZ = 50 },
 	} :: CourseDatabase.HoleDef
-	expect("Lie priority: water > green > sand > fairway", CourseTerrain.lieAt(priority, 50, 0) == "Water" and CourseTerrain.lieAt(priority, 53, 0) == "Green" and CourseTerrain.lieAt(priority, 56, 0) == "Sand" and CourseTerrain.lieAt(priority, 62, 0) == "Fairway")
+	expect("Lie priority: green > water > sand > fairway (an island green plays as green)", CourseTerrain.lieAt(priority, 50, 0) == "Green" and CourseTerrain.lieAt(priority, 53, 0) == "Green" and CourseTerrain.lieAt(priority, 56, 0) == "Sand" and CourseTerrain.lieAt(priority, 62, 0) == "Fairway")
+	local finale = CourseDatabase.hole(9)
+	expect("Out-of-bounds zones inside the bounds (hole 9's road) are out of bounds", not CourseTerrain.inBounds(finale, 150 * YDS, 60 * YDS) and CourseTerrain.inBounds(finale, 150 * YDS, 30 * YDS))
 	expect("Out of bounds is detected", CourseTerrain.inBounds(h1, 100 * YDS, 0) and not CourseTerrain.inBounds(h1, 100 * YDS, 100 * YDS) and not CourseTerrain.inBounds(h1, -100 * YDS, 0))
 
 	local terrain = CourseTerrain.forHole(h1)
@@ -2048,6 +2088,35 @@ do
 	local r2 = playBotMatch(77, "Medium", "Hard", CourseDatabase.sequence(2, 3))
 	expect("A bot match replays identically from the same seeds", r1.Totals.A == r2.Totals.A and r1.Totals.B == r2.Totals.B and r1.WinnerId == r2.WinnerId)
 
+	-- Fringe putting: from short grass just off the green even the Easy bot putts.
+	local fringeM = 18 * Config.Physics.YardsToMeters
+	local fringeHole: CourseDatabase.HoleDef = {
+		Id = 91, Name = "Fringe", Par = 3, Tee = { X = 0, Z = 0 }, Pin = { X = fringeM, Z = 0 },
+		Fairway = { { AX = 0, AZ = 0, BX = fringeM, BZ = 0, HalfWidth = 12 } }, Greens = { { X = fringeM, Z = 0, R = 6 * Config.Physics.YardsToMeters } },
+		Bunkers = {}, Water = {}, GreenSlope = { X = 0, Z = 0 }, Bounds = { MinX = -20, MaxX = 80, MinZ = -40, MaxZ = 40 },
+	}
+	local putts = 0
+	for seed = 1, 10 do
+		local fe = MatchEngine.new({ IntroSeconds = 0, Players = twoBots(), Holes = { fringeHole }, Seed = seed, Now = 0 })
+		local fid = fe.activeId() :: string
+		local decision = BotBrain.decide({
+			situation = function(): MatchEngine.Situation
+				return fe.situation(fid) :: MatchEngine.Situation
+			end,
+			preview = function(label: string, aim: number, power: number, offset: number, windScale: number): SwingMath.ResolvedShot?
+				return fe.preview(fid, label, aim, power, offset, windScale)
+			end,
+			landing = function(aim: number, result: ShotPhysics.ShotResult): (Types.LieId, boolean)
+				return fe.landing(fid, aim, result)
+			end,
+			statsFor = BotBrain.statsFor("Easy"),
+		}, "Easy", Prng.new(seed).next)
+		if decision.ClubLabel == "PT" then
+			putts += 1
+		end
+	end
+	expect("Easy bot putts from short grass 18 yards out instead of forcing a chip", putts == 10)
+
 	-- Bot planning must not change the match.
 	local probe = MatchEngine.new({ IntroSeconds = 0, Players = twoBots(), Holes = CourseDatabase.sequence(1, 3), Seed = 21, Now = 0 })
 	local probeId = probe.activeId() :: string
@@ -2280,7 +2349,7 @@ do
 			if math.abs(pose.Look.X - ball.X) > 1e-9 or math.abs(pose.Look.Z - ball.Z) > 1e-9 then
 				lookOk = false
 			end
-			if pose.Pos.Y < T.GroundY + T.MinGroundClearance - 1e-9 then
+			if pose.Pos.Y < state.Floor + T.MinGroundClearance - 1e-9 or state.Floor > ball.Y + 1e-9 then
 				groundOk = false
 			end
 			if not (dist == dist and step == step and pose.Pos.X == pose.Pos.X) then
@@ -2296,7 +2365,7 @@ do
 	end
 	print(`  camera over {#clientShots} shots: distance {math.floor(minSeen * 10) / 10}-{math.floor(maxSeen * 10) / 10} studs, max {math.floor(maxStepSeen * 100) / 100} studs/frame, final {math.floor(finalMax * 10) / 10}`)
 	expect("Camera always looks directly at the ball (the ball can never leave the frame)", lookOk)
-	expect("Camera never dips below the ground clearance and never produces NaN", groundOk and finiteOk)
+	expect("Camera never dips below the tracked ground level (+ clearance) and never produces NaN", groundOk and finiteOk)
 	expect("Camera stays between 11 and 90 studs from the ball through every shot", minSeen > 11 and maxSeen < 90)
 	expect("Camera motion is smooth (<= 5 studs per frame at 60 fps)", maxStepSeen <= 5)
 	expect("Camera settles into a close-up (<= 14 studs) once the ball is at rest, for every shot", allOk)
@@ -3568,19 +3637,120 @@ do
 	expect("A putt charged straight over the hole at speed lips out", blast.Outcome ~= "Holed")
 end
 
+print("-- course elevation & slope-aware physics")
+do
+	local YDS = Config.Physics.YardsToMeters
+	local function at(hole: CourseDatabase.HoleDef, xYds: number, zYds: number): number
+		return (CourseRelief.ground(hole, xYds * YDS, zYds * YDS))
+	end
+	local everyTee, everyGreen = true, true
+	for _, hole in CourseDatabase.Holes do
+		local relief = hole.Relief :: CourseDatabase.Relief
+		local teeTop = relief.Profile[1] + relief.TeeRaise
+		if math.abs(CourseRelief.ground(hole, hole.Tee.X, hole.Tee.Z) - teeTop) > 0.05 then
+			everyTee = false
+		end
+		local pin = CourseRelief.ground(hole, hole.Pin.X, hole.Pin.Z)
+		if math.abs(pin - CourseRelief.greenPlane(hole, 1, hole.Pin.X, hole.Pin.Z)) > 0.02 then
+			everyGreen = false
+		end
+	end
+	expect("Every tee box sits on its plateau (tee elevation + raise)", everyTee)
+	expect("Every pin sits on its green's tilted plane", everyGreen)
+	local cliff, valley, pitch = CourseDatabase.hole(4), CourseDatabase.hole(7), CourseDatabase.hole(5)
+	expect("Hole 4 plays off a cliff-top tee >= 12 m above the green; hole 5 plays uphill", CourseDatabase.elevationChange(cliff) <= -12 and CourseDatabase.elevationChange(pitch) >= 5)
+	local valleyFloor = at(valley, 200, -8)
+	expect("Hole 7 dips into a valley between its tee and green", valleyFloor < at(valley, 0, 0) - 5 and valleyFloor < at(valley, 405, -20) - 5)
+	local raised = CourseDatabase.hole(5)
+	local greenEdge = at(raised, 140 + 12 + 10, 0) -- 10 yards beyond the back of the green
+	expect("Greens are raised on banks above their surroundings", at(raised, 140, 0) > greenEdge + 0.4)
+	local h1 = CourseDatabase.hole(1)
+	local b = h1.Bunkers[1]
+	expect("Bunkers are sunk below the fairway around them", CourseRelief.ground(h1, b.X, b.Z) < CourseRelief.ground(h1, b.X + b.R + 3, b.Z) - 0.3)
+	local island = CourseDatabase.hole(8)
+	local level = CourseRelief.waterAt(island, island.Pin.X + 20 * YDS, 0)
+	expect("Island green: green on the island, open water around it, the water surface is what a ball meets",
+		CourseTerrain.lieAt(island, island.Pin.X, island.Pin.Z) == "Green" and CourseTerrain.lieAt(island, island.Pin.X + 20 * YDS, 0) == "Water"
+			and level ~= nil and math.abs(CourseTerrain.forHole(island).heightAt(island.Pin.X + 20 * YDS, 0) - (level :: number)) < 1e-9)
+	local overflow = false
+	for _, hole in CourseDatabase.Holes do
+		for i, water in hole.Water do
+			local lvl = CourseRelief.waterLevel(hole, i) :: number
+			for k = 0, 15 do
+				local a = k / 16 * 2 * math.pi
+				local rim = CourseRelief.exact(hole, water.X + math.cos(a) * (water.R + 1), water.Z + math.sin(a) * (water.R + 1))
+				local rx, rz = water.X + math.cos(a) * (water.R + 1), water.Z + math.sin(a) * (water.R + 1)
+				local inOther = false
+				for _, other in hole.Water do
+					if (rx - other.X) ^ 2 + (rz - other.Z) ^ 2 < other.R * other.R then
+						inOther = true
+					end
+				end
+				if rim < lvl - 1e-6 and not inOther and CourseTerrain.lieAt(hole, rx, rz) ~= "Green" then
+					overflow = true
+				end
+			end
+		end
+	end
+	expect("No pond's water level is above the ground just outside it (water never spills)", not overflow)
+	-- The cached gradient agrees with the exact height field.
+	local gradOk = true
+	for _, probe in { { 150, 5 }, { 300, -20 }, { 60, 30 } } do
+		local x, z = probe[1] * YDS, probe[2] * YDS
+		local _, gx, gz = CourseRelief.ground(cliff, x, z)
+		local e = 0.5
+		local fx = (CourseRelief.exact(cliff, x + e, z) - CourseRelief.exact(cliff, x - e, z)) / (2 * e)
+		local fz = (CourseRelief.exact(cliff, x, z + e) - CourseRelief.exact(cliff, x, z - e)) / (2 * e)
+		if math.abs(gx - fx) > 0.03 or math.abs(gz - fz) > 0.03 then
+			gradOk = false
+		end
+	end
+	expect("The terrain gradient matches the height field (within 3%)", gradOk)
+	expect("The flat flag ignores elevation (classic part courses)", CourseTerrain.forHole(cliff, true).heightAt(0, 0) == 0 and CourseTerrain.forHole(cliff).heightAt(0, 0) > 10)
+
+	-- Slope-aware roll: the same putt runs further downhill, shorter uphill, and
+	-- curves (breaks) across a side slope.
+	local function slope(gx: number, gz: number): ShotPhysics.Terrain
+		return {
+			heightAt = function(x: number, z: number): number
+				return gx * x + gz * z
+			end,
+			lieAt = function(_x: number, _z: number): Types.LieId
+				return "Green"
+			end,
+			slopeAt = function(_x: number, _z: number): (number, number)
+				return gx, gz
+			end,
+		}
+	end
+	local putt: ShotPhysics.Launch = { BallSpeed = 3, LaunchAngleRad = 0, BackspinRpm = 0, SidespinRpm = 0, AimOffsetRad = 0, IsPutt = true }
+	local flatRun = ShotPhysics.simulate(putt, slope(0, 0), nil, nil)
+	local down = ShotPhysics.simulate(putt, slope(-0.03, 0), nil, nil)
+	local up = ShotPhysics.simulate(putt, slope(0.03, 0), nil, nil)
+	local side = ShotPhysics.simulate(putt, slope(0, 0.03), nil, nil)
+	expect("Slope physics: downhill putts run further, uphill putts die early", down.FinalX > flatRun.FinalX + 1 and up.FinalX < flatRun.FinalX - 1)
+	expect("Slope physics: a side slope breaks the putt toward the low side", side.FinalZ < -0.2)
+	local tee4 = CourseTerrain.shotFrame(CourseTerrain.forHole(cliff), cliff.Tee.X, cliff.Tee.Z, 0)
+	local drive = SwingMath.computeLaunch({ Slot = ClubDatabase.getSlot("DR") :: ClubDatabase.BagSlot, Stats = { Power = 60, Accuracy = 60, Spin = 60 }, Power = 100, AccuracyOffset = 0, Lie = "Tee" })
+	local downhillDrive = ShotPhysics.simulate(drive, tee4, nil, nil)
+	local flatDrive = ShotPhysics.simulate(drive, ShotPhysics.flatTerrain("Fairway"), nil, nil)
+	expect("A drive off hole 4's cliff-top tee carries further than on flat ground", downhillDrive.CarryYds > flatDrive.CarryYds + 5)
+end
+
 print("-- smooth terrain: materials, build plan, surface injection, decor")
 do
-	expect("Terrain materials map to golf lies (Grass fairway, LeafyGrass rough, Sand bunker, Water)",
-		SurfaceMaterials.lieFor("Grass", nil) == "Fairway" and SurfaceMaterials.lieFor("LeafyGrass", nil) == "Rough"
+	expect("Terrain materials map to golf lies (LeafyGrass short fairway, Grass tall rough, Sand bunker, Water)",
+		SurfaceMaterials.lieFor("LeafyGrass", nil) == "Fairway" and SurfaceMaterials.lieFor("Grass", nil) == "Rough"
+			and SurfaceMaterials.BuildMaterials.Fairway == "LeafyGrass" and SurfaceMaterials.BuildMaterials.Rough == "Grass"
 			and SurfaceMaterials.lieFor("Sand", nil) == "Sand" and SurfaceMaterials.lieFor("Water", nil) == "Water"
 			and SurfaceMaterials.lieFor("Neon", nil) == "Rough")
 	expect("A part's GolfLie attribute beats its material; junk attributes are ignored",
-		SurfaceMaterials.lieFor("Grass", "Green") == "Green" and SurfaceMaterials.lieFor("Sand", "Tee") == "Tee" and SurfaceMaterials.lieFor("Grass", "Lava") == "Fairway" and SurfaceMaterials.lieFor("Grass", 5) == "Fairway")
+		SurfaceMaterials.lieFor("Grass", "Green") == "Green" and SurfaceMaterials.lieFor("Sand", "Tee") == "Tee" and SurfaceMaterials.lieFor("LeafyGrass", "Lava") == "Fairway" and SurfaceMaterials.lieFor("LeafyGrass", 5) == "Fairway")
 	local rock = SurfaceMaterials.physicsFor("Rock", "Rough")
 	local mud = SurfaceMaterials.physicsFor("Mud", "Rough")
 	expect("Material physics refine the lie: rock bounces/rolls more than rough, mud swallows the ball",
 		rock.Restitution > Config.Lies.Rough.Restitution and rock.RollFriction < Config.Lies.Rough.RollFriction and mud.RollFriction > Config.Lies.Rough.RollFriction
-			and SurfaceMaterials.physicsFor("Grass", "Fairway") == Config.Lies.Fairway and Config.Lies.Rough.Restitution == 0.20)
+			and SurfaceMaterials.physicsFor("LeafyGrass", "Fairway") == Config.Lies.Fairway and Config.Lies.Rough.Restitution == 0.20)
 
 	-- ShotPhysics honours a terrain's physicsAt (same lie, different material).
 	local function landOn(def: Config.LieDef?): ShotPhysics.ShotResult
@@ -3602,37 +3772,36 @@ do
 	end
 	expect("A shot landing on rock runs out further than the same shot landing in rough", landOn(rock).RollYds > landOn(nil).RollYds + 5)
 
+	local SPM = CourseLayout.STUDS_PER_METER
+	local YDS = Config.Physics.YardsToMeters
+	local finale = CourseDatabase.hole(9)
 	local hole = CourseDatabase.hole(2)
 	local plan = TerrainPlan.build(hole)
-	local names: { [string]: TerrainPlan.Fill } = {}
-	for _, f in plan.Fills do
-		names[f.Name] = f
-	end
-	local partLies: { [string]: string } = {}
+	local partBy: { [string]: TerrainPlan.SurfacePart } = {}
 	for _, p in plan.Parts do
-		if p.Lie then
-			partLies[p.Name] = p.Lie
-		end
+		partBy[p.Name] = p
 	end
-	local bunker: TerrainPlan.Fill? = names.Bunker_1
-	local water: TerrainPlan.Fill? = names.Water_1
-	local bunkerOk = bunker == nil or (bunker.Material == "Sand" and bunker.Y + bunker.SY / 2 < 0)
-	local waterOk = water ~= nil and water.Material == "Water" and water.Y + water.SY / 2 < 0 and names.WaterCarve_1.Material == "Air"
-	expect("Plan paints rough (LeafyGrass) then fairways (Grass), with sand bunkers and water carved below the surface",
-		names.Rough.Material == "LeafyGrass" and names.Fairway_1.Material == "Grass" and plan.Fills[1].Name == "Apron" and bunkerOk and waterOk)
-	local ordered = true
-	for index, f in plan.Fills do
-		if string.sub(f.Name, 1, 7) == "Fairway" and index < 3 then
-			ordered = false
-		end
-	end
-	expect("Ground comes first so features overwrite it", ordered)
-	expect("Greens and the tee are real parts tagged with their lie; the green base tilts with the hole's slope",
-		partLies.Green_1 == "Green" and partLies.TeeBox == "Tee" and names.GreenBase_1.SlopeX == hole.GreenSlope.X and names.GreenBase_1.SlopeZ == hole.GreenSlope.Z)
-	local SPM = CourseLayout.STUDS_PER_METER
-	expect("The clear-region covers the whole bounds plus apron", plan.Min.X < hole.Bounds.MinX * SPM and plan.Max.X > hole.Bounds.MaxX * SPM and plan.Min.Y < -TerrainPlan.GROUND_THICKNESS + 1 and plan.Max.Y > 0)
-	local pinOnGreen = math.abs(plan.Pin.Y - (0.15 + hole.GreenSlope.X * (hole.Pin.X - hole.Greens[1].X) * SPM + hole.GreenSlope.Z * (hole.Pin.Z - hole.Greens[1].Z) * SPM)) < 1e-9
-	expect("The cup sits on the tilted green surface", pinOnGreen)
+	local fairway = TerrainPlan.column(hole, 5 * Config.Physics.YardsToMeters * SPM, 0)
+	local rough = TerrainPlan.column(hole, 120 * Config.Physics.YardsToMeters * SPM, 50 * Config.Physics.YardsToMeters * SPM)
+	local bunker = hole.Bunkers[1]
+	local sand = TerrainPlan.column(hole, bunker.X * SPM, bunker.Z * SPM)
+	local sandRim = TerrainPlan.column(hole, (bunker.X + bunker.R + 2) * SPM, bunker.Z * SPM)
+	local pond = hole.Water[1]
+	local water = TerrainPlan.column(hole, pond.X * SPM, pond.Z * SPM)
+	local outside = TerrainPlan.column(hole, (hole.Bounds.MaxX + 20) * SPM, 0)
+	local road = TerrainPlan.column(finale, 150 * YDS * SPM, 62 * YDS * SPM)
+	expect("Sculpt columns: short LeafyGrass fairway, tall Grass rough, sunken Sand bunker, Mud bed under a water surface, OB road of Ground",
+		fairway.Material == "LeafyGrass" and rough.Material == "Grass" and sand.Material == "Sand" and sand.Top < sandRim.Top - 0.5
+			and water.Material == "Mud" and water.WaterTop ~= nil and (water.WaterTop :: number) > water.Top + 2 and outside.Material == "Grass" and road.Material == "Ground")
+	local green = partBy.Green_1
+	expect("Greens and the tee are smooth turf parts tagged with their lie; the green tilts with the hole's slope",
+		green ~= nil and green.Lie == "Green" and green.SlopeX == hole.GreenSlope.X and green.SlopeZ == hole.GreenSlope.Z and partBy.TeeBox.Lie == "Tee" and partBy.Fringe_1.Lie == nil)
+	local cup = partBy.Cup
+	expect("The visual cup is bigger than the ball (and has a white rim); out-of-bounds stakes are placed", cup ~= nil and cup.SY >= 2.4 and partBy.CupRim.SY > cup.SY and partBy.OBStake_1 ~= nil)
+	local lo, hi = CourseRelief.range(hole, hole.Bounds.MinX, hole.Bounds.MaxX, hole.Bounds.MinZ, hole.Bounds.MaxZ, 4)
+	expect("The sculpt region covers the bounds plus apron, from below the lowest ground to above the highest",
+		plan.Min.X < hole.Bounds.MinX * SPM and plan.Max.X > hole.Bounds.MaxX * SPM and plan.Min.Y < lo * SPM - 8 and plan.Max.Y > hi * SPM + 8)
+	expect("The cup sits on the tilted green plane", math.abs(plan.Pin.Y - (CourseRelief.greenPlane(hole, 1, hole.Pin.X, hole.Pin.Z) * SPM + TerrainPlan.GREEN_LIFT)) < 1e-9)
 
 	-- The engine plays on whatever surface it is given.
 	local sandEverywhere: CourseTerrain.CourseSurface = {

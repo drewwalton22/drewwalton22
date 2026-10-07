@@ -840,8 +840,11 @@ local function onShot(shot: any)
 end
 
 -- Second click: start my swing right away, send the swing, launch on impact.
-local function onSubmit(power: number, offset: number)
+local function onSubmit(power: number, offset: number, timedOut: boolean)
 	sendAim(true) -- the server must have my final aim before the swing
+	if timedOut and hud then
+		hud.feedback("TOO SLOW!", Theme.Colors.Poor) -- 5 s passed: random accuracy penalty
+	end
 	Remotes.fire("SubmitSwing", power, offset)
 	local view = myView()
 	local rig = if view then rigFor(view) else nil

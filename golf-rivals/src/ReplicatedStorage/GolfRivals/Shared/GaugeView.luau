@@ -7,7 +7,7 @@
 
 	    POWER     |██████████████▌               |  fill = live / locked power
 	                               ^ target tick (from the aim reticle, optional)
-	    ACCURACY  |      ░░░[SWEET]░░░           |  needle sweeps left -> right
+	    ACCURACY  |      ░░░[SWEET]░░░           |  needle swings back and forth
 	              -1 (early/slice)  0   +1 (late/hook)
 
 	  needleX     = (offset + 1) / 2            (offset -1..1 -> 0..1)
@@ -30,6 +30,8 @@ export type Layout = {
 	GoodLeft: number,
 	GoodRight: number,
 	TargetPower: number?, -- 0..1 power the aim reticle asks for (optional tick)
+	TimeLeft: number?, -- seconds before stage 2 times out (nil outside stage 2)
+	TimeFraction: number?, -- TimeLeft / AccuracyTimeoutSeconds (countdown ring)
 }
 
 local GaugeView = {}
@@ -54,6 +56,8 @@ function GaugeView.layout(gauge: SwingStateMachine.Gauge, greenHalfWidth: number
 		GoodLeft = GaugeView.toTrack(-good),
 		GoodRight = GaugeView.toTrack(good),
 		TargetPower = if targetPower then math.clamp(targetPower, 0, 1) else nil,
+		TimeLeft = gauge.TimeLeft,
+		TimeFraction = if gauge.TimeLeft then math.clamp(gauge.TimeLeft / Config.Swing.AccuracyTimeoutSeconds, 0, 1) else nil,
 	}
 end
 

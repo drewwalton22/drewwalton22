@@ -20,13 +20,22 @@
 
 	Slopes: GreenSlope = (dh/dx, dh/dz) on the green, dimensionless
 	(0.02 = 2%). Positive dh/dx means the green rises toward +X, so balls roll
-	back toward the tee side. Height is otherwise flat.
+	back toward the tee side.
 
-	Distances here are authored in YARDS for readability via `yd()` and stored in
-	metres.
+	ELEVATION: holes built from CourseData carry a `Relief` (tee / green
+	elevations, the profile along the line of play, raised tees and banked greens,
+	rolling mounds). CourseRelief turns it into a 3D height field that the physics,
+	the bots, the terrain sculptor and the client all share. A hole without Relief
+	is flat (height 0) with only the green tilted - handy for tests.
+
+	OUT OF BOUNDS: outside Bounds, plus any extra OutOfBounds rectangles (a road).
+
+	The hole data itself lives in CourseData (yards / metres, easy to edit); this
+	module converts it into HoleDefs in metres.
 ]]
 
 local Config = require(script.Parent.Config)
+local CourseData = require(script.Parent.CourseData)
 
 export type Point = { X: number, Z: number }
 export type Circle = { X: number, Z: number, R: number }
@@ -45,6 +54,19 @@ export type HoleDef = {
 	Water: { Circle },
 	GreenSlope: Point, -- X = dh/dx, Z = dh/dz
 	Bounds: Bounds,
+	OutOfBounds: { Bounds }?, -- extra OB zones inside Bounds
+	Relief: Relief?, -- nil = flat
+	Course: string?, -- "Beginner" | "Intermediate" | "Expert"
+}
+
+-- 3D shape of a hole (metres). See CourseData for the meaning of each field.
+export type Relief = {
+	Profile: { number }, -- ground elevation tee -> green along the line of play (>= 2)
+	TeeRaise: number,
+	GreenRaise: number,
+	Undulation: number,
+	Wavelength: number,
+	Seed: number,
 }
 
 local CourseDatabase = {}
@@ -66,74 +88,68 @@ local function bounds(minX: number, maxX: number, minZ: number, maxZ: number): B
 	return { MinX = yd(minX), MaxX = yd(maxX), MinZ = yd(minZ), MaxZ = yd(maxZ) }
 end
 
-local holes: { HoleDef } = {
-	{
-		Id = 1, Name = "Opening Drive", Par = 4,
-		Tee = { X = 0, Z = 0 }, Pin = { X = yd(380), Z = 0 },
-		Fairway = { capsule(35, 0, 335, 0, 19) },
-		Greens = { circle(380, 0, 15) },
-		Bunkers = { circle(255, -24, 9), circle(372, -22, 7) },
-		Water = {},
-		GreenSlope = { X = 0.02, Z = 0.012 },
-		Bounds = bounds(-25, 430, -70, 70),
-	},
-	{
-		Id = 2, Name = "Over the Pond", Par = 3,
-		Tee = { X = 0, Z = 0 }, Pin = { X = yd(165), Z = yd(4) },
-		Fairway = { capsule(0, 0, 10, 0, 8) },
-		Greens = { circle(165, 4, 14) },
-		Bunkers = { circle(150, -18, 7), circle(182, 22, 7) },
-		Water = { circle(95, 0, 42) },
-		GreenSlope = { X = 0, Z = -0.025 },
-		Bounds = bounds(-20, 215, -70, 70),
-	},
-	{
-		Id = 3, Name = "Dogleg Right", Par = 5,
-		Tee = { X = 0, Z = 0 }, Pin = { X = yd(480), Z = yd(190) },
-		Fairway = { capsule(35, 0, 300, 0, 20), capsule(300, 0, 450, 170, 20) },
-		Greens = { circle(480, 190, 15) },
-		Bunkers = { circle(290, -26, 9), circle(470, 172, 7) },
-		Water = { circle(420, 90, 12) },
-		GreenSlope = { X = -0.015, Z = 0.02 },
-		Bounds = bounds(-25, 540, -70, 260),
-	},
-	{
-		Id = 4, Name = "Dogleg Left", Par = 4,
-		Tee = { X = 0, Z = 0 }, Pin = { X = yd(360), Z = yd(-180) },
-		Fairway = { capsule(35, 0, 230, 0, 19), capsule(230, 0, 340, -165, 19) },
-		Greens = { circle(360, -180, 14) },
-		Bunkers = { circle(250, 18, 9), circle(345, -197, 7) },
-		Water = {},
-		GreenSlope = { X = 0.018, Z = -0.01 },
-		Bounds = bounds(-25, 430, -250, 70),
-	},
-	{
-		Id = 5, Name = "Pitch Perfect", Par = 3,
-		Tee = { X = 0, Z = 0 }, Pin = { X = yd(140), Z = 0 },
-		Fairway = { capsule(0, 0, 8, 0, 8) },
-		Greens = { circle(140, 0, 12) },
-		Bunkers = { circle(125, -15, 7), circle(155, 15, 7), circle(140, -25, 6) },
-		Water = {},
-		GreenSlope = { X = 0.02, Z = 0.02 },
-		Bounds = bounds(-20, 190, -60, 60),
-	},
-	{
-		Id = 6, Name = "Water Down the Left", Par = 4,
-		Tee = { X = 0, Z = 0 }, Pin = { X = yd(350), Z = 0 },
-		Fairway = { capsule(35, 0, 300, 0, 17) },
-		Greens = { circle(350, 0, 14) },
-		Bunkers = { circle(342, 22, 7) },
-		Water = { circle(140, -38, 20), circle(200, -40, 22), circle(260, -38, 20) },
-		GreenSlope = { X = 0, Z = -0.02 },
-		Bounds = bounds(-25, 400, -90, 70),
-	},
-}
+-- CourseData spec (yards / metres, readable) -> HoleDef (metres).
+local function fromSpec(spec: CourseData.HoleSpec): HoleDef
+	local function circles(list: { { number } }): { Circle }
+		local out: { Circle } = {}
+		for _, c in list do
+			table.insert(out, circle(c[1], c[2], c[3]))
+		end
+		return out
+	end
+	local fairways: { Capsule } = {}
+	for _, f in spec.Fairway do
+		table.insert(fairways, capsule(f[1], f[2], f[3], f[4], f[5]))
+	end
+	local oob: { Bounds } = {}
+	local zones: { { number } } = spec.OutOfBounds or {}
+	for _, z in zones do
+		table.insert(oob, bounds(z[1], z[2], z[3], z[4]))
+	end
+	return {
+		Id = spec.Id,
+		Name = spec.Name,
+		Par = spec.Par,
+		Course = spec.Course,
+		Tee = { X = yd(spec.Tee[1]), Z = yd(spec.Tee[2]) },
+		Pin = { X = yd(spec.Pin[1]), Z = yd(spec.Pin[2]) },
+		Fairway = fairways,
+		Greens = circles(spec.Greens),
+		Bunkers = circles(spec.Bunkers),
+		Water = circles(spec.Water),
+		GreenSlope = { X = spec.GreenSlope[1], Z = spec.GreenSlope[2] },
+		Bounds = bounds(spec.Bounds[1], spec.Bounds[2], spec.Bounds[3], spec.Bounds[4]),
+		OutOfBounds = if #oob > 0 then oob else nil,
+		Relief = {
+			Profile = CourseData.profileOf(spec),
+			TeeRaise = spec.TeeRaise,
+			GreenRaise = spec.GreenRaise,
+			Undulation = spec.Undulation,
+			Wavelength = spec.Wavelength,
+			Seed = spec.Id * 7.31,
+		},
+	}
+end
+
+local holes: { HoleDef } = {}
+for _, spec in CourseData.Holes do
+	table.insert(holes, fromSpec(spec))
+end
 
 CourseDatabase.Holes = holes
 
 -- The hole at `index`, wrapping around so any index is valid.
 function CourseDatabase.hole(index: number): HoleDef
 	return holes[(index - 1) % #holes + 1]
+end
+
+-- Elevation change tee -> green in metres (+ = uphill), 0 for flat holes.
+function CourseDatabase.elevationChange(hole: HoleDef): number
+	local relief = hole.Relief
+	if relief == nil then
+		return 0
+	end
+	return (relief.Profile[#relief.Profile] + relief.GreenRaise) - (relief.Profile[1] + relief.TeeRaise)
 end
 
 -- Straight-line tee-to-pin distance in yards (the number printed on the scorecard).
@@ -147,6 +163,23 @@ function CourseDatabase.sequence(startIndex: number, count: number): { HoleDef }
 	local result: { HoleDef } = {}
 	for i = 0, count - 1 do
 		table.insert(result, CourseDatabase.hole(startIndex + i))
+	end
+	return result
+end
+
+-- The holes of a named 3-hole course ("Beginner", "Intermediate", "Expert").
+function CourseDatabase.course(name: string): { HoleDef }?
+	local ids = CourseData.Courses[name]
+	if ids == nil then
+		return nil
+	end
+	local result: { HoleDef } = {}
+	for _, id in ids do
+		for _, hole in holes do
+			if hole.Id == id then
+				table.insert(result, hole)
+			end
+		end
 	end
 	return result
 end

@@ -164,7 +164,7 @@ function MatchHud.new(): Hud
 			stageButton.Position = UDim2.new(1, -180, 0.5, 0)
 		elseif stage == "Swing" then
 			aimPanel.Size = UDim2.fromOffset(120, 50)
-			aimPanel.Position = UDim2.new(0.5, 290, 1, -102)
+			aimPanel.Position = UDim2.new(0.5, 300, 1, -102)
 			aimPanel.AnchorPoint = Vector2.new(0, 1)
 			aimInfo.Visible = false
 			stageButton.Text = "◀ AIM"

@@ -43,6 +43,9 @@ Theme.Colors = {
 	DangerDark = Color3.fromRGB(170, 30, 40),
 	Good = Color3.fromRGB(74, 222, 128),
 	Poor = Color3.fromRGB(248, 113, 113),
+	Glow = Color3.fromRGB(96, 140, 255), -- soft outer glow on panels
+	GlowAccent = Color3.fromRGB(90, 255, 170), -- the active control's glow
+	Track = Color3.fromRGB(6, 10, 22), -- inset meter tracks
 }
 
 Theme.Fonts = {
@@ -52,7 +55,8 @@ Theme.Fonts = {
 }
 
 Theme.CornerRadius = UDim.new(0, 12)
-Theme.PanelTransparency = 0.06 -- glassy panels over the 3D world
+Theme.PanelTransparency = 0.16 -- semi-translucent dark glass over the 3D world
+Theme.GlowTransparency = 0.45 -- panel border glow
 Theme.Gutter = 14 -- distance from the safe-area edges
 
 function Theme.rgb(color: { number }): Color3

@@ -34,7 +34,7 @@
 	COURSES: each hole is played on real ground. Hand-built holes (CourseRegistry,
 	Workspace.GolfCourses) are used when present; otherwise, in Config.Course.Mode
 	"Terrain", every hole is generated as Smooth Terrain at the match's own arena
-	(TerrainCourse) and decorated (MapDecorator). Either way the engine gets a
+	(TerrainBuilder sculpts the height field) and decorated (MapDecorator). Either way the engine gets a
 	raycast surface (TerrainSurface), so lies, heights, slopes and bounce/roll all
 	come from the actual terrain materials. The previous hole is cleared when the
 	next one starts, and the arena is cleared when the match is cleaned up.
@@ -50,7 +50,6 @@ local ClubStats = require(Shared.ClubStats)
 local Config = require(Shared.Config)
 local CourseDatabase = require(Shared.CourseDatabase)
 local CourseTerrain = require(Shared.CourseTerrain)
-local TerrainPlan = require(Shared.TerrainPlan)
 local TerrainSurface = require(Shared.TerrainSurface)
 local Logger = require(Shared.Logger)
 local ProfileOps = require(Shared.ProfileOps)
@@ -60,7 +59,7 @@ local Validate = require(Shared.Validate)
 local BotBrain = require(script.Parent.BotBrain)
 local CourseRegistry = require(script.Parent.CourseRegistry)
 local MapDecorator = require(script.Parent.MapDecorator)
-local TerrainCourse = require(script.Parent.TerrainCourse)
+local TerrainBuilder = require(script.Parent.TerrainBuilder)
 local Matchmaker = require(script.Parent.Matchmaker)
 local MatchEngine = require(script.Parent.MatchEngine)
 local MatchSettlement = require(script.Parent.MatchSettlement)
@@ -73,7 +72,7 @@ type CourseState = {
 	Mode: string, -- "Terrain" | "Mapped" | "Parts"
 	Origin: Vector3,
 	HoleId: number,
-	Built: TerrainCourse.Built?, -- generated terrain hole (cleared on the next hole / cleanup)
+	Built: TerrainBuilder.Built?, -- generated terrain hole (cleared on the next hole / cleanup)
 	Decor: Folder?,
 }
 
@@ -182,13 +181,13 @@ local function surfaceProvider(state: CourseState, matchId: number): (hole: Cour
 			table.insert(include, mapped.Container)
 		elseif Config.Course.Mode == "Terrain" then
 			local origin = arenaOrigin(matchId)
-			local built = TerrainCourse.build(TerrainPlan.build(hole), origin, `Match{matchId}_Hole{hole.Id}`)
+			local built = TerrainBuilder.build(hole, origin, `Match{matchId}_Hole{hole.Id}`)
 			state.Mode, state.Origin, state.Built = "Terrain", origin, built
 			table.insert(include, built.Folder)
 		else
 			state.Mode, state.Origin = "Parts", arenaOrigin(matchId)
 			state.HoleId = hole.Id
-			return analytic -- flat client-built parts: analytic shapes are the truth
+			return CourseTerrain.analytic(hole, true) -- flat client-built parts: flat analytic shapes are the truth
 		end
 		state.HoleId = hole.Id
 		if Config.Course.DecorateHoles then
@@ -349,6 +348,7 @@ local function createMatch(mode: MatchSettlement.Mode, humans: { Player }, leagu
 	nextMatchId += 1
 	local matchId = nextMatchId
 	local holes = CourseRegistry.sequence(random:NextInteger(1, math.max(1, CourseRegistry.count())), Config.Match.HolesPerMatch)
+		or CourseDatabase.course(if Config.Course.MatchCourse == "Random" then ({ "Beginner", "Intermediate", "Expert" })[random:NextInteger(1, 3)] else Config.Course.MatchCourse)
 		or CourseDatabase.sequence(random:NextInteger(1, #CourseDatabase.Holes), Config.Match.HolesPerMatch)
 	local course: CourseState = { Mode = "Parts", Origin = arenaOrigin(matchId), HoleId = 0, Built = nil, Decor = nil }
 	local ok, engineOrError = pcall(function(): any

@@ -21,6 +21,11 @@
 
 	`dir` is the ball's smoothed horizontal travel direction; `right` = (-dir.Z, dir.X)
 	matches the course frame (+Z is to the golfer's right when facing +X).
+
+	ELEVATION: courses have hills, so "the ball's altitude" means its height above
+	the GROUND LEVEL the camera tracks (`Floor`: the launch height, following the
+	ball down at once and up while it rolls), never its absolute Y - otherwise a
+	ball resting on a raised green would keep the camera hovering high above it.
 ]]
 
 export type Vec3 = { X: number, Y: number, Z: number }
@@ -31,6 +36,7 @@ export type FollowState = {
 	Ball: Vec3, -- ball position last frame (for velocity)
 	DirX: number, -- smoothed horizontal travel direction (unit)
 	DirZ: number,
+	Floor: number, -- tracked ground level under the ball (studs)
 }
 
 local CameraMath = {}
@@ -71,7 +77,7 @@ end
 function CameraMath.addressPose(ball: Vec3, aimX: number, aimZ: number): Pose
 	local dx, dz = normalize(aimX, aimZ, 1, 0)
 	return {
-		Pos = vec(ball.X - dx * T.AddressBack, math.max(ball.Y + T.AddressHeight, T.GroundY + T.MinGroundClearance), ball.Z - dz * T.AddressBack),
+		Pos = vec(ball.X - dx * T.AddressBack, ball.Y + math.max(T.AddressHeight, T.MinGroundClearance), ball.Z - dz * T.AddressBack),
 		Look = vec(ball.X + dx * 40, ball.Y + 2, ball.Z + dz * 40),
 	}
 end
@@ -79,7 +85,7 @@ end
 function CameraMath.startFollow(ball: Vec3, aimX: number, aimZ: number): FollowState
 	local dx, dz = normalize(aimX, aimZ, 1, 0)
 	local pose = CameraMath.addressPose(ball, dx, dz)
-	return { Pos = pose.Pos, Ball = ball, DirX = dx, DirZ = dz }
+	return { Pos = pose.Pos, Ball = ball, DirX = dx, DirZ = dz, Floor = ball.Y }
 end
 
 -- Advance the chase camera by dt seconds with the ball now at `ball`.
@@ -100,14 +106,20 @@ function CameraMath.follow(state: FollowState, ball: Vec3, dt: number): (FollowS
 
 	-- 0 = full chase distance (fast), 1 = close-up (almost stopped).
 	local close = math.clamp(1 - speed / T.SlowSpeed, 0, 1)
+	-- Ground level: drops with the ball at once; rises toward it while it's slow
+	-- (rolling on higher ground).
+	local floor = math.min(state.Floor, ball.Y)
+	if close > 0.3 then
+		floor += (ball.Y - floor) * (1 - math.exp(-4 * dt))
+	end
 	local back = T.Back + (T.CloseBack - T.Back) * close
 	local side = T.Side + (T.CloseSide - T.Side) * close
-	local height = T.Height + (T.CloseHeight - T.Height) * close + T.HeightPerBallHeight * math.max(0, ball.Y - T.GroundY)
+	local height = T.Height + (T.CloseHeight - T.Height) * close + T.HeightPerBallHeight * math.max(0, ball.Y - floor)
 
 	local rightX, rightZ = -dirZ, dirX
 	local desired = vec(
 		ball.X - dirX * back + rightX * side,
-		math.max(ball.Y + height, T.GroundY + T.MinGroundClearance),
+		math.max(ball.Y + height, floor + T.MinGroundClearance),
 		ball.Z - dirZ * back + rightZ * side
 	)
 
@@ -118,9 +130,9 @@ function CameraMath.follow(state: FollowState, ball: Vec3, dt: number): (FollowS
 		state.Pos.Y + (desired.Y - state.Pos.Y) * a,
 		state.Pos.Z + (desired.Z - state.Pos.Z) * a
 	)
-	pos.Y = math.max(pos.Y, T.GroundY + T.MinGroundClearance)
+	pos.Y = math.max(pos.Y, floor + T.MinGroundClearance)
 
-	local nextState: FollowState = { Pos = pos, Ball = ball, DirX = dirX, DirZ = dirZ }
+	local nextState: FollowState = { Pos = pos, Ball = ball, DirX = dirX, DirZ = dirZ, Floor = floor }
 	return nextState, { Pos = pos, Look = vec(ball.X, ball.Y + 1, ball.Z) }
 end
 

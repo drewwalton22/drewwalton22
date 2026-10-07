@@ -131,7 +131,8 @@ local function fallback(kind: string, ground: Vector3, scale: number, yawDeg: nu
 	if kind == "Rock" then
 		terrain:FillBall(ground + Vector3.new(0, 1.2 * scale, 0), 3.2 * scale, Enum.Material.Rock)
 	elseif kind == "GrassPatch" then
-		terrain:FillCylinder(CFrame.new(ground + Vector3.new(0, 0.6, 0)), 1.6, 9 * scale, Enum.Material.LeafyGrass)
+		-- a tuft of tall grass (Grass = rough; LeafyGrass would read as fairway)
+		terrain:FillCylinder(CFrame.new(ground + Vector3.new(0, 0.6, 0)), 1.6, 9 * scale, Enum.Material.Grass)
 	elseif kind == "Bush" then
 		for i = 1, 3 do
 			local angle = math.rad(yawDeg + i * 120)
