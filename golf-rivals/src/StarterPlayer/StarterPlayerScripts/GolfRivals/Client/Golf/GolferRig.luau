@@ -75,7 +75,7 @@ local GolferRig = {}
 
 local ASSET_KIND: { [string]: string } = { Swing = "Swing", Putt = "Putt", Victory = "Victory", Defeat = "Defeat", Address = "Address", PuttAddress = "PuttAddress" }
 local LOOPED: { [string]: boolean } = { Victory = true, Defeat = true, Address = true, PuttAddress = true }
-local BALL_CLEARANCE = 0.55 -- studs between the ball's centre and the clubhead's sole point
+local BALL_CLEARANCE = 0.32 -- studs between the ball's centre and the clubhead's sole point (ball radius 0.2 + the face + a gap)
 
 -- A driveable joint: a Motor6D or an AnimationConstraint (Avatar Joint Upgrade).
 type JointRef = { Instance: Instance, R0: CFrame, R0Inv: CFrame }

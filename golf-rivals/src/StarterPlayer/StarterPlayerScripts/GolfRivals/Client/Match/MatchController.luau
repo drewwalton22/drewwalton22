@@ -692,8 +692,14 @@ function MatchController.apply(snapshot: any)
 	for _, view in snapshot.Players do
 		local ball = balls[view.Id]
 		if ball then
-			ball.placeAt(ballWorld(view))
-			ball.setVisible(not view.Holed)
+			if view.Holed then
+				-- Lying in the pocket, not perched on the pole (re-measured: the cup's
+				-- plug may have replicated after the hole was first measured).
+				ball.restInCup(built.ground(built.Hole.Pin.X, built.Hole.Pin.Z))
+			else
+				ball.placeAt(ballWorld(view))
+				ball.setVisible(true)
+			end
 		end
 		table.insert(dots, { X = view.Position.X, Z = view.Position.Z, IsMe = view.Id == myId, Holed = view.Holed })
 	end

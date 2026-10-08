@@ -11,7 +11,9 @@
 	  └── GolfCourses                  (Folder - name from Config.Course.MappedFolder)
 	      └── Hole1                    (Model or Folder; attributes: Par = 4, HoleName = "...")
 	          ├── Tee      (Part)      where the ball is teed up (its top surface)
-	          ├── Pin      (Part)      the cup position (its centre)
+	          ├── Pin      (Part)      the cup position (its centre). The game builds the
+	          │                        visible cup there (CupBuilder): carved into
+	          │                        Smooth Terrain greens, drawn on part greens
 	          ├── Bounds   (Part)      OPTIONAL: an invisible box covering the playable
 	          │                        area; outside it = out of bounds
 	          └── ...      greens / tees / paths as MeshParts with a GolfLie attribute
@@ -32,6 +34,8 @@ local Config = require(Shared.Config)
 local CourseDatabase = require(Shared.CourseDatabase)
 local CourseLayout = require(Shared.CourseLayout)
 local Logger = require(Shared.Logger)
+
+local CupBuilder = require(script.Parent.CupBuilder)
 
 export type Mapped = {
 	Hole: CourseDatabase.HoleDef,
@@ -104,6 +108,15 @@ function CourseRegistry.load()
 			Bounds = bounds,
 		}
 		pin.CanQuery = false -- the ball must land on the green, not on the pin part
+		-- The cup: raycast the green under the pin and build the pocket + rim there
+		-- (Smooth Terrain greens are carved; solid part greens get a dark cup drawn on top).
+		local cupOk, cupErr = pcall(function()
+			local exclude: { Instance } = { pin }
+			CupBuilder.build({ Parent = container, Centre = pin.Position, Exclude = exclude, Label = container.Name })
+		end)
+		if not cupOk then
+			warn(`[GolfRivals][Cup] {container.Name}: building the cup failed: {tostring(cupErr)}`)
+		end
 		local entry: Mapped = { Hole = hole, Origin = origin, Container = container }
 		table.insert(mapped, entry)
 		byId[id] = entry

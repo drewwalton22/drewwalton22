@@ -18,11 +18,13 @@
 	       pond's bed it writes Water up to the pond's level
 	    3. places the course parts: smooth-turf green + fringe (tilted), tee box,
 	       pin, flag, out-of-bounds stakes (GolfLie attributes on the playable ones)
-	    4. cuts the REAL CUP: the green part's Hole is subtracted with
-	       SubtractAsync (white liner walls from the cutter's colour, a dark bottom
-	       part inside). It runs in the background - until it's done (or if CSG is
-	       unavailable) a dark disc marks the cup - so building never waits on it.
-	       An invisible CupPlug keeps the physics raycasts reading a flat green.
+	    4. the REAL CUP, without CSG: the green that holds the pin (and its fringe)
+	       is built as turf TRIANGLES (pairs of WedgeParts, CupGeometry.annulus)
+	       with a genuine opening at the cup, then CupBuilder raycasts that turf
+	       and places the dark pocket, the white rim and the invisible CupPlug
+	       (physics still reads a flat green). If the triangles can't be built,
+	       the green falls back to one solid part and CupBuilder draws the cup on
+	       top of it - with a warning in the Output either way.
 	  built.destroy()  clears the sculpted region back to Air and removes the parts
 
 	Terrain replicates to every client, so the course players see is exactly the one
@@ -34,9 +36,12 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage.GolfRivals.Shared
 local Config = require(Shared.Config)
+local CupGeometry = require(Shared.CupGeometry)
 local CourseDatabase = require(Shared.CourseDatabase)
 local SurfaceMaterials = require(Shared.SurfaceMaterials)
 local TerrainPlan = require(Shared.TerrainPlan)
+
+local CupBuilder = require(script.Parent.CupBuilder)
 
 export type Built = {
 	Folder: Folder, -- course parts (tee, green, pin, stakes) + decorations
@@ -161,43 +166,92 @@ local function clear(minW: Vector3, maxW: Vector3)
 	end
 end
 
--- Cut the cup pocket out of the green (background). `marker` is the temporary
--- dark disc shown until the cut is in place.
-local function cutCup(green: Part, spec: TerrainPlan.SurfacePart, pinTop: number, origin: Vector3, marker: BasePart)
-	local hole = spec.Hole
-	if hole == nil then
+-- One triangle of turf as two WedgeParts: a prism `thickness` deep whose TOP
+-- face is the triangle (a, b, c), `normal` pointing up out of the turf.
+local function turfTriangle(a: Vector3, b: Vector3, c: Vector3, normal: Vector3, thickness: number, template: WedgePart, parent: Instance)
+	local ab, ac, bc = b - a, c - a, c - b
+	local abd, acd, bcd = ab:Dot(ab), ac:Dot(ac), bc:Dot(bc)
+	if abd > acd and abd > bcd then
+		c, a = a, c
+	elseif acd > bcd and acd > abd then
+		a, b = b, a
+	end
+	ab, ac, bc = b - a, c - a, c - b
+	local right = ac:Cross(ab)
+	if right.Magnitude < 1e-6 then
+		return -- degenerate
+	end
+	right = right.Unit
+	local up = bc:Cross(right).Unit
+	local back = bc.Unit
+	local height = math.abs(ab:Dot(up))
+	if height < 1e-3 then
 		return
 	end
-	task.spawn(function()
-		local cutter = Instance.new("Part")
-		cutter.Shape = Enum.PartType.Cylinder
-		cutter.Anchored = true
-		cutter.Color = Color3.fromRGB(240, 240, 240) -- the cup liner (white walls)
-		cutter.Material = Enum.Material.SmoothPlastic
-		local height = hole.Depth + 0.6
-		cutter.Size = Vector3.new(height, hole.Diameter, hole.Diameter)
-		local centre = origin + Vector3.new(hole.X, pinTop - hole.Depth + height / 2, hole.Z)
-		cutter.CFrame = frameFor(centre, spec.SlopeX, spec.SlopeZ) * CFrame.Angles(0, 0, math.pi / 2)
-		local ok, result = pcall(function(): any
-			return green:SubtractAsync({ cutter }, Enum.CollisionFidelity.PreciseConvexDecomposition)
-		end)
-		cutter:Destroy()
-		if not ok or typeof(result) ~= "Instance" or green.Parent == nil then
-			return -- keep the solid green + the dark disc marker
+	local shift = -normal * (thickness / 2) -- top face on the triangle, body below it
+	local w1 = template:Clone()
+	w1.Size = Vector3.new(thickness, height, math.abs(ab:Dot(back)))
+	w1.CFrame = CFrame.fromMatrix((a + b) / 2 + shift, right, up, back)
+	w1.Parent = parent
+	local w2 = template:Clone()
+	w2.Size = Vector3.new(thickness, height, math.abs(ac:Dot(back)))
+	w2.CFrame = CFrame.fromMatrix((a + c) / 2 + shift, -right, up, -back)
+	w2.Parent = parent
+end
+
+local OUTLINE_SIDES = 64
+
+-- A green (with the cup's opening) or a fringe ring as turf triangles. Returns
+-- the Model, or nil (with a warning) if it couldn't be built.
+local function buildTurf(spec: TerrainPlan.SurfacePart, origin: Vector3, cupWorld: Vector3, innerRadius: number?, name: string): Model?
+	local ok, result = pcall(function(): any
+		local thickness = spec.SX
+		local radius = spec.SY / 2
+		local top = frameFor(origin + Vector3.new(spec.X, spec.Y, spec.Z), spec.SlopeX, spec.SlopeZ) * CFrame.new(0, thickness / 2, 0)
+		local triangles: { CupGeometry.Triangle }
+		local outline = CupGeometry.circle(0, 0, radius, OUTLINE_SIDES, true)
+		if innerRadius then
+			-- Fringe: the ring between the green's outline and the fringe's.
+			triangles = CupGeometry.ring(CupGeometry.circle(0, 0, innerRadius, OUTLINE_SIDES, true), outline)
+		else
+			-- Green: everything but the cup.
+			local cup = top:PointToObjectSpace(cupWorld)
+			local hole = CupGeometry.circle(cup.X, cup.Z, CupGeometry.RADIUS, CupGeometry.HOLE_SIDES, false)
+			triangles = CupGeometry.annulus(hole, outline, cup.X, cup.Z)
 		end
-		local union = result :: UnionOperation
-		union.Name = green.Name
-		union.UsePartColor = false -- turf faces stay green, the pocket walls white
-		union.Anchored = true
-		union.CanCollide = green.CanCollide
-		union.CanQuery = green.CanQuery
-		union.CanTouch = false
-		union.CastShadow = false
-		union:SetAttribute(SurfaceMaterials.ATTRIBUTE, green:GetAttribute(SurfaceMaterials.ATTRIBUTE))
-		union.Parent = green.Parent
-		green:Destroy()
-		marker:Destroy()
+		local template = Instance.new("WedgePart")
+		template.Anchored = true
+		template.CanCollide = spec.CanCollide
+		template.CanQuery = spec.CanQuery
+		template.CanTouch = false
+		template.CastShadow = false
+		template.Color = Color3.fromRGB(spec.Color[1], spec.Color[2], spec.Color[3])
+		template.Material = material(spec.Material)
+		template.TopSurface = Enum.SurfaceType.Smooth
+		template.BottomSurface = Enum.SurfaceType.Smooth
+		template.Name = spec.Name
+		if spec.Lie then
+			template:SetAttribute(SurfaceMaterials.ATTRIBUTE, spec.Lie)
+		end
+		local model = Instance.new("Model")
+		model.Name = spec.Name
+		for _, t in triangles do
+			local function world(v: CupGeometry.Vec2): Vector3
+				return top:PointToWorldSpace(Vector3.new(v.X, 0, v.Z))
+			end
+			turfTriangle(world(t[1]), world(t[2]), world(t[3]), top.UpVector, thickness, template, model)
+		end
+		template:Destroy()
+		if #model:GetChildren() == 0 then
+			error("no turf triangles were produced")
+		end
+		return model
 	end)
+	if not ok or typeof(result) ~= "Instance" then
+		warn(`[GolfRivals][Cup] {name}: building {spec.Name} with a hole failed ({tostring(result)}) - using a solid part`)
+		return nil
+	end
+	return result :: Model
 end
 
 function TerrainBuilder.build(hole: CourseDatabase.HoleDef, origin: Vector3, name: string): Built
@@ -210,8 +264,28 @@ function TerrainBuilder.build(hole: CourseDatabase.HoleDef, origin: Vector3, nam
 
 	local folder = Instance.new("Folder")
 	folder.Name = name
-	local holeSpecs: { [Part]: TerrainPlan.SurfacePart } = {}
+	-- The green that holds the cup, and its fringe, get a real opening.
+	local cupWorld = origin + Vector3.new(plan.Pin.X, plan.Pin.Y, plan.Pin.Z)
+	local holedGreen: TerrainPlan.SurfacePart? = nil
 	for _, spec in plan.Parts do
+		if spec.Hole then
+			holedGreen = spec
+		end
+	end
+	local holedFringe = if holedGreen then string.gsub(holedGreen.Name, "^Green_", "Fringe_") else nil
+	local pinParts: { Instance } = {}
+	for _, spec in plan.Parts do
+		if spec.Name == "CupBottom" or spec.Name == "CupPlug" then
+			continue -- CupBuilder places these on the real turf
+		end
+		if holedGreen and (spec == holedGreen or spec.Name == holedFringe) then
+			local inner = if spec == holedGreen then nil else holedGreen.SY / 2
+			local turf = buildTurf(spec, origin, cupWorld, inner, name)
+			if turf then
+				turf.Parent = folder
+				continue
+			end
+		end
 		local part = Instance.new("Part")
 		part.Name = spec.Name
 		part.Anchored = true
@@ -236,27 +310,22 @@ function TerrainBuilder.build(hole: CourseDatabase.HoleDef, origin: Vector3, nam
 			part:SetAttribute(SurfaceMaterials.ATTRIBUTE, spec.Lie)
 		end
 		part.Parent = folder
-		if spec.Hole then
-			holeSpecs[part] = spec
+		if spec.Name == "PinPole" or spec.Name == "PinFlag" then
+			table.insert(pinParts, part)
 		end
 	end
 	folder.Parent = workspace
-	-- Real cups: a dark disc marks each cup until its pocket is cut.
-	for green, spec in holeSpecs do
-		local hole = spec.Hole :: { X: number, Z: number, Diameter: number, Depth: number }
-		local marker = Instance.new("Part")
-		marker.Name = "CupMarker"
-		marker.Shape = Enum.PartType.Cylinder
-		marker.Anchored = true
-		marker.CanCollide = false
-		marker.CanQuery = false
-		marker.CanTouch = false
-		marker.CastShadow = false
-		marker.Color = Color3.fromRGB(14, 14, 16)
-		marker.Size = Vector3.new(0.04, hole.Diameter, hole.Diameter)
-		marker.CFrame = frameFor(origin + Vector3.new(hole.X, plan.Pin.Y + 0.02, hole.Z), spec.SlopeX, spec.SlopeZ) * CFrame.Angles(0, 0, math.pi / 2)
-		marker.Parent = folder
-		cutCup(green, spec, plan.Pin.Y, origin, marker)
+	-- The cup: pocket, rim and plug placed on the turf the rays actually find.
+	if holedGreen then
+		local slope = Vector3.new(-holedGreen.SlopeX, 1, -holedGreen.SlopeZ).Unit
+		local ok, err = pcall(function()
+			CupBuilder.build({ Parent = folder, Centre = cupWorld, Up = slope, Exclude = pinParts, Label = name })
+		end)
+		if not ok then
+			warn(`[GolfRivals][Cup] {name}: building the cup failed: {tostring(err)}`)
+		end
+	else
+		warn(`[GolfRivals][Cup] {name}: no green holds the pin - no cup built`)
 	end
 
 	local destroyed = false

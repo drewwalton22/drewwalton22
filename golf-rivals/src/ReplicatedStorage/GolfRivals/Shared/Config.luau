@@ -212,10 +212,13 @@ Config.Physics = {
 	-- Forgiving, arcade-size hole: a ball whose centre passes within
 	-- CupCaptureRadius of the cup centre drops if it is slower than
 	-- CupCaptureSpeed; faster than that it lips out / rolls over. Sized with the
-	-- VISUAL cup (CourseLayout.CUP_DIAMETER 1.9 studs, ball 0.8 studs): a captured
-	-- ball's centre is over the hole, so it can visibly drop in.
-	CupCaptureRadius = 0.16,
+	-- VISUAL cup (CourseLayout.CUP_DIAMETER 1.0 stud = 0.143 m, ball 0.4 stud): a
+	-- captured ball's centre is over the hole, so it can visibly drop in.
+	CupCaptureRadius = 0.11,
 	CupCaptureSpeed = 2.0,
+	-- A slow ball that BOUNCES onto the cup drops too: touching down within the
+	-- capture radius slower than CupCaptureSpeed sideways and this vertically (m/s).
+	CupBounceCaptureSpeed = 6.0,
 	-- Ball magnet: a slow ball within MagnetRadius of the cup is pulled toward it,
 	-- MagnetAccel (m/s^2) at the centre fading to 0 at the radius. Pull-in from rest
 	-- happens only very close to the cup (where it beats green friction ~0.55 m/s^2).

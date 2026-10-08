@@ -492,7 +492,7 @@ do
 	local dying = putt(20, 0, nil, nil)
 	local cup: ShotPhysics.Cup = { X = dying.FinalX * 0.98, Z = 0 }
 	local drop = putt(20, 0, nil, cup)
-	expect("Slow putt through the cup is holed (ball snaps to the cup)", drop.Outcome == "Holed" and math.abs(drop.FinalX - cup.X) < 1e-9)
+	expect("Slow putt through the cup is holed (its final spot is the cup)", drop.Outcome == "Holed" and math.abs(drop.FinalX - cup.X) < 1e-9)
 	local fast = putt(100, 0, nil, cup)
 	expect("Same line at 100% power rolls past the cup (lip-out)", fast.Outcome == "Rest" and fast.FinalX > cup.X + 5)
 	local offLine = putt(20, 0, nil, { X = cup.X, Z = 0.6 })
@@ -3827,7 +3827,7 @@ do
 	expect("The flagstick is thin, centred in the cup, and can't stop the ball (no collision, no raycast hits)",
 		pole ~= nil and pole.SX <= 0.2 and math.abs(pole.X - hole.Pin.X * SPM) < 1e-9 and not pole.CanCollide and not pole.CanQuery)
 	expect("The ball is small (like real golf) and the cup ~2-3x its size; out-of-bounds stakes are placed",
-		CourseLayout.BALL_DIAMETER <= 0.9 and CourseLayout.CUP_DIAMETER >= 2 * CourseLayout.BALL_DIAMETER and CourseLayout.CUP_DIAMETER <= 3 * CourseLayout.BALL_DIAMETER and partBy.OBStake_1 ~= nil)
+		CourseLayout.BALL_DIAMETER <= 0.5 and CourseLayout.CUP_DIAMETER >= 2 * CourseLayout.BALL_DIAMETER and CourseLayout.CUP_DIAMETER <= 3 * CourseLayout.BALL_DIAMETER and partBy.OBStake_1 ~= nil)
 	local captureStuds = Config.Physics.CupCaptureRadius * SPM
 	expect("A captured ball's centre is over the hole (capture radius < cup radius), so it can visibly drop in",
 		captureStuds < CourseLayout.CUP_DIAMETER / 2 and captureStuds > CourseLayout.CUP_DIAMETER / 4)

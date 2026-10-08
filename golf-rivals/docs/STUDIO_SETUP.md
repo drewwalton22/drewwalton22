@@ -256,6 +256,13 @@ created in code. **Delete the default Baseplate** (it overlaps the plaza).
 
 ## Hand-built holes (Workspace.GolfCourses)
 
+The game builds the cup at your `Pin` part automatically: it raycasts the green under the pin,
+carves the pocket if the green is Smooth Terrain, and adds the dark pocket, white rim and the
+invisible plug the physics rolls over. On a solid part / MeshPart green it can't open a real hole,
+so it draws the dark cup on top of the green and prints a "[GolfRivals][Cup]" warning; for a ball
+you can see lying in the cup, paint the green with Smooth Terrain (or leave a ~1-stud hole in
+your mesh at the pin).
+
 Build a hole anywhere in the world with Smooth Terrain and MeshParts, then:
 
 ```
@@ -309,9 +316,12 @@ Paste ids as `"rbxassetid://123456"`.
    their pattern (the Black Hole has a disc). New items have a pulsing pink NEW! badge.
 5. **Bot match** (Play > Easy):
    - Your golfer swings for real (R15 and R6), with the club resting on the ground behind the ball.
-   - The cup is a real hole in the green with a thin flagstick in the middle; the ball is small
-     and gets a white outline far away. A good putt drops into the hole with a click; a putt
-     charged too hard lips out and rolls on.
+   - The cup is a real 1-stud hole in the green: dark inside, a thin white rim, a thin
+     flagstick in the middle. The ball is small (0.4 studs, below your avatar's ankle) and gets
+     a white outline far away. A good putt rolls to the hole's edge, drops in with a click and
+     lies on the bottom beside the pole; a putt charged too hard lips out and rolls on.
+   - Output shows no "[GolfRivals][Cup]" warnings. If one appears it says which step failed
+     (green not found, terrain carve failed, green solid at the pin).
    - On the green there is no aerial view: the camera sits behind you, a dotted putting line
      follows the slope, and the meter is marked in feet with a flag at the hole's distance.
 6. **Podium.** After the last hole you see a lit studio stage: both golfers clearly visible, the

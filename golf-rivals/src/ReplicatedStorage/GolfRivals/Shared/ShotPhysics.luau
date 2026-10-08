@@ -282,6 +282,16 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 				break
 			end
 
+			-- A slow ball bouncing onto the cup drops in (no snap: the ball keeps
+			-- the spot it touched down on; the client animates the drop from there).
+			if cup then
+				local dx, dz = x - cup.X, z - cup.Z
+				if math.sqrt(dx * dx + dz * dz) < P.CupCaptureRadius and math.sqrt(vx * vx + vz * vz) < P.CupCaptureSpeed and math.abs(vy) < P.CupBounceCaptureSpeed then
+					outcome = "Holed"
+					break
+				end
+			end
+
 			local _, def = surfaceAt(terrain, x, z)
 			if def.Sinks then
 				outcome = "Water"
@@ -386,7 +396,8 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 			if cup then
 				local dx, dz = x - cup.X, z - cup.Z
 				if math.sqrt(dx * dx + dz * dz) < P.CupCaptureRadius and math.sqrt(rvx * rvx + rvz * rvz) < P.CupCaptureSpeed then
-					x, z = cup.X, cup.Z
+					-- Holed. The last sample stays where the ball was caught (at the
+					-- hole's edge), not snapped to the pole; FinalX/Z report the cup.
 					outcome = "Holed"
 					break
 				end
@@ -400,7 +411,12 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 		landingX, landingZ = 0, 0
 	end
 
-	local total = math.sqrt(x * x + z * z) / P.YardsToMeters
+	-- A holed ball's samples end where it was caught; its final spot is the cup.
+	local finalX, finalZ = x, z
+	if outcome == "Holed" and cup then
+		finalX, finalZ = cup.X, cup.Z
+	end
+	local total = math.sqrt(finalX * finalX + finalZ * finalZ) / P.YardsToMeters
 	local carry = if launch.IsPutt then 0 else math.sqrt(landingX * landingX + landingZ * landingZ) / P.YardsToMeters
 	local spinRpm = math.sqrt(launch.BackspinRpm * launch.BackspinRpm + launch.SidespinRpm * launch.SidespinRpm)
 	return {
@@ -411,14 +427,14 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 		ApexFeet = apex * P.MetersToFeet,
 		SpinRpm = if launch.IsPutt then 0 else spinRpm,
 		BallSpeedMph = launch.BallSpeed / P.MphToMetersPerSec,
-		LateralYds = z / P.YardsToMeters,
+		LateralYds = finalZ / P.YardsToMeters,
 		FlightSeconds = flightSeconds,
 		TotalSeconds = t,
 		LandingX = landingX,
 		LandingZ = landingZ,
-		FinalX = x,
+		FinalX = finalX,
 		FinalY = y,
-		FinalZ = z,
+		FinalZ = finalZ,
 		Samples = samples,
 	}
 end

@@ -15,15 +15,17 @@
 	a lagging Beam ribbon). `burst` is a plain particle pop (water splash etc.);
 	hole-drop effects use CosmeticBuilder.holeEffect.
 
-	SIZE: CourseLayout.BALL_DIAMETER (0.8 studs - small like real golf). So it stays
+	SIZE: CourseLayout.BALL_DIAMETER (0.4 studs - below an avatar's ankle). So it stays
 	easy to see, it keeps its trail and gets a white OUTLINE (a Highlight) whenever
 	it's more than OUTLINE_DISTANCE studs from the camera.
 
-	HOLE DROP: when a shot is holed the ball doesn't stop on top of the cup - after
-	its last sample it slides to the cup centre and FALLS into the real pocket cut
-	in the green (TerrainPlan.CUP_DEPTH deep), with a rattle sound
-	(Assets.sound("CupDrop")). The ball is anchored and CanCollide = false, so
-	nothing physical can catch it on the way down; it stays visible in the cup.
+	HOLE DROP: the physics catches a holed ball at the hole's EDGE (it no longer
+	snaps to the pole). From there the ball keeps travelling across the hole while
+	it falls (CupGeometry.dropAt), lands on the pocket's floor against the far wall
+	beside the flagstick, rattles once (Assets.sound("CupDrop")) and stays there,
+	its top below the green surface. A tap-in that stopped short first rolls to
+	the edge. restInCup() puts a holed ball back in the same spot whenever the
+	match state is re-applied.
 ]]
 
 local Debris = game:GetService("Debris")
@@ -34,7 +36,7 @@ local Shared = ReplicatedStorage.GolfRivals.Shared
 local CosmeticsData = require(Shared.CosmeticsData)
 local CourseLayout = require(Shared.CourseLayout)
 local TelemetryView = require(Shared.TelemetryView)
-local TerrainPlan = require(Shared.TerrainPlan)
+local CupGeometry = require(Shared.CupGeometry)
 local Assets = require(Shared.Assets)
 
 local CosmeticBuilder = require(script.Parent.Parent.Golf.CosmeticBuilder)
@@ -50,6 +52,7 @@ export type Animator = {
 	setVisible: (visible: boolean) -> (),
 	play: (shot: any, toWorld: (number, number, number) -> Vector3, onFrame: ((t: number, position: Vector3) -> ())?, onDone: (() -> ())?) -> (),
 	stop: () -> (),
+	restInCup: (cupSurface: Vector3) -> (), -- cupSurface = turf point at the cup centre
 	destroy: () -> (),
 }
 
@@ -57,8 +60,7 @@ local BallAnimator = {}
 
 local BALL_DIAMETER = CourseLayout.BALL_DIAMETER
 local LIFT = BALL_DIAMETER / 2 + 0.1 -- centre above the ground (the green turf sits 0.1 proud)
-local DROP_GRAVITY = 120 -- studs/s^2 for the drop into the cup (stylised, snappy)
-local DROP_DEPTH = TerrainPlan.CUP_DEPTH - 0.08 -- to the bottom of the cup's pocket
+local ROLL_IN_SPEED = 4 -- studs/s: a tap-in rolling up to the hole's edge
 local OUTLINE_DISTANCE = 35 -- studs from the camera before the outline turns on
 
 local function playSound(parent: Instance, id: string, volume: number)
@@ -130,6 +132,76 @@ function BallAnimator.new(parent: Instance, appearance: Appearance, name: string
 		ball.CFrame = CFrame.new(target) * spin
 	end
 
+	local function setVisible(visible: boolean)
+		CosmeticBuilder.setBallVisible(ball, visible) -- the pattern and its effects too
+	end
+
+	-- Where a holed ball lies: its side of the cup (from the drop), its depth.
+	local restSide: Vector3? = nil
+	local droppedAt: Vector3? = nil -- the cup this ball last dropped into (exact surface)
+	local function restInCup(cupSurface: Vector3)
+		local surface = cupSurface
+		local known = droppedAt
+		if known and Vector3.new(known.X - surface.X, 0, known.Z - surface.Z).Magnitude < 0.6 then
+			surface = known -- the same cup it just dropped into: don't move it
+		else
+			restSide = nil
+		end
+		local side = restSide or Vector3.xAxis
+		ball.CFrame = CFrame.new(surface + side * CupGeometry.restOffset() - Vector3.new(0, CupGeometry.restDepth(), 0)) * spin
+		setVisible(true)
+	end
+
+	-- The holed ball rolls to the hole's edge (if it stopped short), falls in
+	-- toward the far wall, rattles on the bottom and stays there.
+	local function dropIntoCup(shot: any, samples: { { number } }, toWorld: (number, number, number) -> Vector3, onDone: (() -> ())?)
+		local last = samples[#samples]
+		local cupSurface = if shot.End then toWorld(shot.End.X, last[3], shot.End.Z) else ball.Position - Vector3.new(0, LIFT, 0)
+		-- Horizontal velocity at the moment it was caught (studs/s).
+		local velocity = Vector3.zero
+		local before = samples[#samples - 1]
+		if before and last[1] - before[1] > 1e-3 then
+			local d = toWorld(last[2], last[3], last[4]) - toWorld(before[2], before[3], before[4])
+			velocity = Vector3.new(d.X, 0, d.Z) / (last[1] - before[1])
+		end
+		local start = ball.Position - cupSurface
+		local entry = Vector3.new(start.X, 0, start.Z)
+		local rollFrom, rollTime = entry, 0
+		local edge = CupGeometry.RADIUS - 0.05
+		if entry.Magnitude > edge then
+			-- Stopped short (a tap-in): roll up to the edge first.
+			rollTime = math.min((entry.Magnitude - edge) / ROLL_IN_SPEED, 0.6)
+			local inward = -entry.Unit
+			velocity = inward * math.max(velocity.Magnitude, 1.5)
+			entry = -inward * edge
+		end
+		local clock = 0.0
+		local dropped = false
+		connection = RunService.RenderStepped:Connect(function(dt: number)
+			clock += dt
+			if clock < rollTime then
+				local p = rollFrom:Lerp(entry, clock / rollTime)
+				placeAt(cupSurface + p)
+				return
+			end
+			if not dropped then
+				dropped = true
+				playSound(ball, Assets.sound("CupDrop"), 0.9)
+			end
+			local d = CupGeometry.dropAt(clock - rollTime, entry.X, entry.Z, velocity.X, velocity.Z, LIFT)
+			ball.CFrame = CFrame.new(cupSurface + Vector3.new(d.X, d.Y, d.Z)) * spin
+			if d.Done then
+				local side = Vector3.new(d.X, 0, d.Z)
+				restSide = if side.Magnitude > 1e-4 then side.Unit else nil
+				droppedAt = cupSurface
+				stop() -- resting in the bottom of the cup
+				if onDone then
+					onDone()
+				end
+			end
+		end)
+	end
+
 	local function play(shot: any, toWorld: (number, number, number) -> Vector3, onFrame: ((t: number, position: Vector3) -> ())?, onDone: (() -> ())?)
 		stop()
 		local samples = shot.Samples :: { { number } }
@@ -149,26 +221,10 @@ function BallAnimator.new(parent: Instance, appearance: Appearance, name: string
 			end
 			if clock >= duration then
 				stop()
-				if shot.Holed or shot.Outcome == "Holed" then
-					-- Slide to the cup centre and fall into it.
-					local rest = ball.Position
-					local last = samples[#samples]
-					local cup = if shot.End then toWorld(shot.End.X, last[3], shot.End.Z) + Vector3.new(0, LIFT, 0) else rest
-					local fall = 0.0
-					playSound(ball, Assets.sound("CupDrop"), 0.9)
-					connection = RunService.RenderStepped:Connect(function(dt: number)
-						fall += dt
-						local slide = math.clamp(fall / 0.08, 0, 1)
-						local centre = rest:Lerp(Vector3.new(cup.X, rest.Y, cup.Z), slide)
-						local depth = math.min(DROP_DEPTH, 0.5 * DROP_GRAVITY * fall * fall)
-						ball.CFrame = CFrame.new(centre - Vector3.new(0, depth, 0)) * spin
-						if depth >= DROP_DEPTH then
-							stop() -- resting in the bottom of the cup
-							if onDone then
-								onDone()
-							end
-						end
-					end)
+				if shot.PickedUp then
+					setVisible(false) -- picked up (stroke limit): nothing drops
+				elseif shot.Holed or shot.Outcome == "Holed" then
+					dropIntoCup(shot, samples, toWorld, onDone)
 					return
 				end
 				if onDone then
@@ -181,11 +237,10 @@ function BallAnimator.new(parent: Instance, appearance: Appearance, name: string
 	return {
 		Part = ball,
 		placeAt = placeAt,
-		setVisible = function(visible: boolean)
-			CosmeticBuilder.setBallVisible(ball, visible) -- the pattern and its effects too
-		end,
+		setVisible = setVisible,
 		play = play,
 		stop = stop,
+		restInCup = restInCup,
 		destroy = function()
 			stop()
 			outlineConnection:Disconnect()

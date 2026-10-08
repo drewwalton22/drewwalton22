@@ -56,8 +56,8 @@ CourseLayout.PIN_HEIGHT = 7 -- studs
 -- reads on screen; the cup is drawn big (arcade style) and the physics capture
 -- radius (Config.Physics.CupCaptureRadius) is sized so a ball that drops always
 -- visibly overlaps the black hole.
-CourseLayout.BALL_DIAMETER = 0.8 -- small like real golf (an outline keeps it visible far away)
-CourseLayout.CUP_DIAMETER = 1.9 -- ~2.4x the ball, like a real cup
+CourseLayout.BALL_DIAMETER = 0.4 -- below an R15 ankle (an outline keeps it visible far away)
+CourseLayout.CUP_DIAMETER = 1.0 -- 2.5x the ball, like a real cup
 
 local SPM = CourseLayout.STUDS_PER_METER
 
