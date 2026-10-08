@@ -6,12 +6,66 @@
       "$className": "ReplicatedStorage",
       "GolfRivals": {
         "$path": "src/ReplicatedStorage/GolfRivals"
+      },
+      "GolfRivalsAssets": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "Clubs": {
+          "$className": "Folder",
+          "$ignoreUnknownInstances": true
+        }
       }
     },
     "ServerScriptService": {
       "$className": "ServerScriptService",
       "GolfRivals": {
         "$path": "src/ServerScriptService/GolfRivals"
+      }
+    },
+    "ServerStorage": {
+      "$className": "ServerStorage",
+      "$ignoreUnknownInstances": true,
+      "GolfRivalsAssets": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "Decor": {
+          "$className": "Folder",
+          "$ignoreUnknownInstances": true,
+          "Tree": {
+            "$className": "Folder",
+            "$ignoreUnknownInstances": true
+          },
+          "Bush": {
+            "$className": "Folder",
+            "$ignoreUnknownInstances": true
+          },
+          "Rock": {
+            "$className": "Folder",
+            "$ignoreUnknownInstances": true
+          },
+          "GrassPatch": {
+            "$className": "Folder",
+            "$ignoreUnknownInstances": true
+          }
+        }
+      },
+      "GolfRivals": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true,
+        "AnimationsToPublish": {
+          "$path": "assets/animations"
+        }
+      }
+    },
+    "Workspace": {
+      "$className": "Workspace",
+      "$ignoreUnknownInstances": true,
+      "$properties": {
+        "StreamingEnabled": false
+      },
+      "GolfCourses": {
+        "$className": "Folder",
+        "$ignoreUnknownInstances": true
       }
     },
     "StarterPlayer": {

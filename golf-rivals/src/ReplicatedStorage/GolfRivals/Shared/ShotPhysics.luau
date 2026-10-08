@@ -54,6 +54,10 @@ export type Terrain = {
 	lieAt: (x: number, z: number) -> Types.LieId,
 	-- Surface gradient (dh/dx, dh/dz), dimensionless (0.03 = 3% slope).
 	slopeAt: (x: number, z: number) -> (number, number),
+	-- Optional per-surface physics (bounce, roll friction...) overriding the lie's
+	-- defaults - e.g. a raycast terrain returns the Smooth Terrain material's own
+	-- values (rock bounces more than grass). nil = Config.Lies[lie].
+	physicsAt: ((x: number, z: number) -> Config.LieDef?)?,
 }
 
 export type Wind = { X: number, Z: number } -- m/s the air moves toward (+X tailwind, +Z blows right)
@@ -66,6 +70,9 @@ export type Launch = {
 	SidespinRpm: number, -- + hook (left), - slice (right)
 	AimOffsetRad: number, -- putts only: aim error, + = right
 	IsPutt: boolean,
+	-- Spin-stat grip: multiplies the landing backspin brake (nil = 1). Changes how
+	-- quickly the ball stops after landing, never the carry.
+	GripMult: number?,
 }
 
 export type Sample = { T: number, X: number, Y: number, Z: number }
@@ -116,6 +123,30 @@ function ShotPhysics.flatTerrain(lie: Types.LieId): Terrain
 	}
 end
 
+-- Lie and bounce/roll physics of the surface under (x, z).
+local function surfaceAt(terrain: Terrain, x: number, z: number): (Types.LieId, Config.LieDef)
+	local lie = terrain.lieAt(x, z)
+	local custom = if terrain.physicsAt then terrain.physicsAt(x, z) else nil
+	return lie, custom or Config.Lies[lie]
+end
+
+-- The cup's "magnet": a gentle pull toward the hole for a slow ball near the
+-- rim (forgiving putts and chips). Acceleration (m/s^2) toward the cup centre:
+--   a = MagnetAccel * (1 - d / MagnetRadius)   for d < MagnetRadius and
+--   ball speed < MagnetMaxSpeed; zero otherwise.
+function ShotPhysics.magnetAt(cup: Cup?, x: number, z: number, speed: number): (number, number)
+	if cup == nil or speed > P.MagnetMaxSpeed then
+		return 0, 0
+	end
+	local dx, dz = cup.X - x, cup.Z - z
+	local d = math.sqrt(dx * dx + dz * dz)
+	if d >= P.MagnetRadius or d < 1e-9 then
+		return 0, 0
+	end
+	local a = P.MagnetAccel * (1 - d / P.MagnetRadius)
+	return dx / d * a, dz / d * a
+end
+
 local function surfaceNormal(terrain: Terrain, x: number, z: number): (number, number, number)
 	local gx, gz = terrain.slopeAt(x, z)
 	-- Surface y = h(x,z) has normal (-dh/dx, 1, -dh/dz), normalised.
@@ -124,8 +155,10 @@ local function surfaceNormal(terrain: Terrain, x: number, z: number): (number, n
 end
 
 export type Options = {
-	-- Stop at the first touchdown (used by carry calibration).
+	-- Stop at the first touchdown (used by carry calibration and the aim arc).
 	CarryOnly: boolean?,
+	-- With CarryOnly: still record trajectory samples (calibration skips them for speed).
+	KeepSamples: boolean?,
 }
 
 -- Simulates one shot. `cup` is optional (greens only matter near the hole).
@@ -133,6 +166,7 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 	local windX = if wind then wind.X else 0
 	local windZ = if wind then wind.Z else 0
 	local carryOnly = options ~= nil and options.CarryOnly == true
+	local skipSamples = carryOnly and not (options ~= nil and options.KeepSamples == true)
 
 	local x, z = 0.0, 0.0
 	local startY = terrain.heightAt(0, 0)
@@ -146,7 +180,7 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 	local samples: { Sample } = {}
 	local nextSample = 0.0
 	local function record(force: boolean)
-		if carryOnly then
+		if skipSamples then
 			return
 		end
 		if force or t >= nextSample then
@@ -248,8 +282,17 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 				break
 			end
 
-			local lie = terrain.lieAt(x, z)
-			local def = Config.Lies[lie]
+			-- A slow ball bouncing onto the cup drops in (no snap: the ball keeps
+			-- the spot it touched down on; the client animates the drop from there).
+			if cup then
+				local dx, dz = x - cup.X, z - cup.Z
+				if math.sqrt(dx * dx + dz * dz) < P.CupCaptureRadius and math.sqrt(vx * vx + vz * vz) < P.CupCaptureSpeed and math.abs(vy) < P.CupBounceCaptureSpeed then
+					outcome = "Holed"
+					break
+				end
+			end
+
+			local _, def = surfaceAt(terrain, x, z)
 			if def.Sinks then
 				outcome = "Water"
 				break
@@ -260,7 +303,7 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 			local vn = vx * nx + vy * ny + vz * nz
 			local tx, ty, tz = vx - vn * nx, vy - vn * ny, vz - vn * nz
 			local backspinRpm = wz / RPM_TO_RADS
-			local brake = P.BackspinBrake * math.clamp(backspinRpm / P.SpinReferenceRpm, 0, 1.5)
+			local brake = P.BackspinBrake * math.clamp(backspinRpm / P.SpinReferenceRpm, 0, 1.5) * (launch.GripMult or 1)
 			local retain = math.max(P.MinTangentRetain, def.TangentRetain * (1 - brake))
 			local vnOut = -vn * def.Restitution
 
@@ -309,8 +352,7 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 		local rvx, rvz = vx, vz
 		local rollT = 0.0
 		while rollT < P.MaxRollSeconds do
-			local lie = terrain.lieAt(x, z)
-			local def = Config.Lies[lie]
+			local _, def = surfaceAt(terrain, x, z)
 			if def.Sinks then
 				outcome = "Water"
 				break
@@ -318,22 +360,25 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 
 			local mu = def.RollFriction
 			local gx, gz = terrain.slopeAt(x, z)
-			local gradMag = math.sqrt(gx * gx + gz * gz)
 			local speed = math.sqrt(rvx * rvx + rvz * rvz)
+			-- Driving force per unit mass: gravity down the slope + the cup magnet.
+			local mx, mz = ShotPhysics.magnetAt(cup, x, z, speed)
+			local fx, fz = -P.Gravity * gx + mx, -P.Gravity * gz + mz
+			local fMag = math.sqrt(fx * fx + fz * fz)
+			local grip = mu * P.Gravity
 
 			if speed <= 1e-6 then
-				-- At rest: static friction holds the ball unless the slope beats it.
-				if gradMag <= mu then
+				-- At rest: static friction holds the ball unless slope + magnet beat it.
+				if fMag <= grip then
 					break
 				end
-				-- Slide downhill: net acceleration g * (|grad| - mu) along -grad.
-				local a = P.Gravity * (gradMag - mu)
-				rvx = -gx / gradMag * a * rdt
-				rvz = -gz / gradMag * a * rdt
+				local a = fMag - grip
+				rvx = fx / fMag * a * rdt
+				rvz = fz / fMag * a * rdt
 			else
 				local dirX, dirZ = rvx / speed, rvz / speed
-				local nvx = rvx + (-P.Gravity * gx - mu * P.Gravity * dirX) * rdt
-				local nvz = rvz + (-P.Gravity * gz - mu * P.Gravity * dirZ) * rdt
+				local nvx = rvx + (fx - grip * dirX) * rdt
+				local nvz = rvz + (fz - grip * dirZ) * rdt
 				if nvx * dirX + nvz * dirZ <= 0 then
 					-- Friction reversed the motion: the ball has stopped.
 					nvx, nvz = 0, 0
@@ -350,8 +395,9 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 
 			if cup then
 				local dx, dz = x - cup.X, z - cup.Z
-				if math.sqrt(dx * dx + dz * dz) < P.CupRadius and math.sqrt(rvx * rvx + rvz * rvz) < P.CupCaptureSpeed then
-					x, z = cup.X, cup.Z
+				if math.sqrt(dx * dx + dz * dz) < P.CupCaptureRadius and math.sqrt(rvx * rvx + rvz * rvz) < P.CupCaptureSpeed then
+					-- Holed. The last sample stays where the ball was caught (at the
+					-- hole's edge), not snapped to the pole; FinalX/Z report the cup.
 					outcome = "Holed"
 					break
 				end
@@ -365,7 +411,12 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 		landingX, landingZ = 0, 0
 	end
 
-	local total = math.sqrt(x * x + z * z) / P.YardsToMeters
+	-- A holed ball's samples end where it was caught; its final spot is the cup.
+	local finalX, finalZ = x, z
+	if outcome == "Holed" and cup then
+		finalX, finalZ = cup.X, cup.Z
+	end
+	local total = math.sqrt(finalX * finalX + finalZ * finalZ) / P.YardsToMeters
 	local carry = if launch.IsPutt then 0 else math.sqrt(landingX * landingX + landingZ * landingZ) / P.YardsToMeters
 	local spinRpm = math.sqrt(launch.BackspinRpm * launch.BackspinRpm + launch.SidespinRpm * launch.SidespinRpm)
 	return {
@@ -376,14 +427,14 @@ function ShotPhysics.simulate(launch: Launch, terrain: Terrain, wind: Wind?, cup
 		ApexFeet = apex * P.MetersToFeet,
 		SpinRpm = if launch.IsPutt then 0 else spinRpm,
 		BallSpeedMph = launch.BallSpeed / P.MphToMetersPerSec,
-		LateralYds = z / P.YardsToMeters,
+		LateralYds = finalZ / P.YardsToMeters,
 		FlightSeconds = flightSeconds,
 		TotalSeconds = t,
 		LandingX = landingX,
 		LandingZ = landingZ,
-		FinalX = x,
+		FinalX = finalX,
 		FinalY = y,
-		FinalZ = z,
+		FinalZ = finalZ,
 		Samples = samples,
 	}
 end

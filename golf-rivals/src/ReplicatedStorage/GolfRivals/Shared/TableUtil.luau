@@ -23,6 +23,19 @@ function TableUtil.deepFreeze(value: any): any
 	return table.freeze(value)
 end
 
+-- Recursive copy of plain data tables (no metatables, no cycles). Used to
+-- snapshot profiles for saving and to hand clients their own copy.
+function TableUtil.deepCopy(value: any): any
+	if type(value) ~= "table" then
+		return value
+	end
+	local copy: { [any]: any } = {}
+	for key, child in value do
+		copy[key] = TableUtil.deepCopy(child)
+	end
+	return copy
+end
+
 -- Returns the keys of a dictionary sorted ascending. Dictionary iteration
 -- order is NOT stable in Luau, and anything that must be identical on every
 -- server (daily shop rotation, drop pools) has to iterate in a fixed order.

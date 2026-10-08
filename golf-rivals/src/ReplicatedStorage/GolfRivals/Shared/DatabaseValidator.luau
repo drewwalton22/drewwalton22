@@ -18,6 +18,8 @@ local Rarity = require(script.Parent.Rarity)
 local ItemDatabase = require(script.Parent.ItemDatabase)
 local CaseDatabase = require(script.Parent.CaseDatabase)
 local ClubDatabase = require(script.Parent.ClubDatabase)
+local ProfileTemplate = require(script.Parent.ProfileTemplate)
+local QuestDatabase = require(script.Parent.QuestDatabase)
 
 local DatabaseValidator = {}
 
@@ -116,10 +118,13 @@ function DatabaseValidator.run(): { string }
 	-- 5) CLUBS -------------------------------------------------------------
 	for _, club in ClubDatabase.Ordered do
 		local s = club.BaseStats
-		for _, statValue in { s.Distance, s.Accuracy, s.Forgiveness } do
+		for _, statValue in { s.Power, s.Accuracy, s.Spin } do
 			check(statValue >= 1 and statValue <= Config.Clubs.StatCap, `club {club.Id}: stat out of range`)
 		end
 	end
+	-- Exactly the six club categories, one skin slot each.
+	check(#ClubDatabase.BagSlots == 6, "the bag must have exactly six club categories")
+	check(#ItemDatabase.ClubClasses == #ClubDatabase.BagSlots, "every club category needs a skin slot")
 	-- A brand-new player must be able to fill the whole bag for free.
 	for _, slot in ClubDatabase.BagSlots do
 		local hasStarter = false
@@ -142,6 +147,18 @@ function DatabaseValidator.run(): { string }
 		)
 		lastFee = league.EntryFee
 	end
+
+	-- 7) QUESTS ------------------------------------------------------------
+	local freshStats = ProfileTemplate.new(0).Stats :: any
+	for _, quest in QuestDatabase.All do
+		check(type(freshStats[quest.Stat]) == "number", `quest {quest.Id}: stat {quest.Stat} is not a profile counter`)
+		check(quest.Target > 0, `quest {quest.Id}: target must be positive`)
+		check((quest.Reward.Coins or 0) > 0 or (quest.Reward.Gems or 0) > 0, `quest {quest.Id}: needs a coin or gem reward`)
+		check(quest.Period == "Lifetime" or quest.Kind == "Delta", `quest {quest.Id}: only lifetime quests may use absolute (Value) stats`)
+	end
+	check(#QuestDatabase.Pools.Daily >= QuestDatabase.DailyCount * 2, "daily quest pool too small to rotate")
+	check(#QuestDatabase.Pools.Weekly >= QuestDatabase.WeeklyCount * 2, "weekly quest pool too small to rotate")
+	check(#QuestDatabase.Pools.Lifetime > 0, "no lifetime quests")
 
 	return errors
 end

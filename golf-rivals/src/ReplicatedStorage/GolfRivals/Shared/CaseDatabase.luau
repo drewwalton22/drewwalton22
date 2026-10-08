@@ -57,7 +57,7 @@ local cases: { [string]: CaseDef } = {
 	club_skins_case = {
 		Id = "club_skins_case",
 		Name = "Club Skins Case",
-		Description = "Contains skins for Drivers, Woods, Irons, Wedges and Putters.",
+		Description = "Skins for all six clubs: Driver, Fairway Wood, Long Iron, Short Iron, Wedge and Putter.",
 		Category = "ClubSkin",
 		Price = { Currency = "Coins", Amount = 5000 },
 		DropWeights = CaseDatabase.DefaultDropWeights,

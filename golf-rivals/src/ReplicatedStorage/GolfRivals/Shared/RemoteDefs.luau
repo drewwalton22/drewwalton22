@@ -48,7 +48,8 @@ local RemoteDefs = {}
 local UI_ACTION: RateLimit = { Capacity = 5, RefillPerSec = 1 } -- buttons: buy, equip, upgrade
 local UI_QUERY: RateLimit = { Capacity = 5, RefillPerSec = 2 } -- read-only fetches
 local HEAVY_ACTION: RateLimit = { Capacity = 3, RefillPerSec = 0.5 } -- case opens, trade-ups
-local SWING: RateLimit = { Capacity = 6, RefillPerSec = 2 } -- 3 clicks per shot, with slack
+local SWING: RateLimit = { Capacity = 6, RefillPerSec = 2 } -- 2 clicks per shot, with slack
+local AIM: RateLimit = { Capacity = 10, RefillPerSec = 5 } -- dragging the aerial reticle (client throttles to 4/s)
 
 RemoteDefs.List = {
 	-- ---- Gameplay ----------------------------------------------------------
@@ -56,20 +57,34 @@ RemoteDefs.List = {
 		Name = "SubmitSwing",
 		Kind = "Event",
 		Direction = "ClientToServer",
-		Doc = "(power: number 0-100, accuracyOffset: number -1..1) Click-2 locked power and the Click-3 timing offset from the green zone centre (negative = early = slice, positive = late = hook). The server recomputes the whole shot from these two numbers and rejects submissions faster than a human could click.",
+		Doc = "(power: number 0-100, accuracyOffset: number -1..1) Click-1 locked power and the Click-2 accuracy offset from the sweet spot (negative = early = slice, positive = late = hook). The server recomputes the whole shot from these two numbers and rejects submissions faster than a human could click.",
 		Limit = SWING,
+	},
+	{
+		Name = "SelectClub",
+		Kind = "Event",
+		Direction = "ClientToServer",
+		Doc = "(categoryLabel: 'DR'|'FW'|'LI'|'SI'|'WG'|'PT') Choose which bag slot the next swing uses. The server uses the profile's equipped club and its stats.",
+		Limit = UI_ACTION,
+	},
+	{
+		Name = "SetAim",
+		Kind = "Event",
+		Direction = "ClientToServer",
+		Doc = "(aimDegrees: number, +/-Config.Match.MaxAimDegrees) Aim offset from the pin line (negative = left, positive = right); sent while dragging the aerial target reticle.",
+		Limit = AIM,
 	},
 	{
 		Name = "ShotResult",
 		Kind = "Event",
 		Direction = "ServerToClient",
-		Doc = "(result: table) Authoritative flight: sampled trajectory points plus carry/total/roll yards, apex height and spin RPM for the telemetry overlay.",
+		Doc = "(shot: table) Authoritative shot from MatchEngine: PlayerId, ClubLabel, Quality, Start/End positions, Outcome, Penalty/Holed flags, Telemetry {CarryYds, TotalYds, RollYds, ApexFeet, SpinRpm, LateralYds...} and AirSeconds (touchdown), TotalSeconds, and Samples {t,x,y,z} in the hole frame for the ball animation.",
 	},
 	{
 		Name = "MatchState",
 		Kind = "Event",
 		Direction = "ServerToClient",
-		Doc = "(state: table) Whose turn, hole number, par, yards-to-pin, wind, scores. Sent on every change.",
+		Doc = "(state: table) MatchEngine snapshot + MatchId (arena index): Phase, HoleIndex/HoleCount, Hole {Par, Yards, Tee, Pin}, Wind, ActiveId, TurnSecondsLeft, Players {Position, YardsToPin, Lie, Strokes, Total, Cosmetics...}, Finished/Result. Sent on every change.",
 	},
 
 	-- ---- Profile / inventory ----------------------------------------------
@@ -77,7 +92,7 @@ RemoteDefs.List = {
 		Name = "GetProfile",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "() -> profile snapshot: currencies, owned items, equipped loadout, club upgrade levels, quests.",
+		Doc = "() -> { ok, profile?, reason? } profile = ProfileTemplate.clientView: currencies, owned items, equipped loadout, club upgrade levels, stats, quests. reason 'not_loaded' if the server could not load the data.",
 		Limit = UI_QUERY,
 	},
 	{
@@ -101,10 +116,17 @@ RemoteDefs.List = {
 		Limit = UI_ACTION,
 	},
 	{
+		Name = "BuyClub",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "(clubId: string) -> { ok, reason? } Buy a club from the club shop for its coin price.",
+		Limit = UI_ACTION,
+	},
+	{
 		Name = "UpgradeClub",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(clubId: string, stat: 'Distance'|'Accuracy'|'Forgiveness') -> { ok, reason?, newLevel? } Spend coins to upgrade one stat.",
+		Doc = "(clubId: string, stat: 'Power'|'Accuracy'|'Spin') -> { ok, reason?, NewLevel?, Cost? } Spend coins to upgrade one stat.",
 		Limit = UI_ACTION,
 	},
 
@@ -113,7 +135,7 @@ RemoteDefs.List = {
 		Name = "GetShop",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "() -> { offers = {itemIds}, rotationEndsAt: number } Today's rotating shop.",
+		Doc = "() -> { ok, offers = { {ItemId, Rarity, Price, Purchased} }, EndsAt: number (unix) } Today's rotating shop.",
 		Limit = UI_QUERY,
 	},
 	{
@@ -127,21 +149,21 @@ RemoteDefs.List = {
 		Name = "OpenCases",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(caseId: string, count: integer 1..MaxCasesPerOpen) -> { ok, reason?, drops? } Server charges, rolls and grants everything atomically.",
+		Doc = "(caseId: string, count: integer 1..MaxCasesPerOpen) -> { ok, reason?, Drops = { {ItemId, Rarity, IsNew} }, Spent } Server charges, rolls and grants everything atomically.",
 		Limit = HEAVY_ACTION,
 	},
 	{
 		Name = "SellItems",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(itemIds: {string}) -> { ok, reason?, coinsGained? } Sell owned duplicates for coins.",
+		Doc = "(itemIds: {string}, repeat an id to sell several copies) -> { ok, reason?, CoinsGained? } Sell spare copies for coins.",
 		Limit = UI_ACTION,
 	},
 	{
 		Name = "TradeUp",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(itemIds: {string} of length TradeUp.InputCount) -> { ok, reason?, reward? } Consume inputs, grant one item of the next rarity.",
+		Doc = "(itemIds: {string} of length TradeUp.InputCount) -> { ok, reason?, Reward = {ItemId, Rarity, IsNew}? } Consume inputs, grant one item of the next rarity.",
 		Limit = HEAVY_ACTION,
 	},
 
@@ -150,7 +172,7 @@ RemoteDefs.List = {
 		Name = "QueueRanked",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(leagueId: string) -> { ok, reason? } Pay the entry fee and enter that league's queue.",
+		Doc = "(leagueId: string 'Rookie'|'Amateur'|'Pro'|'Champion') -> { ok, reason?, Fee? } Pay the entry fee (held until the match settles) and enter that league's queue.",
 		Limit = UI_ACTION,
 	},
 	{
@@ -170,17 +192,31 @@ RemoteDefs.List = {
 
 	-- ---- Quests / social ---------------------------------------------------
 	{
+		Name = "LeaveMatch",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "() -> { ok } Forfeit the current match (the opponent wins).",
+		Limit = UI_ACTION,
+	},
+	{
+		Name = "GetQuests",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "() -> { ok, Periods = { {Period, Quests = { {Id, Name, Progress, Target, Complete, Claimed, Reward} }, ResetsAt} }, Now } Daily / Weekly / Lifetime quests with live progress.",
+		Limit = UI_QUERY,
+	},
+	{
 		Name = "ClaimQuest",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "(questId: string) -> { ok, reason? } Claim a completed quest's coin/gem reward once.",
+		Doc = "(questId: string) -> { ok, reason?, Reward? } Claim a completed quest's coin/gem reward once.",
 		Limit = UI_ACTION,
 	},
 	{
 		Name = "GetLeaderboard",
 		Kind = "Function",
 		Direction = "ClientToServer",
-		Doc = "() -> { {rank, name, ovr}... } Top players for the lobby board.",
+		Doc = "() -> { ok, Entries = { {Rank, UserId, Name, Ovr} }, YourOvr } Top players by OVR for the lobby board.",
 		Limit = UI_QUERY,
 	},
 	{
@@ -188,6 +224,57 @@ RemoteDefs.List = {
 		Kind = "Event",
 		Direction = "ServerToClient",
 		Doc = "(message: string, kind: 'info'|'success'|'error') Toast text for the HUD.",
+	},
+
+	-- ---- Lobby zones: driving range + AFK lounge ---------------------------
+	{
+		Name = "RangeJoin",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "(bayId: number) -> { ok, reason?, BayId?, Earned?, Cap? } Take a free hitting bay you are standing next to.",
+		Limit = UI_ACTION,
+	},
+	{
+		Name = "RangeSwing",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "(clubLabel: string, aimDeg: number, power: 0-100, offset: -1..1) -> { ok, reason?, Shot?, Paid?, Earned?, Cap? } Hit a range ball. The server times the swing, simulates it (RangeRules) and pays coins for a ball at rest on a target, up to the daily cap.",
+		Limit = SWING,
+	},
+	{
+		Name = "RangeLeave",
+		Kind = "Event",
+		Direction = "ClientToServer",
+		Doc = "() Give the bay back.",
+		Limit = UI_ACTION,
+	},
+	-- ---- Daily wheelspin -------------------------------------------------------
+	{
+		Name = "GetWheel",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "() -> { ok, State = { FreeReady, SecondsUntilFree, ExtraSpins, CanSpin } } Wheel status for the wheel screen.",
+		Limit = UI_QUERY,
+	},
+	{
+		Name = "SpinWheel",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "() -> { ok, reason?, SegmentIndex?, Reward?, Angle?, State? } Spin (free spin first, then a bought one). The server rolls and grants the reward; Angle is where the wheel stops.",
+		Limit = HEAVY_ACTION,
+	},
+	{
+		Name = "BuyWheelSpin",
+		Kind = "Function",
+		Direction = "ClientToServer",
+		Doc = "() -> { ok, reason?, State? } Buy one extra spin with gems (Robux spins go through MarketplaceService + ProcessReceipt).",
+		Limit = UI_ACTION,
+	},
+	{
+		Name = "ZoneStatus",
+		Kind = "Event",
+		Direction = "ServerToClient",
+		Doc = "(status: { Zone: 'Afk', Inside: boolean, SecondsLeft: number?, Earned: number, Cap: number }) AFK lounge state for the lounge HUD (sent on enter/leave and each payout).",
 	},
 } :: { RemoteDef }
 

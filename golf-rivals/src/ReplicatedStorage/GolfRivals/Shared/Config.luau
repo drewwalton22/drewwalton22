@@ -16,14 +16,34 @@ export type LeagueDef = {
 	WinPayout: number, -- coins the winner receives
 }
 
+export type BotProfile = {
+	Stats: { Power: number, Accuracy: number, Spin: number }, -- applied to every club
+	PowerSigma: number, -- gauge execution noise, percentage points of power (std dev)
+	OffsetSigma: number, -- gauge execution noise on the accuracy offset (std dev, offset units)
+	BlunderChance: number, -- chance of a badly mistimed click (|offset| ~ 0.7)
+	WindAwareness: number, -- 0..1 fraction of the real wind the bot accounts for when planning
+	AimCandidates: { number }, -- aim offsets (degrees) the bot evaluates; picks the safest/closest
+	ClubMistakeChance: number, -- chance of picking a neighbouring club
+}
+
 export type LieDef = {
 	SpeedMult: number, -- multiplies ball speed when HITTING from this lie
 	SpinMult: number, -- multiplies backspin when hitting from this lie
-	AccuracyPenalty: number, -- 0..1 shrinks the green zone / amplifies curve (before Forgiveness)
+	AccuracyPenalty: number, -- 0..1 shrinks the green zone / amplifies curve (before Spin)
 	Restitution: number, -- vertical bounce: v_normal_out = Restitution * v_normal_in
 	TangentRetain: number, -- fraction of along-surface speed kept after impact (before backspin check)
 	RollFriction: number, -- rolling-resistance coefficient (decel = RollFriction * g)
 	Sinks: boolean, -- true = ball is lost on contact (water)
+}
+
+export type WheelSegment = {
+	Id: string,
+	Label: string,
+	Kind: "Coins" | "Gems" | "Cosmetic",
+	Amount: number?, -- Coins / Gems
+	Rarity: Types.RarityId?, -- Cosmetic: a random non-default item of this rarity
+	Weight: number,
+	Color: Types.RGB,
 }
 
 local Config = {}
@@ -34,6 +54,30 @@ Config.Economy = {
 	StartingGems = 0,
 	-- Cap on cases opened in one request (the "Open x3" UI + anti-spam).
 	MaxCasesPerOpen = 10,
+	SellBatchMax = 200, -- most item entries in one Sell request
+	-- Hard caps keep balances exact (doubles are exact below 2^53) and bound
+	-- the damage of any future duplication bug.
+	MaxCoins = 1e12,
+	MaxGems = 1e9,
+}
+
+-- PLAYER DATA (DataStore) -----------------------------------------------
+-- Session locking: a server writes its JobId + a timestamp into the record when
+-- it loads a profile and refreshes the timestamp on every autosave. Another
+-- server sees a lock younger than LockTimeoutSeconds and refuses to load (the
+-- player is retried, then told to rejoin). A lock older than the timeout is
+-- treated as a crashed server and may be taken over.
+Config.Data = {
+	StoreName = "GolfRivalsProfiles",
+	KeyPrefix = "Player_",
+	AutosaveSeconds = 60, -- must be well below LockTimeoutSeconds
+	LockTimeoutSeconds = 600,
+	LoadAttempts = 6, -- tries when the profile is locked or the DataStore errors
+	LoadRetrySeconds = 3,
+	ReleaseAttempts = 3,
+	-- After a purchase/case/trade the server saves within this many seconds
+	-- (debounced) instead of waiting for the next autosave.
+	SaveSoonSeconds = 5,
 }
 
 -- DAILY ROTATING SHOP ---------------------------------------------------
@@ -72,23 +116,36 @@ Config.Clubs = {
 	UpgradeCostBase = 500,
 	UpgradeCostGrowth = 1.35,
 	-- Overall (OVR) = weighted stat average. 0.4/0.3/0.3 reproduces the mockup:
-	-- Distance 92, Accuracy 78, Forgiveness 85 -> 36.8 + 23.4 + 25.5 = 85.7 -> 86.
-	OVRWeights = { Distance = 0.4, Accuracy = 0.3, Forgiveness = 0.3 },
+	-- Power 92, Accuracy 78, Spin 85 -> 36.8 + 23.4 + 25.5 = 85.7 -> 86.
+	OVRWeights = { Power = 0.4, Accuracy = 0.3, Spin = 0.3 },
 }
 
--- 3-CLICK SWING --------------------------------------------------------
--- Click 1 starts the gauge, click 2 locks power, click 3 locks accuracy.
---   power marker:   m(t) = (t - t1) / RiseSeconds                 (0 -> 1)
---   after click 2:  marker falls back to the green zone's centre, reaching it
---                   at  tCenter = t2 + power * FallSeconds
---   accuracy:       offset = clamp((t3 - tCenter) / AccuracyWindowSeconds, -1, 1)
---                   offset < 0 = clicked EARLY = slice (curves right)
---                   offset > 0 = clicked LATE  = hook  (curves left)
+-- 2-STAGE SWING (timing bar) -----------------------------------------
+-- Stage 1: the power marker sweeps 0 -> 100% -> 0 ... ; click 1 locks power.
+-- Stage 2: a needle crosses the accuracy track left -> right; click 2 on the
+--          centre SWEET SPOT hits it straight:
+--            offset = -1 + 2 * (t - t1) / AccuracySweepSeconds   (-1..1)
+--            offset < 0 = clicked EARLY = slice (curves right)
+--            offset > 0 = clicked LATE  = hook  (curves left)
+-- All four speeds are designer knobs: bigger = slower = easier to time.
 -- Skill only: no random numbers anywhere in shot resolution.
 Config.Swing = {
-	RiseSeconds = 1.1, -- 0% -> 100% power takes this long
-	FallSeconds = 0.9, -- 100% -> centre takes this long (scaled by locked power)
-	AccuracyWindowSeconds = 0.30, -- |offset| = 1 at this many seconds from the centre
+	PowerSweepSeconds = 1.8, -- full swings: 0% -> 100% takes this long (then back down)
+	AccuracySweepSeconds = 1.6, -- full swings: needle crosses the whole track (sweet spot at half-way)
+	PuttPowerSweepSeconds = 3.2, -- putts: much slower for fine pace control
+	PuttAccuracySweepSeconds = 2.6,
+	-- Putter meter (auto-scaled, linear): full scale = PuttMeterScale x the
+	-- distance to the hole, kept between the min and max (feet).
+	PuttMeterScale = 1.5,
+	PuttMeterMinFeet = 10,
+	PuttMeterMaxFeet = 150,
+	MetersPerFoot = 0.3048,
+	-- Stage 2 (accuracy): the needle ping-pongs until click 2; after this many
+	-- seconds the shot fires by itself with a random penalty offset of
+	-- TimeoutPenaltyMin..TimeoutPenaltyMax (randomly a hook or a slice).
+	AccuracyTimeoutSeconds = 5,
+	TimeoutPenaltyMin = 0.55,
+	TimeoutPenaltyMax = 0.95,
 	MinPower = 1, -- percent; below this the swing is a whiff and is rejected
 
 	-- Green zone (zero curve). Half-width in offset units, widened by Accuracy:
@@ -110,13 +167,16 @@ Config.Swing = {
 	-- lands within ~5 points of 25/50/75% of full carry for every club (verified
 	-- in tools/verify_shared.luau). Re-run that check after touching Physics.
 	PowerToSpeedExponent = 0.52,
-	-- Distance stat: speed *= 1 + DistanceSpeedPerPoint * (distance - Baseline).
-	-- BaseCarryYds in ClubDatabase is the carry AT the baseline stat.
-	DistanceStatBaseline = 50,
-	DistanceSpeedPerPoint = 0.0025,
-	-- Forgiveness removes this fraction of a lie's AccuracyPenalty at stat 100.
-	LieForgivenessReduction = 0.7,
-	-- Putter: a 100% putt rolls this far on a flat green (before Distance stat).
+	-- Stat baseline: a stat of 50 is "neutral" (carries equal BaseCarryYds).
+	StatBaseline = 50,
+	-- Power stat: speed *= 1 + PowerSpeedPerPoint * (Power - StatBaseline).
+	PowerSpeedPerPoint = 0.0025,
+	-- Spin stat: landing brake *= 1 + SpinGripPerPoint * (Spin - StatBaseline)
+	-- (Spin 100 -> 1.6x grip, Spin 0 -> 0.4x) ...
+	SpinGripPerPoint = 0.012,
+	-- ... and Spin removes this fraction of a lie's AccuracyPenalty at stat 100.
+	LieSpinReduction = 0.7,
+	-- Putter: a 100% putt rolls this far on a flat green (before the Power stat).
 	PuttFullPowerYards = 40,
 
 	-- Anti-cheat: a submission faster than a human could have clicked is
@@ -148,8 +208,23 @@ Config.Physics = {
 	SpinReferenceRpm = 8000,
 	MinTangentRetain = -0.3,
 	SpinImpactLoss = 0.6, -- spin multiplier after each bounce
-	CupRadius = 0.054, -- metres (4.25 in hole)
-	CupCaptureSpeed = 1.6, -- m/s: faster than this and the ball lips over the cup
+	CupRadius = 0.054, -- metres (4.25 in hole) - a real cup (reference only)
+	-- Forgiving, arcade-size hole: a ball whose centre passes within
+	-- CupCaptureRadius of the cup centre drops if it is slower than
+	-- CupCaptureSpeed; faster than that it lips out / rolls over. Sized with the
+	-- VISUAL cup (CourseLayout.CUP_DIAMETER 1.0 stud = 0.143 m, ball 0.4 stud): a
+	-- captured ball's centre is over the hole, so it can visibly drop in.
+	CupCaptureRadius = 0.11,
+	CupCaptureSpeed = 2.0,
+	-- A slow ball that BOUNCES onto the cup drops too: touching down within the
+	-- capture radius slower than CupCaptureSpeed sideways and this vertically (m/s).
+	CupBounceCaptureSpeed = 6.0,
+	-- Ball magnet: a slow ball within MagnetRadius of the cup is pulled toward it,
+	-- MagnetAccel (m/s^2) at the centre fading to 0 at the radius. Pull-in from rest
+	-- happens only very close to the cup (where it beats green friction ~0.55 m/s^2).
+	MagnetRadius = 0.42,
+	MagnetAccel = 1.6,
+	MagnetMaxSpeed = 2.4, -- m/s: faster balls ignore the magnet
 	YardsToMeters = 0.9144,
 	MphToMetersPerSec = 0.44704,
 	MetersToFeet = 3.28084,
@@ -164,6 +239,170 @@ Config.Lies = {
 	Green = { SpeedMult = 1.0, SpinMult = 1.0, AccuracyPenalty = 0.0, Restitution = 0.35, TangentRetain = 0.60, RollFriction = 0.056, Sinks = false },
 	Water = { SpeedMult = 1.0, SpinMult = 1.0, AccuracyPenalty = 0.0, Restitution = 0.0, TangentRetain = 0.0, RollFriction = 1.0, Sinks = true },
 } :: { [Types.LieId]: LieDef }
+
+-- MATCHES ---------------------------------------------------------------
+-- Stroke play over HolesPerMatch consecutive holes; fewest total strokes wins,
+-- equal totals draw (entry fees refunded). Turn order is "away plays first":
+-- the ball farthest from the pin shoots next; the first tee goes to a coin toss,
+-- later tees to whoever scored lower on the previous hole.
+Config.Match = {
+	HolesPerMatch = 3,
+	TurnSeconds = 40, -- time to complete the 3 clicks before a timeout shot
+	MaxTimeouts = 3, -- timeouts before a forfeit
+	AutoShotPower = 60, -- a timed-out turn plays this (deliberately poor) shot...
+	AutoShotOffset = 0.5, -- ...with this accuracy offset (a clear slice)
+	FlightPadSeconds = 2.5, -- pause after the ball stops before the next turn starts
+	-- Every shot is presented as: golfer swings -> club meets ball -> ball flies.
+	-- The ball leaves the club this long after the server resolves the shot, so
+	-- the engine waits SwingLeadSeconds + flight + FlightPadSeconds before the
+	-- next turn (clients sync the impact frame to it; see GolferRig.IMPACT_SECONDS).
+	SwingLeadSeconds = 1.0,
+	-- Each hole opens with a camera fly-over; no one (bots included) may swing and
+	-- the turn clock does not run until it ends.
+	HoleIntroSeconds = 4.5,
+	MaxStrokesOverPar = 4, -- pick-up: a hole ends at par + this many strokes
+	GimmeMeters = 0.6, -- a ball resting this close on the green is holed (costs 1 stroke)
+	PenaltyStrokes = 1, -- water / out of bounds: replay from the same spot
+	MaxWindMph = 15,
+	MaxAimDegrees = 60, -- aim adjustment either side of the pin line (wide for doglegs)
+	-- Bots plan a putt as well as a chip from short grass (fringe / fairway)
+	-- within this distance of the pin, and keep the better one.
+	FringePuttYds = 25,
+	-- Within this distance on fairway / fringe, AUTO (and the turn's default club)
+	-- picks the putter instead of a wedge.
+	FringeAutoPutterYds = 8,
+	BotThinkSeconds = { Min = 1.5, Max = 3.5 }, -- bots pause like a person would
+	EndScreenSeconds = 6, -- results screen before the match is cleaned up
+}
+
+-- LOBBY: DRIVING RANGE -------------------------------------------------
+-- Walk into a bay at the range (west of the plaza), hit balls at the target
+-- greens and earn coins for every ball that comes to rest on one (double on the
+-- bullseye). The server simulates every shot (same physics as matches) and pays
+-- out; the client only sends its three-click swing. Targets live in RangeRules.
+Config.Range = {
+	DailyCoinCap = 3000, -- most coins the range pays one player per UTC day
+	BullseyeMultiplier = 2, -- inside the inner third of a target
+	ReadyPadSeconds = 1.0, -- after a ball stops, before the next one may be struck
+	IdleKickSeconds = 120, -- a bay is released after this long without a swing
+	JoinRadiusStuds = 16, -- how close to a bay you must stand to take it
+}
+
+-- LOBBY: AFK LOUNGE -----------------------------------------------------
+-- Stand (or idle) inside the lounge under the cabana roof and earn coins over
+-- time. Server-side presence check only: nothing the client sends matters.
+Config.Afk = {
+	CoinsPerTick = 15,
+	TickSeconds = 60, -- uninterrupted time inside the lounge per payout
+	DailyCoinCap = 1800, -- two hours of AFK per UTC day
+	CheckSeconds = 1, -- how often the server samples positions
+}
+
+-- DAILY WHEELSPIN ------------------------------------------------------
+-- One FREE spin every CooldownSeconds (the last free spin's time is saved in the
+-- player's profile, i.e. in the DataStore). Extra spins can be bought with gems
+-- or Robux (a Developer Product - create it in Creator Dashboard and paste its id
+-- into RobuxProductId; 0 hides the Robux button). Rewards are rolled on the
+-- SERVER by weight; the client only plays the animation.
+Config.Wheel = {
+	CooldownSeconds = 24 * 60 * 60,
+	GemSpinPrice = 25,
+	RobuxProductId = 0,
+	RobuxSpinsPerPurchase = 1,
+	MaxStoredSpins = 50,
+	Segments = {
+		{ Id = "coins_500", Label = "500", Kind = "Coins", Amount = 500, Weight = 28, Color = { 255, 196, 40 } },
+		{ Id = "gems_5", Label = "5", Kind = "Gems", Amount = 5, Weight = 14, Color = { 80, 200, 255 } },
+		{ Id = "coins_1500", Label = "1,500", Kind = "Coins", Amount = 1500, Weight = 18, Color = { 255, 150, 50 } },
+		{ Id = "item_rare", Label = "RARE", Kind = "Cosmetic", Rarity = "Rare", Weight = 10, Color = { 60, 140, 255 } },
+		{ Id = "coins_5000", Label = "5,000", Kind = "Coins", Amount = 5000, Weight = 8, Color = { 255, 214, 90 } },
+		{ Id = "gems_25", Label = "25", Kind = "Gems", Amount = 25, Weight = 5, Color = { 120, 230, 255 } },
+		{ Id = "item_unique", Label = "UNIQUE", Kind = "Cosmetic", Rarity = "Unique", Weight = 5, Color = { 170, 90, 255 } },
+		{ Id = "coins_25000", Label = "JACKPOT", Kind = "Coins", Amount = 25000, Weight = 1, Color = { 255, 80, 120 } },
+	} :: { WheelSegment },
+}
+
+-- COURSES (Smooth Terrain) ---------------------------------------------
+-- Mode "Terrain": every match hole is built as real Smooth Terrain (Grass
+--   fairways, LeafyGrass rough, Sand bunkers, Water) at the match's arena, and
+--   ALL ball physics reads the world through raycasts (TerrainSurface).
+-- Mode "Parts": the original flat-part courses with analytic lies (fallback).
+-- Mapped courses: holes you build by hand in Workspace.GolfCourses (see
+--   docs/STUDIO_SETUP.md) are used instead of the generated ones when present.
+Config.Course = {
+	Mode = "Terrain" :: "Terrain" | "Parts",
+	UseMappedCourses = true,
+	MappedFolder = "GolfCourses", -- Workspace folder holding hand-built holes
+	ArenaBase = { X = 30000, Y = 0, Z = 0 }, -- generated arenas start here (studs)
+	ArenaSpacing = 6000, -- studs between concurrent matches' arenas
+	DecorateHoles = true, -- run MapDecorator on generated / mapped holes
+	-- Height of the animated grass blades on Grass terrain (the ROUGH), 0.1 - 1.
+	-- Needs Terrain > Decoration ticked in Studio (scripts can't tick it).
+	GrassLength = 0.7,
+	-- Course played per match: "Beginner" (holes 1-3), "Intermediate" (4-6),
+	-- "Expert" (7-9), or "Random" (one of those three courses at random).
+	MatchCourse = "Random" :: "Beginner" | "Intermediate" | "Expert" | "Random",
+}
+
+-- MAP DECORATION (MapDecorator) -----------------------------------------
+-- Decorative foliage, rocks and grass patches around course borders. Each kind
+-- is filled from, in order: templates in ServerStorage.GolfRivalsAssets.Decor.<Kind>
+-- (drag your MeshParts / Models there), then the MeshIds below (loaded with
+-- AssetService:CreateMeshPartAsync), then a simple procedural stand-in.
+Config.Decor = {
+	BandInsideMeters = 6, -- how far inside the bounds edge decoration may start
+	BandOutsideMeters = 45, -- and how far beyond it
+	ClearanceMeters = 8, -- keep this far from fairways, greens, tees, bunkers, water
+	Density = 0.0045, -- items per square metre of border band
+	MaxItems = 260,
+	Kinds = {
+		{ Kind = "Tree", Weight = 4, MinScale = 0.8, MaxScale = 1.35 },
+		{ Kind = "Bush", Weight = 4, MinScale = 0.7, MaxScale = 1.3 },
+		{ Kind = "Rock", Weight = 3, MinScale = 0.6, MaxScale = 1.6 },
+		{ Kind = "GrassPatch", Weight = 5, MinScale = 0.8, MaxScale = 1.6 },
+	},
+	-- Optional MeshPart asset ids per kind, e.g. Tree = { "rbxassetid://123" }.
+	MeshIds = {
+		Tree = {},
+		Bush = {},
+		Rock = {},
+		GrassPatch = {},
+	} :: { [string]: { string } },
+}
+
+-- RANKED MATCHMAKING ----------------------------------------------------
+-- Players queue per league and are paired by OVR. The acceptable OVR gap starts
+-- at BaseOvrWindow and widens by WindowGrowthPerSecond while waiting, so nobody
+-- waits forever but close matches are preferred.
+Config.Matchmaking = {
+	BaseOvrWindow = 10,
+	WindowGrowthPerSecond = 2,
+	MaxOvrWindow = 100,
+	TickSeconds = 1,
+}
+
+-- AI BOTS ---------------------------------------------------------------
+-- Practice mode (no entry fee, no coin payout - bots can't be farmed). Bots play
+-- with the SAME physics as players: they plan a swing, then execute it with
+-- human-like gauge error.
+Config.Bots = {
+	Easy = {
+		Stats = { Power = 50, Accuracy = 40, Spin = 45 },
+		PowerSigma = 9, OffsetSigma = 0.32, BlunderChance = 0.10, WindAwareness = 0.2,
+		AimCandidates = { 0 }, ClubMistakeChance = 0.25,
+	},
+	Medium = {
+		Stats = { Power = 65, Accuracy = 60, Spin = 60 },
+		PowerSigma = 4, OffsetSigma = 0.14, BlunderChance = 0.03, WindAwareness = 0.6,
+		AimCandidates = { -6, 0, 6 }, ClubMistakeChance = 0.08,
+	},
+	Hard = {
+		Stats = { Power = 85, Accuracy = 80, Spin = 75 },
+		PowerSigma = 1.5, OffsetSigma = 0.05, BlunderChance = 0.0, WindAwareness = 1.0,
+		AimCandidates = { -8, -4, 0, 4, 8 }, ClubMistakeChance = 0.0,
+	},
+} :: { [string]: BotProfile }
+Config.BotDifficulties = { "Easy", "Medium", "Hard" } :: { string }
 
 -- RANKED LEAGUES --------------------------------------------------------
 -- Both players pay EntryFee; the winner takes WinPayout.

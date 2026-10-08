@@ -10,11 +10,11 @@
 	  1. fullSpeed  = calibrated ball speed whose flat, no-wind carry equals the
 	                  slot's BaseCarryYds (bisection over ShotPhysics; cached).
 	  2. ballSpeed  = fullSpeed * (power/100)^PowerToSpeedExponent
-	                  * (1 + DistanceSpeedPerPoint * (Distance - Baseline))
+	                  * ClubStats.speedFactor(Power stat)
 	                  * LieSpeedMult
 	  3. green zone = GreenHalfWidth + GreenWidthPerAccuracy * Accuracy/100,
 	                  shrunk by the lie penalty:  g = g0 * (1 - penalty)
-	     penalty   = LieAccuracyPenalty * (1 - LieForgivenessReduction * Forgiveness/100)
+	     penalty   = ClubStats.liePenalty(lie, Spin stat)
 	  4. inside the green zone -> no curve ("Perfect").  Outside:
 	       t        = (|offset| - g) / (1 - g)                      (0..1)
 	       severity = t ^ SidespinExponent * (1 - AccuracyMitigation * Accuracy/100)
@@ -22,16 +22,24 @@
 	       sidespin = -sign(offset) * severity * MaxSidespinRpm
 	     (offset < 0 = early = slice = negative sidespin = curves right)
 	  5. backspin   = slot.BackspinRpm * LieSpinMult * (0.5 + 0.5 * power/100)
+	     grip       = ClubStats.gripFactor(Spin stat)  (landing check only - no carry change)
 	  6. launch angle = slot.LaunchDeg
 
-	Putter: speed is calibrated so a 100% putt rolls PuttFullPowerYards on a
-	flat green (v = sqrt(2 * mu * g * d)); with the 0.5 exponent, distance is
-	then linear in power. A timing miss becomes an aim error instead of curve.
+	PUTTER - AUTO-SCALED, LINEAR: the putting meter's full scale is
+	    range = clamp(PuttMeterScale * distanceToHole, PuttMeterMinFeet, PuttMeterMaxFeet)
+	(SwingMath.puttRange), and a putt struck at power p rolls exactly p% of that
+	range on a flat green:  v = sqrt(2 * mu_green * g * (p / 100) * range)
+	(a rolling ball decelerates at mu*g, so d = v^2 / (2 mu g)). With the hole at
+	~2/3 of the meter, a 3-foot tap-in and a 60-foot lag are equally easy to time.
+	Slopes and slower fringe grass still change the roll - that's reading the
+	break. A timing miss becomes an aim error instead of curve. Without a range
+	(old callers) the fixed PuttFullPowerYards scale is used.
 ]]
 
 local Types = require(script.Parent.Types)
 local Config = require(script.Parent.Config)
 local ClubDatabase = require(script.Parent.ClubDatabase)
+local ClubStats = require(script.Parent.ClubStats)
 local ShotPhysics = require(script.Parent.ShotPhysics)
 local Validate = require(script.Parent.Validate)
 
@@ -47,6 +55,7 @@ export type ShotInput = {
 	AccuracyOffset: number, -- -1..1
 	Lie: Types.LieId, -- lie the ball is hit FROM
 	Wind: ShotPhysics.Wind?, -- local frame, m/s
+	PuttRangeMeters: number?, -- putts: the meter's full-scale distance (puttRange)
 }
 
 export type ResolvedShot = {
@@ -80,14 +89,26 @@ function SwingMath.fullSpeed(slot: ClubDatabase.BagSlot): number
 	return speed
 end
 
+-- The putting meter's full-scale distance (metres) for a putt of `distanceMeters`.
+function SwingMath.puttRange(distanceMeters: number): number
+	local feet = math.max(distanceMeters, 0) / S.MetersPerFoot
+	local scaled = math.clamp(feet * S.PuttMeterScale, S.PuttMeterMinFeet, S.PuttMeterMaxFeet)
+	return scaled * S.MetersPerFoot
+end
+
+-- Ball speed for a linear putt: rolls (power/100) * range on a flat green.
+function SwingMath.puttSpeed(power: number, rangeMeters: number): number
+	local mu = Config.Lies.Green.RollFriction
+	return math.sqrt(2 * mu * P.Gravity * math.clamp(power, 0, 100) / 100 * rangeMeters)
+end
+
 -- ---------------------------------------------------------------------------
 -- Accuracy
 -- ---------------------------------------------------------------------------
 
--- Lie penalty after Forgiveness: 0 (none) .. ~0.45 (sand, no Forgiveness).
-function SwingMath.effectivePenalty(lie: Types.LieId, forgiveness: number): number
-	local base = Config.Lies[lie].AccuracyPenalty
-	return base * (1 - S.LieForgivenessReduction * math.clamp(forgiveness, 0, 100) / 100)
+-- Lie penalty after the Spin stat: 0 (none) .. ~0.45 (sand, Spin 0).
+function SwingMath.effectivePenalty(lie: Types.LieId, spin: number): number
+	return ClubStats.liePenalty(lie, spin)
 end
 
 -- Effective green-zone half-width in offset units.
@@ -128,18 +149,21 @@ function SwingMath.computeLaunch(input: ShotInput): (ShotPhysics.Launch, Quality
 	local offset = math.clamp(input.AccuracyOffset, -1, 1)
 	local lie = Config.Lies[input.Lie]
 
-	local penalty = SwingMath.effectivePenalty(input.Lie, stats.Forgiveness)
+	local penalty = SwingMath.effectivePenalty(input.Lie, stats.Spin)
 	local green = SwingMath.greenHalfWidth(stats.Accuracy, penalty)
 	local severity = SwingMath.severity(offset, stats.Accuracy, penalty)
 	-- negative offset (early) -> slice (right); positive (late) -> hook (left)
 	local signedSeverity = if offset < 0 then -severity else severity
 
-	local distanceFactor = 1 + S.DistanceSpeedPerPoint * (stats.Distance - S.DistanceStatBaseline)
+	local distanceFactor = ClubStats.speedFactor(stats.Power)
 	local powerFactor = (power / 100) ^ S.PowerToSpeedExponent
 	local isPutt = slot.Class == "Putter"
 	-- Lie speed penalty doesn't apply to putts (they're hit on the green).
 	local lieSpeed = if isPutt then 1 else lie.SpeedMult
 	local ballSpeed = SwingMath.fullSpeed(slot) * powerFactor * distanceFactor * lieSpeed
+	if isPutt and input.PuttRangeMeters then
+		ballSpeed = SwingMath.puttSpeed(power, input.PuttRangeMeters)
+	end
 
 	local launch: ShotPhysics.Launch = {
 		BallSpeed = ballSpeed,
@@ -148,6 +172,7 @@ function SwingMath.computeLaunch(input: ShotInput): (ShotPhysics.Launch, Quality
 		SidespinRpm = signedSeverity * S.MaxSidespinRpm, -- early (<0) = negative = slice
 		AimOffsetRad = if isPutt then -signedSeverity * math.rad(S.MaxPuttAngleDeg) else 0,
 		IsPutt = isPutt,
+		GripMult = ClubStats.gripFactor(stats.Spin),
 	}
 	if isPutt then
 		launch.SidespinRpm = 0
@@ -188,23 +213,24 @@ end
 -- ---------------------------------------------------------------------------
 
 -- Fastest a human could have produced (power, offset) from the moment the
--- gauge became available:
---   rise  = power/100 * RiseSeconds                  (click 1 -> click 2)
---   fall  = power/100 * FallSeconds + offset * Window (click 2 -> click 3)
--- Click 3 can't land before the marker has fallen that far.
--- offset == -1 is a CLAMP ("this early or earlier"), so it can be produced by
--- clicking immediately after click 2: no minimum fall time in that case.
-function SwingMath.minSwingSeconds(power: number, offset: number): number
+-- timing bar became available (2-stage bar, see SwingStateMachine):
+--   power stage    = power/100 * PowerSweep            (first rise of the marker)
+--   accuracy stage = (offset + 1) / 2 * AccuracySweep  (needle travel to `offset`)
+-- offset == -1 is a CLAMP ("this early or earlier"): it can be produced by
+-- clicking immediately after click 1, so it needs no accuracy time.
+-- Putts use the slower putting speeds.
+function SwingMath.minSwingSeconds(power: number, offset: number, isPutt: boolean?): number
 	local p = math.clamp(power, 0, 100) / 100
-	local rise = p * S.RiseSeconds
-	local fall = if offset <= -1 then 0 else p * S.FallSeconds + offset * S.AccuracyWindowSeconds
-	return rise + math.max(0, fall)
+	local powerSweep = if isPutt then S.PuttPowerSweepSeconds else S.PowerSweepSeconds
+	local accuracySweep = if isPutt then S.PuttAccuracySweepSeconds else S.AccuracySweepSeconds
+	local accuracy = if offset <= -1 then 0 else (math.clamp(offset, -1, 1) + 1) / 2 * accuracySweep
+	return p * powerSweep + accuracy
 end
 
--- Full server-side check of a SubmitSwing payload. `elapsedSeconds` is how long
--- the server has had the swing UI open for this player (measured on the SERVER).
+-- Full server-side check of a swing payload. `elapsedSeconds` is how long the
+-- server has had the timing bar open for this player (measured on the SERVER).
 -- Returns (true) or (false, reason).
-function SwingMath.validateSubmission(power: any, offset: any, elapsedSeconds: number): (boolean, string?)
+function SwingMath.validateSubmission(power: any, offset: any, elapsedSeconds: number, isPutt: boolean?): (boolean, string?)
 	if not Validate.numberInRange(power, 0, 100) then
 		return false, "bad_power"
 	end
@@ -214,7 +240,7 @@ function SwingMath.validateSubmission(power: any, offset: any, elapsedSeconds: n
 	if (power :: number) < S.MinPower then
 		return false, "power_too_low"
 	end
-	if elapsedSeconds + S.TimingToleranceSeconds < SwingMath.minSwingSeconds(power :: number, offset :: number) then
+	if elapsedSeconds + S.TimingToleranceSeconds < SwingMath.minSwingSeconds(power :: number, offset :: number, isPutt) then
 		return false, "too_fast"
 	end
 	return true, nil

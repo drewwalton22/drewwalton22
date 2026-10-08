@@ -5,9 +5,10 @@
 	Global catalogue of every cosmetic in the game. Three categories, each of
 	which feeds exactly one case type (see CaseDatabase):
 
-	  ClubSkin      - generated from SKIN_THEMES x the 5 club classes, so a
-	                  "Crimson" finish exists for Driver, Wood, Iron, Wedge and
-	                  Putter (the "dedicated skin slot per club class" rule).
+	  ClubSkin      - generated from SKIN_THEMES x the 6 club categories
+	                  (ClubStats), so a "Crimson" finish exists for the Driver,
+	                  Fairway Wood, Long Iron, Short Iron, Wedge and Putter (the
+	                  "dedicated skin slot per club category" rule).
 	  Animation     - Swing / Stance / Emote (victory) animations.
 	  BallCosmetic  - BallModel / BallTrail / HoleEffect (hole-drop VFX).
 
@@ -55,11 +56,17 @@ local PLACEHOLDER_ASSET = "rbxassetid://0"
 local ItemDatabase = {}
 
 ItemDatabase.Categories = { "ClubSkin", "Animation", "BallCosmetic" } :: { ItemCategory }
-ItemDatabase.ClubClasses = { "Driver", "Wood", "Iron", "Wedge", "Putter" } :: { Types.ClubClass }
+ItemDatabase.ClubClasses = { "Driver", "FairwayWood", "LongIron", "ShortIron", "Wedge", "Putter" } :: { Types.ClubClass }
+
+-- Display names for skin descriptions ("(Long Iron finish)").
+local CLASS_NAMES: { [string]: string } = {
+	Driver = "Driver", FairwayWood = "Fairway Wood", LongIron = "Long Iron",
+	ShortIron = "Short Iron", Wedge = "Wedge", Putter = "Putter",
+}
 
 -- Slots belonging to each category (used by the inventory/equip validation).
 ItemDatabase.CategorySlots = {
-	ClubSkin = { "Driver", "Wood", "Iron", "Wedge", "Putter" },
+	ClubSkin = { "Driver", "FairwayWood", "LongIron", "ShortIron", "Wedge", "Putter" },
 	Animation = { "Swing", "Stance", "Emote" },
 	BallCosmetic = { "BallModel", "BallTrail", "HoleEffect" },
 } :: { [ItemCategory]: { Types.ItemSlot } }
@@ -117,7 +124,7 @@ for _, theme in SKIN_THEMES do
 		register({
 			Id = `skin_{theme.Key}_{string.lower(class)}`,
 			Name = theme.Name,
-			Description = `{theme.Blurb} ({class} finish)`,
+			Description = `{theme.Blurb} ({CLASS_NAMES[class]} finish)`,
 			Category = "ClubSkin",
 			Slot = class, -- a skin only fits its own club class
 			Rarity = theme.Rarity,
